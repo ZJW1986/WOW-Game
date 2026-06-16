@@ -18,20 +18,21 @@ import {
 import { useMemo, useState } from "react";
 import { runMockPipeline } from "../core/pipeline";
 import type { AssetRequirement, MockProject, PipelineArtifact } from "../core/types";
+import { getMessages, type Locale } from "./i18n";
 import { PhaserPreview } from "./PhaserPreview";
 
-const defaultIdea = "Create a neon spaceship dodge game where the player avoids asteroids and collects stars.";
-
 const rightTabs = [
-  { id: "preview", label: "Preview", icon: Gamepad2 },
-  { id: "assets", label: "Assets", icon: Library },
-  { id: "code", label: "Code", icon: Code2 }
+  { id: "preview", labelKey: "preview", icon: Gamepad2 },
+  { id: "assets", labelKey: "assets", icon: Library },
+  { id: "code", labelKey: "code", icon: Code2 }
 ] as const;
 
 type RightTab = (typeof rightTabs)[number]["id"];
 
 export function App() {
-  const [idea, setIdea] = useState(defaultIdea);
+  const [locale, setLocale] = useState<Locale>("zh-CN");
+  const t = getMessages(locale);
+  const [idea, setIdea] = useState<string>(t.prompt.defaultIdea);
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const project = useMemo(() => runMockPipeline(idea), [idea]);
 
@@ -40,19 +41,25 @@ export function App() {
       <header className="chrome-bar">
         <div className="project-switcher">
           <div className="brand-mark">W</div>
-          <button className="project-menu" title="Current project">
+          <button className="project-menu" title={t.brand.projectTitle}>
             <span>{project.title}</span>
             <ChevronDown size={16} />
           </button>
         </div>
         <div className="chrome-actions">
+          <button
+            className="locale-button"
+            onClick={() => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN")}
+          >
+            {locale === "zh-CN" ? "中文" : "EN"}
+          </button>
           <button className="ghost-button">
             <Zap size={15} />
-            Upgrade
+            {t.brand.upgrade}
           </button>
           <button className="share-button">
             <Share2 size={16} />
-            Share
+            {t.brand.share}
           </button>
           <div className="user-orb">Z</div>
         </div>
@@ -60,14 +67,14 @@ export function App() {
 
       <section className="creator-shell">
         <aside className="agent-panel">
-          <AgentHeader project={project} />
+          <AgentHeader project={project} messages={t} />
           <div className="agent-scroll">
-            <AgentIntro project={project} />
+            <AgentIntro project={project} messages={t} />
             <UserPrompt text={idea} />
-            <AgentBuildLog project={project} />
-            <SuggestionCard />
+            <AgentBuildLog project={project} messages={t} />
+            <SuggestionCard messages={t} />
           </div>
-          <PromptDock idea={idea} onIdeaChange={setIdea} />
+          <PromptDock idea={idea} messages={t} onIdeaChange={setIdea} />
         </aside>
 
         <section className="stage-panel">
@@ -81,7 +88,7 @@ export function App() {
                   onClick={() => setActiveTab(tab.id)}
                 >
                   <Icon size={16} />
-                  {tab.label}
+                  {t.tabs[tab.labelKey]}
                 </button>
               );
             })}
@@ -89,25 +96,25 @@ export function App() {
 
           <div className="stage-toolbar">
             <div className="toolbar-left">
-              <button title="Refresh">
+              <button title={t.toolbar.refresh}>
                 <RefreshCcw size={16} />
               </button>
-              <button title="Open runtime console">
+              <button title={t.toolbar.console}>
                 <FileCode2 size={16} />
               </button>
             </div>
             <div className="toolbar-right">
               <span className="live-dot" />
-              <button title="Fullscreen">
+              <button title={t.toolbar.fullscreen}>
                 <Copy size={16} />
               </button>
             </div>
           </div>
 
           <div className="stage-content">
-            {activeTab === "preview" && <PreviewWorkspace project={project} />}
-            {activeTab === "assets" && <AssetWorkspace project={project} />}
-            {activeTab === "code" && <CodeWorkspace project={project} />}
+            {activeTab === "preview" && <PreviewWorkspace project={project} messages={t} />}
+            {activeTab === "assets" && <AssetWorkspace project={project} messages={t} />}
+            {activeTab === "code" && <CodeWorkspace project={project} messages={t} />}
           </div>
         </section>
       </section>
@@ -115,33 +122,30 @@ export function App() {
   );
 }
 
-function AgentHeader({ project }: { project: MockProject }) {
+function AgentHeader({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
   return (
     <div className="agent-header">
       <div className="agent-avatar">
         <Bot size={18} />
       </div>
       <div>
-        <strong>WOW Game Agent</strong>
-        <span>{project.classification.templateFamily} template pipeline</span>
+        <strong>{messages.brand.agent}</strong>
+        <span>{project.classification.templateFamily} {messages.agent.pipelineLabel}</span>
       </div>
     </div>
   );
 }
 
-function AgentIntro({ project }: { project: MockProject }) {
+function AgentIntro({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
   return (
     <article className="chat-card agent-card">
-      <p className="thought-line">Mulling it over...</p>
-      <h2>{project.title} is ready to play</h2>
-      <p>
-        I classified the idea with a physics-first pass, generated standard artifacts, attached a
-        mock asset pack, and assembled a Phaser playable build.
-      </p>
+      <p className="thought-line">{messages.agent.thinking}</p>
+      <h2>{project.title} {messages.agent.readySuffix}</h2>
+      <p>{messages.agent.intro}</p>
       <div className="quick-actions">
-        <span>Make hazards more dramatic</span>
-        <span>Add checkpoints between sections</span>
-        <span>Give every pickup a brighter cue</span>
+        <span>{messages.agent.actionHazards}</span>
+        <span>{messages.agent.actionCheckpoints}</span>
+        <span>{messages.agent.actionPickupCue}</span>
       </div>
     </article>
   );
@@ -151,15 +155,15 @@ function UserPrompt({ text }: { text: string }) {
   return <div className="user-prompt">{text}</div>;
 }
 
-function AgentBuildLog({ project }: { project: MockProject }) {
+function AgentBuildLog({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
   const visibleArtifacts = project.artifacts.slice(0, 8);
   return (
     <article className="chat-card log-card">
-      <p className="thought-line">Created the first closed loop...</p>
-      <LogLine ok label="Generated standard GDD" detail="/gdd.json" />
-      <LogLine ok label="Classified template" detail={project.classification.templateFamily} />
-      <LogLine ok label={`Generated ${project.assetPack.assets.length} assets`} detail="/asset-pack.json" />
-      <LogLine ok label="Runtime check completed" detail="build health 92" />
+      <p className="thought-line">{messages.agent.closedLoop}</p>
+      <LogLine ok label={messages.agent.gdd} detail="/gdd.json" />
+      <LogLine ok label={messages.agent.classified} detail={project.classification.templateFamily} />
+      <LogLine ok label={`${messages.agent.generatedAssets} ${project.assetPack.assets.length}`} detail="/asset-pack.json" />
+      <LogLine ok label={messages.agent.runtime} detail="build health 92" />
       <div className="artifact-stack">
         {visibleArtifacts.map((artifact) => (
           <span key={artifact.fileName}>{artifact.fileName}</span>
@@ -169,13 +173,13 @@ function AgentBuildLog({ project }: { project: MockProject }) {
   );
 }
 
-function SuggestionCard() {
+function SuggestionCard({ messages }: { messages: ReturnType<typeof getMessages> }) {
   return (
     <article className="chat-card suggestion-card">
-      <p>Suggested next step prompt:</p>
-      <strong>"Add a second level with stronger neon feedback and one new reward mechanic"</strong>
+      <p>{messages.agent.suggestionLabel}</p>
+      <strong>"{messages.agent.suggestion}"</strong>
       <button>
-        Continue with next step
+        {messages.agent.continue}
         <Send size={16} />
       </button>
     </article>
@@ -184,9 +188,11 @@ function SuggestionCard() {
 
 function PromptDock({
   idea,
+  messages,
   onIdeaChange
 }: {
   idea: string;
+  messages: ReturnType<typeof getMessages>;
   onIdeaChange: (idea: string) => void;
 }) {
   return (
@@ -194,12 +200,12 @@ function PromptDock({
       <textarea
         value={idea}
         onChange={(event) => onIdeaChange(event.target.value)}
-        aria-label="Ask WOW Game Agent"
-        placeholder="Ask WOW Game... or drag, drop, or paste an image"
+        aria-label={messages.prompt.aria}
+        placeholder={messages.prompt.placeholder}
       />
       <div className="prompt-tools">
         <button className="model-select">
-          gemini-flash
+          deepseek-v4-flash
           <ChevronDown size={14} />
         </button>
         <div className="tool-icons">
@@ -207,7 +213,7 @@ function PromptDock({
           <Wand2 size={16} />
           <RefreshCcw size={16} />
         </div>
-        <button className="send-button" title="Send">
+        <button className="send-button" title={messages.agent.continue}>
           <Send size={18} />
         </button>
       </div>
@@ -215,7 +221,7 @@ function PromptDock({
   );
 }
 
-function PreviewWorkspace({ project }: { project: MockProject }) {
+function PreviewWorkspace({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
   return (
     <div className="preview-workspace">
       <div className="preview-canvas-shell">
@@ -223,20 +229,20 @@ function PreviewWorkspace({ project }: { project: MockProject }) {
       </div>
       <div className="floating-status">
         <CheckCircle2 size={16} />
-        <span>Generated playable v1</span>
+        <span>{messages.preview.generated}</span>
       </div>
-      <VerificationRail project={project} />
+      <VerificationRail project={project} messages={messages} />
     </div>
   );
 }
 
-function VerificationRail({ project }: { project: MockProject }) {
+function VerificationRail({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
   return (
     <aside className="verification-rail">
-      <h3>Verification</h3>
-      <Score label="Build" value={project.qaReport.scores.buildHealth} />
-      <Score label="Visual" value={project.qaReport.scores.visualUsability} />
-      <Score label="Intent" value={project.qaReport.scores.intentAlignment} />
+      <h3>{messages.preview.verification}</h3>
+      <Score label={messages.preview.build} value={project.qaReport.scores.buildHealth} />
+      <Score label={messages.preview.visual} value={project.qaReport.scores.visualUsability} />
+      <Score label={messages.preview.intent} value={project.qaReport.scores.intentAlignment} />
       <div className="protocol-list">
         {project.qaReport.debugProtocolEntries.map((entry) => (
           <span key={entry}>{entry}</span>
@@ -246,10 +252,10 @@ function VerificationRail({ project }: { project: MockProject }) {
   );
 }
 
-function AssetWorkspace({ project }: { project: MockProject }) {
+function AssetWorkspace({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
   return (
     <div className="asset-workspace">
-      <AssetPreview asset={project.assetPack.assets[0]} />
+      <AssetPreview asset={project.assetPack.assets[0]} messages={messages} />
       <div className="asset-grid">
         {project.assetPack.assets.map((asset) => (
           <AssetTile key={asset.assetKey} asset={asset} />
@@ -259,22 +265,22 @@ function AssetWorkspace({ project }: { project: MockProject }) {
   );
 }
 
-function AssetPreview({ asset }: { asset: AssetRequirement }) {
+function AssetPreview({ asset, messages }: { asset: AssetRequirement; messages: ReturnType<typeof getMessages> }) {
   return (
     <section className="asset-preview">
       <div className="generated-image">
         <span>{asset.type}</span>
       </div>
       <div className="asset-meta">
-        <h3>Generated asset: {asset.assetKey}</h3>
-        <label>Prompt</label>
+        <h3>{messages.assets.generatedAsset}: {asset.assetKey}</h3>
+        <label>{messages.assets.prompt}</label>
         <p>{asset.style}</p>
-        <label>Description</label>
+        <label>{messages.assets.description}</label>
         <p>{asset.spec}</p>
         <div className="meta-table">
-          <span>Mode</span>
+          <span>{messages.assets.mode}</span>
           <strong>{asset.generationMode}</strong>
-          <span>Copyright</span>
+          <span>{messages.assets.copyright}</span>
           <strong>{asset.copyrightStatus}</strong>
         </div>
       </div>
@@ -282,11 +288,11 @@ function AssetPreview({ asset }: { asset: AssetRequirement }) {
   );
 }
 
-function CodeWorkspace({ project }: { project: MockProject }) {
+function CodeWorkspace({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
   return (
     <div className="code-workspace">
       <section className="code-panel">
-        <h3>Standard Artifacts</h3>
+        <h3>{messages.code.artifacts}</h3>
         <div className="artifact-grid">
           {project.artifacts.map((artifact) => (
             <ArtifactCard key={artifact.fileName} artifact={artifact} />
@@ -294,7 +300,7 @@ function CodeWorkspace({ project }: { project: MockProject }) {
         </div>
       </section>
       <section className="code-panel">
-        <h3>Game Config</h3>
+        <h3>{messages.code.gameConfig}</h3>
         <pre>{JSON.stringify(project.gameConfig, null, 2)}</pre>
       </section>
     </div>
