@@ -4,6 +4,7 @@ import type { ModelTaskRequest } from "./backend";
 export interface GatewayTask<T> extends ModelTaskRequest {
   schema: z.ZodType<T>;
   fallback: T;
+  preprocess?: (raw: unknown) => unknown;
 }
 
 export interface GatewayResult<T> {
@@ -32,7 +33,8 @@ export function createModelGateway(options: ModelGatewayOptions = {}) {
           ? await options.provider(task)
           : JSON.stringify(task.fallback);
         const parsed = JSON.parse(raw) as unknown;
-        const output = task.schema.parse(parsed);
+        const normalized = task.preprocess ? task.preprocess(parsed) : parsed;
+        const output = task.schema.parse(normalized);
         return {
           id: `model-${task.taskType}`,
           status: "success",

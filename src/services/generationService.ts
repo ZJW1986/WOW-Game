@@ -99,6 +99,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           preferredTemplate: input.templateFamily
         }),
         schema: classificationSchema,
+        preprocess: (raw) => normalizeClassification(raw, input.templateFamily),
         fallback: {
           ...mockProject.classification,
           templateFamily: input.templateFamily
@@ -124,6 +125,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           classification: classificationTask.output
         }),
         schema: gddSchema,
+        preprocess: (raw) => normalizeGdd(raw, gddSchema.parse(fallbackGdd)),
         fallback: gddSchema.parse(fallbackGdd)
       });
       modelTasks.push(gddTask);
@@ -145,6 +147,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           assetPack
         }),
         schema: gameConfigSchema,
+        preprocess: (raw) => normalizeGameConfig(raw, fallbackConfig),
         fallback: fallbackConfig
       });
       modelTasks.push(configTask);
@@ -219,6 +222,122 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       };
     }
   };
+}
+
+function normalizeClassification(raw: unknown, fallbackFamily: TemplateFamily) {
+  const value = asRecord(raw);
+  return {
+    templateFamily: normalizeTemplateFamily(value.templateFamily, fallbackFamily),
+    reasons: normalizeStringArray(value.reasons),
+    risks: normalizeStringArray(value.risks),
+    unsupportedRequests: normalizeStringArray(value.unsupportedRequests)
+  };
+}
+
+function normalizeGdd(raw: unknown, fallback: ReturnType<typeof gddSchema.parse>) {
+  const value = asRecord(raw);
+  return {
+    concept: normalizeString(value.concept, fallback.concept),
+    loop: normalizeStringArray(value.loop, fallback.loop),
+    entities: normalizeStringArray(value.entities, fallback.entities),
+    level: normalizeLevel(value.level, fallback.level),
+    numbers: asRecord(value.numbers),
+    implementationRoute: normalizeString(value.implementationRoute, fallback.implementationRoute)
+  };
+}
+
+function normalizeGameConfig(raw: unknown, fallback: GameConfig): GameConfig {
+  const value = asRecord(raw);
+  return {
+    templateFamily: normalizeTemplateFamily(value.templateFamily, fallback.templateFamily),
+    title: normalizeString(value.title, fallback.title),
+    pitch: normalizeString(value.pitch, fallback.pitch),
+    playerGoal: normalizeString(value.playerGoal, fallback.playerGoal),
+    controls: normalizeStringArray(value.controls, fallback.controls),
+    difficulty: normalizeDifficulty(value.difficulty, fallback.difficulty),
+    referencedAssetKeys: normalizeStringArray(value.referencedAssetKeys, fallback.referencedAssetKeys),
+    level: normalizeLevel(value.level, fallback.level)
+  };
+}
+
+function normalizeTemplateFamily(value: unknown, fallback: TemplateFamily): TemplateFamily {
+  if (
+    value === "platformer" ||
+    value === "top_down" ||
+    value === "grid_logic" ||
+    value === "tower_defense" ||
+    value === "ui_heavy"
+  ) {
+    return value;
+  }
+  const text = normalizeString(value, "").toLowerCase();
+  if (text.includes("平台") || text.includes("跳") || text.includes("platform")) return "platformer";
+  if (text.includes("俯视") || text.includes("飞船") || text.includes("top")) return "top_down";
+  if (text.includes("格子") || text.includes("解谜") || text.includes("grid")) return "grid_logic";
+  if (text.includes("塔防") || text.includes("tower")) return "tower_defense";
+  if (text.includes("经营") || text.includes("卡牌") || text.includes("ui")) return "ui_heavy";
+  return fallback;
+}
+
+function normalizeDifficulty(value: unknown, fallback: GameConfig["difficulty"]): GameConfig["difficulty"] {
+  if (value === "easy" || value === "normal" || value === "hard") return value;
+  const text = normalizeString(value, "").toLowerCase();
+  if (text.includes("简单") || text.includes("easy")) return "easy";
+  if (text.includes("困难") || text.includes("hard")) return "hard";
+  if (text.includes("中") || text.includes("normal") || text.includes("medium")) return "normal";
+  return fallback;
+}
+
+function normalizeLevel(value: unknown, fallback: GameConfig["level"]) {
+  const record = asRecord(value);
+  return {
+    width: normalizeNumber(record.width, fallback.width),
+    height: normalizeNumber(record.height, fallback.height),
+    collectibles: normalizeNumber(record.collectibles, fallback.collectibles),
+    hazards: normalizeNumber(record.hazards, fallback.hazards),
+    winScore: normalizeNumber(record.winScore, fallback.winScore)
+  };
+}
+
+function normalizeNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.match(/\d+/)?.[0]);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function normalizeString(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  if (typeof value === "number") return String(value);
+  return fallback;
+}
+
+function normalizeStringArray(value: unknown, fallback: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (typeof item === "number") return String(item);
+        const record = asRecord(item);
+        return normalizeString(record.name ?? record.label ?? record.id ?? record.value, "");
+      })
+      .filter(Boolean);
+    return items.length > 0 ? items : fallback;
+  }
+  if (typeof value === "string") {
+    const items = value
+      .split(/[,，、\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return items.length > 0 ? items : fallback;
+  }
+  return fallback;
+}
+
+function asRecord(value: unknown): Record<string, any> {
+  return typeof value === "object" && value !== null ? (value as Record<string, any>) : {};
 }
 
 function sanitizeGameConfig(config: GameConfig, assetPack: AssetPack): GameConfig {

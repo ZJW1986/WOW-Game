@@ -133,6 +133,66 @@ describe("fast playable generation experience", () => {
     ]);
   });
 
+  it("repairs common DeepSeek near-miss JSON shapes before schema validation", async () => {
+    const service = createGenerationService({
+      deepseekApiKey: "test-key",
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as { messages: Array<{ content: string }> };
+        const prompt = body.messages.at(-1)?.content ?? "";
+        const content = prompt.includes("llm.classification")
+          ? {
+              templateFamily: "俯视角",
+              reasons: "飞船躲避陨石是自由移动碰撞玩法",
+              risks: "第一版只支持配置驱动",
+              unsupportedRequests: ""
+            }
+          : prompt.includes("llm.gdd")
+            ? {
+                concept: "星尘航线",
+                loop: "开始, 移动, 躲避, 收集, 胜利",
+                entities: [
+                  { name: "飞船" },
+                  { name: "星星" },
+                  { name: "陨石" }
+                ],
+                level: "960x540, 6 collectibles, 4 hazards",
+                numbers: { speed: 260 },
+                implementationRoute: "使用 top_down 模板和配置驱动关卡。"
+              }
+            : {
+                templateFamily: "top_down",
+                title: "星尘航线",
+                pitch: "飞船躲避陨石并收集星星",
+                playerGoal: "收集 6 颗星星",
+                controls: "ArrowUp, ArrowDown, ArrowLeft, ArrowRight",
+                difficulty: "中等",
+                referencedAssetKeys: "cover.main, player.ship, world.background",
+                level: { width: 960, height: 540, collectibles: 6, hazards: 4, winScore: 6 }
+              };
+        return JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] });
+      }
+    });
+
+    const result = await service.generatePlayableVersion({
+      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      answers: [],
+      templateFamily: "top_down",
+      projectId: "project-repair-1",
+      baseUrl: "https://wow-game.example",
+      model: "deepseek-v4-flash"
+    });
+
+    expect(result.fallbacksUsed).toEqual([]);
+    expect(result.project.classification.templateFamily).toBe("top_down");
+    expect(result.project.gameConfig.controls).toEqual([
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight"
+    ]);
+    expect(result.project.gameConfig.difficulty).toBe("normal");
+  });
+
   it("generates a playable version with publish share metadata and a QR payload", async () => {
     const service = createGenerationService();
 
