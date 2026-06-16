@@ -51,6 +51,7 @@ import { getMessages, type Locale } from "./i18n";
 import { PhaserPreview } from "./PhaserPreview";
 import { requestPlayableGeneration } from "../services/generationClient";
 import { createGenerationService } from "../services/generationService";
+import { createMediaGateway } from "../services/mediaGateway";
 
 const rightTabs = [
   { id: "preview", labelKey: "preview", icon: Gamepad2 },
@@ -218,7 +219,9 @@ export function App() {
 
           <div className="stage-content">
             {activeTab === "preview" && <PreviewWorkspace project={project} messages={t} />}
-            {activeTab === "assets" && <AssetWorkspace project={project} messages={t} />}
+            {activeTab === "assets" && (
+              <AssetWorkspace key={`${project.id}-${project.version.id}`} project={project} messages={t} />
+            )}
             {activeTab === "code" && <CodeWorkspace project={project} messages={t} />}
           </div>
         </section>
@@ -690,7 +693,7 @@ function PreviewWorkspace({ project, messages }: { project: MockProject; message
   return (
     <div className="preview-workspace">
       <div className="preview-canvas-shell">
-        <PhaserPreview config={project.gameConfig} />
+        <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
       </div>
       <div className="floating-status">
         <CheckCircle2 size={16} />
@@ -718,38 +721,143 @@ function VerificationRail({ project, messages }: { project: MockProject; message
 }
 
 function AssetWorkspace({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
+  const [assets, setAssets] = useState<AssetRequirement[]>(project.assetPack.assets);
+  const [query, setQuery] = useState("");
+  const [selectedKey, setSelectedKey] = useState(project.assetPack.assets[0]?.assetKey ?? "");
+  const mediaGateway = useMemo(() => createMediaGateway(), []);
+  const readyCount = assets.filter((asset) => asset.status !== "missing" && asset.status !== "failed").length;
+  const selectedAsset = assets.find((asset) => asset.assetKey === selectedKey) ?? assets[0];
+  const visibleAssets = assets.filter((asset) => {
+    const text = `${asset.assetKey} ${asset.type} ${asset.purpose} ${asset.status}`.toLowerCase();
+    return text.includes(query.toLowerCase());
+  });
+
+  const updateAsset = (nextAsset: AssetRequirement) => {
+    setAssets((current) =>
+      current.map((asset) => (asset.assetKey === nextAsset.assetKey ? nextAsset : asset))
+    );
+    setSelectedKey(nextAsset.assetKey);
+  };
+
+  const regenerateAsset = async (asset: AssetRequirement) => {
+    const nextAsset = await mediaGateway.regenerateProjectAsset(project.id, project.version.id, asset);
+    updateAsset(nextAsset);
+  };
+
+  const regenerateMissing = async () => {
+    const nextAssets = await Promise.all(
+      assets.map((asset) =>
+        asset.status === "missing" || asset.status === "failed"
+          ? mediaGateway.regenerateProjectAsset(project.id, project.version.id, asset)
+          : Promise.resolve(asset)
+      )
+    );
+    setAssets(nextAssets);
+  };
+
+  const uploadAsset = (asset: AssetRequirement, file: File) => {
+    const nextAsset = mediaGateway.uploadProjectAsset(project.id, project.version.id, asset, {
+      fileName: file.name,
+      fileUrl: URL.createObjectURL(file),
+      previewUrl: URL.createObjectURL(file)
+    });
+    updateAsset(nextAsset);
+  };
+
   return (
-    <div className="asset-workspace">
-      <AssetPreview asset={project.assetPack.assets[0]} messages={messages} />
-      <div className="asset-grid">
-        {project.assetPack.assets.map((asset) => (
-          <AssetTile key={asset.assetKey} asset={asset} />
-        ))}
+    <div className="asset-browser">
+      <div className="asset-browser-toolbar">
+        <div className="asset-path">
+          <button title="Back">←</button>
+          <strong>▣ {messages.assets.folder}</strong>
+        </div>
+        <label className="asset-search">
+          <Search size={16} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={messages.assets.search}
+          />
+        </label>
+        <button className="asset-toolbar-button" onClick={regenerateMissing}>
+          <RefreshCcw size={16} />
+          {messages.assets.regenerateMissing}
+        </button>
+        {selectedAsset && (
+          <label className="asset-toolbar-button">
+            <Upload size={16} />
+            {messages.assets.upload}
+            <input
+              type="file"
+              accept={selectedAsset.acceptedFileTypes.join(",")}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) uploadAsset(selectedAsset, file);
+              }}
+            />
+          </label>
+        )}
+        {selectedAsset && (
+          <button className="asset-create-button" onClick={() => regenerateAsset(selectedAsset)}>
+            <Wand2 size={16} />
+            {messages.assets.create}
+          </button>
+        )}
+      </div>
+
+      <div className="asset-browser-summary">
+        <strong>{readyCount}/{assets.length} {messages.assets.ready}</strong>
+        <span>asset-pack.json · project {project.id} · version {project.version.id}</span>
+      </div>
+
+      <div className="asset-browser-layout">
+        <div className="asset-grid-board">
+          {visibleAssets.map((asset) => (
+            <AssetTile
+              key={asset.assetKey}
+              asset={asset}
+              selected={asset.assetKey === selectedAsset?.assetKey}
+              onSelect={() => setSelectedKey(asset.assetKey)}
+              onRegenerate={() => regenerateAsset(asset)}
+              onUpload={(file) => uploadAsset(asset, file)}
+            />
+          ))}
+        </div>
+        {selectedAsset && <AssetInspector asset={selectedAsset} messages={messages} />}
       </div>
     </div>
   );
 }
 
-function AssetPreview({ asset, messages }: { asset: AssetRequirement; messages: ReturnType<typeof getMessages> }) {
+function AssetInspector({ asset, messages }: { asset: AssetRequirement; messages: ReturnType<typeof getMessages> }) {
   return (
-    <section className="asset-preview">
-      <div className="generated-image">
-        <span>{asset.type}</span>
+    <aside className="asset-inspector">
+      <div className="asset-inspector-preview">
+        {asset.type === "sfx" || asset.type === "bgm" ? (
+          <div className="audio-preview">♪</div>
+        ) : (
+          <div className={`asset-visual ${asset.type}`}>{asset.type}</div>
+        )}
       </div>
-      <div className="asset-meta">
-        <h3>{messages.assets.generatedAsset}: {asset.assetKey}</h3>
-        <label>{messages.assets.prompt}</label>
-        <p>{asset.style}</p>
-        <label>{messages.assets.description}</label>
-        <p>{asset.spec}</p>
-        <div className="meta-table">
-          <span>{messages.assets.mode}</span>
-          <strong>{asset.generationMode}</strong>
-          <span>{messages.assets.copyright}</span>
-          <strong>{asset.copyrightStatus}</strong>
-        </div>
+      <h3>{messages.assets.details}</h3>
+      <strong>{asset.assetKey}</strong>
+      <span className={`asset-status ${asset.status}`}>{asset.status}</span>
+      <label>{messages.assets.prompt}</label>
+      <p>{asset.prompt}</p>
+      <label>{messages.assets.description}</label>
+      <p>{asset.spec}</p>
+      <div className="meta-table">
+        <span>{messages.assets.mode}</span>
+        <strong>{asset.source}</strong>
+        <span>Provider</span>
+        <strong>{asset.provider}</strong>
+        <span>Model</span>
+        <strong>{asset.model}</strong>
+        <span>{messages.assets.copyright}</span>
+        <strong>{asset.copyrightStatus}</strong>
       </div>
-    </section>
+      {asset.error && <p className="asset-error">{asset.error}</p>}
+    </aside>
   );
 }
 
@@ -772,14 +880,48 @@ function CodeWorkspace({ project, messages }: { project: MockProject; messages: 
   );
 }
 
-function AssetTile({ asset }: { asset: AssetRequirement }) {
+function AssetTile({
+  asset,
+  selected,
+  onSelect,
+  onRegenerate,
+  onUpload
+}: {
+  asset: AssetRequirement;
+  selected: boolean;
+  onSelect: () => void;
+  onRegenerate: () => void;
+  onUpload: (file: File) => void;
+}) {
   return (
-    <article className="asset-tile">
-      <div className="asset-thumb">
-        <Database size={18} />
+    <article className={selected ? "asset-tile selected" : "asset-tile"} onClick={onSelect}>
+      <input className="asset-check" type="checkbox" checked={selected} readOnly aria-label={asset.assetKey} />
+      <div className={`asset-thumb ${asset.type}`}>
+        {asset.type === "sfx" || asset.type === "bgm" ? <span>♪</span> : <Database size={22} />}
       </div>
       <strong>{asset.assetKey}</strong>
-      <span>{asset.type} / {asset.generationMode}</span>
+      <span>{asset.type} / {asset.status}</span>
+      <div className="asset-tile-actions">
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onRegenerate();
+          }}
+        >
+          <RefreshCcw size={14} />
+        </button>
+        <label onClick={(event) => event.stopPropagation()}>
+          <Upload size={14} />
+          <input
+            type="file"
+            accept={asset.acceptedFileTypes.join(",")}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onUpload(file);
+            }}
+          />
+        </label>
+      </div>
     </article>
   );
 }

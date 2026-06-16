@@ -55,7 +55,15 @@ export const messages = {
       prompt: "提示词",
       description: "描述",
       mode: "生成方式",
-      copyright: "版权状态"
+      copyright: "版权状态",
+      folder: "assets",
+      upload: "Upload",
+      create: "Create",
+      regenerate: "Regenerate",
+      regenerateMissing: "Regenerate missing",
+      search: "Search assets",
+      ready: "ready",
+      details: "Details"
     },
     code: {
       artifacts: "标准产物",
@@ -84,7 +92,7 @@ export const messages = {
       thinking: "Mulling it over...",
       readySuffix: "is ready to play",
       intro:
-        "I classified the idea with a physics-first pass, generated standard artifacts, attached a mock asset pack, and assembled a Phaser playable build.",
+        "I classified the idea with a physics-first pass, generated standard artifacts, attached a project asset pack, and assembled a Phaser playable build.",
       actionHazards: "Make hazards more dramatic",
       actionCheckpoints: "Add checkpoints between sections",
       actionPickupCue: "Give every pickup a brighter cue",
@@ -115,7 +123,15 @@ export const messages = {
       prompt: "Prompt",
       description: "Description",
       mode: "Mode",
-      copyright: "Copyright"
+      copyright: "Copyright",
+      folder: "assets",
+      upload: "Upload",
+      create: "Create",
+      regenerate: "Regenerate",
+      regenerateMissing: "Regenerate missing",
+      search: "Search assets",
+      ready: "ready",
+      details: "Details"
     },
     code: {
       artifacts: "Standard Artifacts",

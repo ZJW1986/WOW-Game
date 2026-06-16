@@ -1,11 +1,13 @@
 import { useEffect, useId, useRef } from "react";
-import type { GameConfig } from "../core/types";
+import type { AssetPack, GameConfig } from "../core/types";
 
 export function PhaserPreview({
   config,
+  assetPack,
   compact = false
 }: {
   config: GameConfig;
+  assetPack?: AssetPack;
   compact?: boolean;
 }) {
   const id = useId().replace(/:/g, "");
@@ -43,6 +45,11 @@ export function PhaserPreview({
             color: "#b9c4d4",
             fontFamily: "Arial",
             fontSize: "14px"
+          });
+          this.add.text(24, 76, assetPackSummary(assetPack), {
+            color: "#89f7c6",
+            fontFamily: "Arial",
+            fontSize: "12px"
           });
 
           this.player = this.add.rectangle(120, 300, 34, 34, 0x5eead4);
@@ -158,7 +165,13 @@ export function PhaserPreview({
       gameRef.current?.destroy(true);
       gameRef.current = null;
     };
-  }, [compact, config, containerId]);
+  }, [assetPack, compact, config, containerId]);
 
   return <div className="game-frame" id={containerId} />;
+}
+
+function assetPackSummary(assetPack?: AssetPack): string {
+  if (!assetPack) return "asset-pack: not attached";
+  const ready = assetPack.assets.filter((asset) => asset.status !== "missing" && asset.status !== "failed").length;
+  return `asset-pack ${assetPack.versionId}: ${ready}/${assetPack.assets.length} ready`;
 }

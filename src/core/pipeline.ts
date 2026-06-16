@@ -1,6 +1,9 @@
 import type {
   AssetPack,
   AssetRequirement,
+  AssetSource,
+  AssetStatus,
+  AssetType,
   Classification,
   GameConfig,
   MockProject,
@@ -143,7 +146,7 @@ function createTitle(idea: string, family: TemplateFamily): string {
 
 export function createAssetRequirements(templateFamily: TemplateFamily): AssetRequirement[] {
   const common: AssetRequirement[] = [
-    {
+    projectAsset({
       assetKey: "cover.main",
       type: "image",
       purpose: "Play page cover and Studio preview",
@@ -151,17 +154,17 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       generationMode: "mock",
       copyrightStatus: "placeholder",
       spec: "16:9 cover, clear title-safe center"
-    },
-    {
+    }),
+    projectAsset({
       assetKey: "ui.button",
       type: "ui",
       purpose: "start and restart controls",
       style: "compact neon button",
       generationMode: "preset",
       copyrightStatus: "placeholder",
-      spec: "reusable rounded rectangle control skin"
-    },
-    {
+      spec: "reusable rectangular control skin"
+    }),
+    projectAsset({
       assetKey: "bgm.loop",
       type: "bgm",
       purpose: "short seamless gameplay loop",
@@ -169,8 +172,8 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       generationMode: "mock",
       copyrightStatus: "placeholder",
       spec: "20-40 seconds, loopable"
-    },
-    {
+    }),
+    projectAsset({
       assetKey: "sfx.collect",
       type: "sfx",
       purpose: "collectible pickup feedback",
@@ -178,8 +181,8 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       generationMode: "mock",
       copyrightStatus: "placeholder",
       spec: "under 1 second"
-    },
-    {
+    }),
+    projectAsset({
       assetKey: "effect.hit",
       type: "effect",
       purpose: "collision or damage feedback",
@@ -187,7 +190,7 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       generationMode: "preset",
       copyrightStatus: "placeholder",
       spec: "8-12 frame visual effect"
-    }
+    })
   ];
 
   const familyAssets: Record<TemplateFamily, AssetRequirement[]> = {
@@ -222,7 +225,7 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
 }
 
 function mockImage(assetKey: string, purpose: string, spec: string): AssetRequirement {
-  return {
+  return projectAsset({
     assetKey,
     type: "image",
     purpose,
@@ -230,7 +233,77 @@ function mockImage(assetKey: string, purpose: string, spec: string): AssetRequir
     generationMode: "mock",
     copyrightStatus: "placeholder",
     spec
+  });
+}
+
+function projectAsset(input: {
+  assetKey: string;
+  type: AssetType;
+  purpose: string;
+  style: string;
+  generationMode: AssetRequirement["generationMode"];
+  copyrightStatus: AssetRequirement["copyrightStatus"];
+  spec: string;
+}): AssetRequirement {
+  const status = defaultStatus(input.generationMode);
+  const source = defaultSource(input.generationMode);
+  return {
+    ...input,
+    status,
+    prompt: createAssetPrompt(input),
+    acceptedFileTypes: acceptedFileTypes(input.type),
+    previewUrl: defaultPreviewUrl(input.assetKey, input.type),
+    source,
+    fileUrl: defaultFileUrl(input.assetKey, input.type, source),
+    provider: input.generationMode === "preset" ? "preset" : "mock",
+    model: input.generationMode === "preset" ? "preset-v1" : "mock-media-v1",
+    generationParams: {
+      spec: input.spec,
+      style: input.style
+    }
   };
+}
+
+function createAssetPrompt(input: {
+  assetKey: string;
+  type: AssetType;
+  purpose: string;
+  style: string;
+  spec: string;
+}) {
+  return `${input.type} asset ${input.assetKey}: ${input.purpose}. Style: ${input.style}. Spec: ${input.spec}.`;
+}
+
+function defaultStatus(mode: AssetRequirement["generationMode"]): AssetStatus {
+  if (mode === "preset") return "generated";
+  if (mode === "uploaded") return "uploaded";
+  if (mode === "model") return "missing";
+  return "mock";
+}
+
+function defaultSource(mode: AssetRequirement["generationMode"]): AssetSource {
+  if (mode === "preset") return "preset";
+  if (mode === "uploaded") return "uploaded";
+  if (mode === "model") return "generated";
+  return "mock";
+}
+
+function acceptedFileTypes(type: AssetType): string[] {
+  if (type === "image" || type === "ui") return ["image/*", ".png", ".jpg", ".jpeg", ".webp"];
+  if (type === "sfx" || type === "bgm") return ["audio/*", ".mp3", ".wav", ".ogg"];
+  if (type === "effect") return ["image/*", "application/json", ".png", ".webp", ".json"];
+  return ["*/*"];
+}
+
+function defaultPreviewUrl(assetKey: string, type: AssetType): string {
+  if (type === "sfx" || type === "bgm") return `/assets/previews/audio-wave.svg#${assetKey}`;
+  if (type === "effect") return `/assets/previews/effect-burst.svg#${assetKey}`;
+  return `/assets/previews/${assetKey.replace(/\./g, "-")}.png`;
+}
+
+function defaultFileUrl(assetKey: string, type: AssetType, source: AssetSource): string {
+  const extension = type === "sfx" || type === "bgm" ? "mp3" : type === "effect" ? "json" : "png";
+  return `/projects/mock/v1/assets/${source}/${assetKey}.${extension}`;
 }
 
 export function createGameConfig(
@@ -265,22 +338,27 @@ export function createGameConfig(
 
 export function createQaReport(config: GameConfig, assetPack: AssetPack): QaReport {
   const missingAssets = validateAssetReferences(config, assetPack);
+  const blockingAssets = assetPack.assets.filter((asset) => asset.status === "missing" || asset.status === "failed");
   return {
     scores: {
-      buildHealth: missingAssets.length === 0 ? 92 : 40,
+      buildHealth: missingAssets.length === 0 && blockingAssets.length === 0 ? 92 : 40,
       visualUsability: 88,
       intentAlignment: 84
     },
     checks: [
       "template lifecycle locked",
       "asset references validated against asset-pack.json",
+      "project asset statuses checked before build",
       "start/play/win/lose/restart flow simulated",
       "Play page feedback path available"
     ],
     debugProtocolEntries:
-      missingAssets.length === 0
+      missingAssets.length === 0 && blockingAssets.length === 0
         ? ["asset-key-mismatch: checked and no missing keys found"]
-        : missingAssets.map((assetKey) => `missing asset key: ${assetKey}`)
+        : [
+            ...missingAssets.map((assetKey) => `missing asset key: ${assetKey}`),
+            ...blockingAssets.map((asset) => `asset not ready: ${asset.assetKey}`)
+          ]
   };
 }
 

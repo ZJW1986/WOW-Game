@@ -18,6 +18,8 @@ export type PipelineStage =
   | "iteration-report";
 
 export type AssetType = "image" | "sfx" | "bgm" | "effect" | "ui" | "build";
+export type AssetStatus = "missing" | "mock" | "uploaded" | "generated" | "failed";
+export type AssetSource = "mock" | "preset" | "uploaded" | "generated";
 
 export interface Classification {
   templateFamily: TemplateFamily;
@@ -42,6 +44,16 @@ export interface AssetRequirement {
   generationMode: "mock" | "model" | "uploaded" | "preset";
   copyrightStatus: "placeholder" | "generated" | "licensed" | "user_provided";
   spec: string;
+  status: AssetStatus;
+  prompt: string;
+  acceptedFileTypes: string[];
+  previewUrl: string;
+  source: AssetSource;
+  fileUrl: string;
+  provider: string;
+  model: string;
+  generationParams: Record<string, string | number | boolean>;
+  error?: string;
 }
 
 export interface AssetPack {

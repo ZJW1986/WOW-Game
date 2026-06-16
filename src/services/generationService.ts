@@ -19,6 +19,7 @@ import type {
 } from "../core/types";
 import type { ModelTaskRequest } from "./backend";
 import { createDeepSeekExecutor, type DeepSeekExecutorOptions } from "./deepSeekExecutor";
+import { createMediaGateway, type MediaGatewayOptions } from "./mediaGateway";
 import { createModelGateway, type GatewayResult } from "./modelGateway";
 import { createPromptForTask } from "./promptPack";
 
@@ -35,6 +36,7 @@ export interface GenerationServiceOptions {
   deepseekApiKey?: string;
   deepseekBaseUrl?: string;
   fetcher?: DeepSeekExecutorOptions["fetcher"];
+  mediaGateway?: MediaGatewayOptions;
 }
 
 export interface SharePayload {
@@ -73,6 +75,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       return result.rawJson;
     }
   });
+  const mediaGateway = createMediaGateway(options.mediaGateway);
 
   return {
     async generatePlayableVersion(input: GeneratePlayableInput) {
@@ -109,9 +112,14 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       trackFallback(classificationTask, fallbacksUsed);
 
       const assetRequirements = createAssetRequirements(classificationTask.output.templateFamily);
+      const generatedAssets = await Promise.all(
+        assetRequirements.map((requirement) =>
+          mediaGateway.generateProjectAsset(input.projectId, "v1", requirement)
+        )
+      );
       const assetPack: AssetPack = {
         versionId: "v1",
-        assets: assetRequirements
+        assets: generatedAssets
       };
       const fallbackGdd = extractArtifactContent(mockProject, "gdd.json");
 

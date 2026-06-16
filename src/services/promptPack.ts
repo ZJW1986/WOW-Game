@@ -20,7 +20,7 @@ export function createPromptForTask(
     "llm.game_config":
       '任务类型 llm.game_config。生成模板可读取的配置。templateFamily 只能使用英文枚举；difficulty 只能是 "easy"、"normal"、"hard"；controls 和 referencedAssetKeys 必须是字符串数组。只返回 {"templateFamily","title","pitch","playerGoal","controls","difficulty","referencedAssetKeys","level"}。',
     "image.asset":
-      "根据 asset-requirements 生成图片资源任务说明，返回 assetKey、style、spec 和版权状态。",
+      "根据 asset-requirements 生成图片资源任务说明，返回 assetKey、style、spec、prompt 和版权状态。",
     "audio.sfx":
       "根据 asset-requirements 生成短音效任务说明，返回用途、时长、风格和循环要求。",
     "audio.bgm":

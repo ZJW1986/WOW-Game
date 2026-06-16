@@ -44,7 +44,17 @@ export const assetRequirementSchema = z.object({
   style: z.string(),
   generationMode: z.enum(["mock", "model", "uploaded", "preset"]),
   copyrightStatus: z.enum(["placeholder", "generated", "licensed", "user_provided"]),
-  spec: z.string()
+  spec: z.string(),
+  status: z.enum(["missing", "mock", "uploaded", "generated", "failed"]),
+  prompt: z.string(),
+  acceptedFileTypes: z.array(z.string()),
+  previewUrl: z.string(),
+  source: z.enum(["mock", "preset", "uploaded", "generated"]),
+  fileUrl: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  generationParams: z.record(z.union([z.string(), z.number(), z.boolean()])),
+  error: z.string().optional()
 });
 
 export const assetRequirementsSchema = z.array(assetRequirementSchema);
@@ -52,6 +62,14 @@ export const assetRequirementsSchema = z.array(assetRequirementSchema);
 export const assetPackSchema = z.object({
   versionId: z.string(),
   assets: assetRequirementsSchema
+}).superRefine((pack, context) => {
+  for (const assetKey of findDuplicateAssetKeys(pack.assets)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Duplicate assetKey: ${assetKey}`,
+      path: ["assets"]
+    });
+  }
 });
 
 export const gameConfigSchema = z.object({
@@ -114,4 +132,40 @@ export type ArtifactType = keyof typeof artifactSchemas;
 
 export function validateArtifact(type: ArtifactType, payload: unknown) {
   return artifactSchemas[type].safeParse(payload);
+}
+
+export function findDuplicateAssetKeys(assets: Array<{ assetKey: string }>): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const asset of assets) {
+    if (seen.has(asset.assetKey)) {
+      duplicates.add(asset.assetKey);
+    }
+    seen.add(asset.assetKey);
+  }
+  return Array.from(duplicates).sort();
+}
+
+export function validateProjectAssetUpload(
+  requirement: { acceptedFileTypes: string[]; type: string },
+  fileName: string
+) {
+  const extension = fileName.split(".").pop()?.toLowerCase() ?? "";
+  const accepted = requirement.acceptedFileTypes;
+  const matches = accepted.some((type) => {
+    if (type === "*/*") return true;
+    if (type.startsWith(".")) return type.slice(1).toLowerCase() === extension;
+    if (type === "image/*") return ["png", "jpg", "jpeg", "webp", "gif"].includes(extension);
+    if (type === "audio/*") return ["mp3", "wav", "ogg", "m4a"].includes(extension);
+    if (type === "application/json") return extension === "json";
+    if (type === "model/gltf-binary") return extension === "glb" || extension === "gltf";
+    return false;
+  });
+
+  return matches
+    ? { success: true as const }
+    : {
+        success: false as const,
+        error: `File type .${extension || "unknown"} is not accepted for ${requirement.type}`
+      };
 }

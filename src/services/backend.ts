@@ -141,7 +141,7 @@ export function createInMemoryBackend(options: BackendOptions = {}) {
           rating: input.rating,
           comment: input.comment,
           playerName: input.playerName,
-          iterationSuggestion: `下一版建议根据「${input.comment}」优化节奏、反馈和难度。`,
+          iterationSuggestion: `下一版建议根据“${input.comment}”优化节奏、反馈和难度。`,
           createdAt: new Date("2026-06-17T00:00:00.000Z").toISOString()
         };
         store.feedback.push(feedback);
