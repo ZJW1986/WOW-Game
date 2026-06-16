@@ -31,4 +31,38 @@ describe("MVP backend service boundary", () => {
     expect(task.provider).toBe("mock");
     expect(task.output.summary).toContain("standard artifact");
   });
+
+  it("routes DeepSeek tasks to v4 flash and reports missing api key clearly", async () => {
+    const backend = createInMemoryBackend();
+
+    const task = await backend.models.runTask({
+      taskType: "llm.gdd",
+      prompt: "生成一个躲避陨石游戏 GDD",
+      provider: "deepseek",
+      model: "deepseek-v4-flash"
+    });
+
+    expect(task.provider).toBe("deepseek");
+    expect(task.model).toBe("deepseek-v4-flash");
+    expect(task.output.summary).toContain("DEEPSEEK_API_KEY");
+  });
+
+  it("builds an OpenAI-compatible DeepSeek chat request", () => {
+    const backend = createInMemoryBackend({
+      deepseekApiKey: "test-key"
+    });
+
+    const request = backend.models.createDeepSeekChatRequest({
+      taskType: "llm.classification",
+      prompt: "帮我判断这个游戏属于什么模板",
+      provider: "deepseek",
+      model: "deepseek-v4-flash"
+    });
+
+    expect(request.url).toBe("https://api.deepseek.com/chat/completions");
+    expect(request.headers.Authorization).toBe("Bearer test-key");
+    expect(request.body.model).toBe("deepseek-v4-flash");
+    expect(request.body.messages[0].role).toBe("system");
+    expect(request.body.messages[1].content).toContain("帮我判断");
+  });
 });

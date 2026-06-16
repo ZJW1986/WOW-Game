@@ -17,7 +17,7 @@ export interface StoredVersion {
 export interface ModelTaskRequest {
   taskType: "llm.gdd" | "llm.classification" | "image.asset" | "audio.sfx" | "audio.bgm" | "effect.preset";
   prompt: string;
-  provider: "mock" | "openai" | "custom";
+  provider: "mock" | "openai" | "deepseek" | "custom";
   model: string;
 }
 
@@ -38,7 +38,26 @@ interface Store {
   generated: Map<string, MockProject>;
 }
 
-export function createInMemoryBackend() {
+export interface BackendOptions {
+  deepseekApiKey?: string;
+  deepseekBaseUrl?: string;
+}
+
+export interface DeepSeekChatRequest {
+  url: string;
+  headers: {
+    "Content-Type": string;
+    Authorization: string;
+  };
+  body: {
+    model: string;
+    messages: Array<{ role: "system" | "user"; content: string }>;
+    temperature: number;
+    response_format: { type: "json_object" };
+  };
+}
+
+export function createInMemoryBackend(options: BackendOptions = {}) {
   const store: Store = {
     projects: [],
     versions: [],
@@ -99,7 +118,47 @@ export function createInMemoryBackend() {
       }
     },
     models: {
+      createDeepSeekChatRequest(request: ModelTaskRequest): DeepSeekChatRequest {
+        return createDeepSeekChatRequest(request, options);
+      },
       async runTask(request: ModelTaskRequest): Promise<ModelTaskResult> {
+        if (request.provider === "deepseek") {
+          if (!options.deepseekApiKey) {
+            return {
+              id: `task-${request.taskType}`,
+              provider: "deepseek",
+              model: request.model || "deepseek-v4-flash",
+              taskType: request.taskType,
+              output: {
+                summary:
+                  "DeepSeek adapter is configured. Set DEEPSEEK_API_KEY on the backend to enable real deepseek-v4-flash calls.",
+                payload: {
+                  prompt: request.prompt,
+                  baseUrl: options.deepseekBaseUrl ?? "https://api.deepseek.com",
+                  mode: "missing-api-key"
+                }
+              }
+            };
+          }
+
+          const deepSeekRequest = createDeepSeekChatRequest(request, options);
+          return {
+            id: `task-${request.taskType}`,
+            provider: "deepseek",
+            model: deepSeekRequest.body.model,
+            taskType: request.taskType,
+            output: {
+              summary:
+                "DeepSeek v4 flash request is ready. Network execution should run only from a trusted backend service.",
+              payload: {
+                url: deepSeekRequest.url,
+                model: deepSeekRequest.body.model,
+                messageCount: deepSeekRequest.body.messages.length
+              }
+            }
+          };
+        }
+
         if (request.provider !== "mock") {
           return {
             id: `task-${request.taskType}`,
@@ -124,6 +183,37 @@ export function createInMemoryBackend() {
           }
         };
       }
+    }
+  };
+}
+
+function createDeepSeekChatRequest(
+  request: ModelTaskRequest,
+  options: BackendOptions
+): DeepSeekChatRequest {
+  const baseUrl = (options.deepseekBaseUrl ?? "https://api.deepseek.com").replace(/\/$/, "");
+  const model = request.model || "deepseek-v4-flash";
+  return {
+    url: `${baseUrl}/chat/completions`,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${options.deepseekApiKey ?? ""}`
+    },
+    body: {
+      model,
+      temperature: 0.4,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are the WOW Game model adapter. Return strict JSON artifacts for the game production pipeline. Do not generate free engine lifecycle code."
+        },
+        {
+          role: "user",
+          content: request.prompt
+        }
+      ]
     }
   };
 }

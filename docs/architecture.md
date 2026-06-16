@@ -31,12 +31,20 @@ The MVP success path uses `mock`. Real providers are represented by adapter plac
 {
   taskType: "llm.gdd" | "llm.classification" | "image.asset" | "audio.sfx" | "audio.bgm" | "effect.preset",
   prompt: string,
-  provider: "mock" | "openai" | "custom",
+  provider: "mock" | "openai" | "deepseek" | "custom",
   model: string
 }
 ```
 
-Future providers should return standard artifacts or asset metadata instead of direct engine code.
+DeepSeek is wired as the first real LLM provider adapter:
+
+- Provider: `deepseek`
+- Default text model: `deepseek-v4-flash`
+- Base URL: `https://api.deepseek.com`
+- Endpoint: `/chat/completions`
+- Environment variable: `DEEPSEEK_API_KEY`
+
+The DeepSeek API is OpenAI-compatible. Keep API keys on a trusted backend service only; do not expose them in the browser bundle. Future providers should return standard artifacts or asset metadata instead of direct engine code.
 
 ## Data Boundary
 
