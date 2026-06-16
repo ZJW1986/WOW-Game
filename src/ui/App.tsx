@@ -1,278 +1,315 @@
 import {
-  Boxes,
-  BrainCircuit,
+  Bot,
   CheckCircle2,
-  ClipboardList,
+  ChevronDown,
+  Code2,
+  Copy,
+  Database,
+  FileCode2,
   Gamepad2,
-  GitBranch,
+  ImageIcon,
   Library,
-  Play,
-  RotateCcw,
-  Sparkles
+  RefreshCcw,
+  Send,
+  Share2,
+  Wand2,
+  Zap
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { runMockPipeline } from "../core/pipeline";
-import type { MockProject, PipelineArtifact } from "../core/types";
+import type { AssetRequirement, MockProject, PipelineArtifact } from "../core/types";
 import { PhaserPreview } from "./PhaserPreview";
 
-const defaultIdea = "做一个太空船躲避陨石并收集星星的小游戏";
+const defaultIdea = "Create a neon spaceship dodge game where the player avoids asteroids and collects stars.";
 
-const navigation = [
-  { id: "studio", label: "Studio", icon: BrainCircuit },
-  { id: "pipeline", label: "Pipeline", icon: ClipboardList },
-  { id: "assets", label: "Assets", icon: Library },
+const rightTabs = [
   { id: "preview", label: "Preview", icon: Gamepad2 },
-  { id: "play", label: "Play", icon: Play },
-  { id: "iterate", label: "Iterate", icon: GitBranch }
+  { id: "assets", label: "Assets", icon: Library },
+  { id: "code", label: "Code", icon: Code2 }
 ] as const;
 
-type TabId = (typeof navigation)[number]["id"];
+type RightTab = (typeof rightTabs)[number]["id"];
 
 export function App() {
   const [idea, setIdea] = useState(defaultIdea);
-  const [activeTab, setActiveTab] = useState<TabId>("studio");
+  const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const project = useMemo(() => runMockPipeline(idea), [idea]);
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">AI</div>
-          <div>
-            <h1>WOW Game</h1>
-            <p>OpenGame-style MVP</p>
-          </div>
+      <header className="chrome-bar">
+        <div className="project-switcher">
+          <div className="brand-mark">W</div>
+          <button className="project-menu" title="Current project">
+            <span>{project.title}</span>
+            <ChevronDown size={16} />
+          </button>
         </div>
-        <nav className="nav-list" aria-label="Product modules">
-          {navigation.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                className={activeTab === item.id ? "nav-item active" : "nav-item"}
-                onClick={() => setActiveTab(item.id)}
-                title={item.label}
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
+        <div className="chrome-actions">
+          <button className="ghost-button">
+            <Zap size={15} />
+            Upgrade
+          </button>
+          <button className="share-button">
+            <Share2 size={16} />
+            Share
+          </button>
+          <div className="user-orb">Z</div>
+        </div>
+      </header>
+
+      <section className="creator-shell">
+        <aside className="agent-panel">
+          <AgentHeader project={project} />
+          <div className="agent-scroll">
+            <AgentIntro project={project} />
+            <UserPrompt text={idea} />
+            <AgentBuildLog project={project} />
+            <SuggestionCard />
+          </div>
+          <PromptDock idea={idea} onIdeaChange={setIdea} />
+        </aside>
+
+        <section className="stage-panel">
+          <nav className="stage-tabs" aria-label="Workspace tabs">
+            {rightTabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  className={activeTab === tab.id ? "stage-tab active" : "stage-tab"}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  <Icon size={16} />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="stage-toolbar">
+            <div className="toolbar-left">
+              <button title="Refresh">
+                <RefreshCcw size={16} />
               </button>
-            );
-          })}
-        </nav>
-        <div className="model-card">
-          <Sparkles size={18} />
-          <div>
-            <strong>Mock Provider</strong>
-            <span>LLM / image / audio / VFX adapters ready</span>
+              <button title="Open runtime console">
+                <FileCode2 size={16} />
+              </button>
+            </div>
+            <div className="toolbar-right">
+              <span className="live-dot" />
+              <button title="Fullscreen">
+                <Copy size={16} />
+              </button>
+            </div>
           </div>
-        </div>
-      </aside>
 
-      <section className="workspace">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Phase 1 Closed Loop</p>
-            <h2>{project.title}</h2>
+          <div className="stage-content">
+            {activeTab === "preview" && <PreviewWorkspace project={project} />}
+            {activeTab === "assets" && <AssetWorkspace project={project} />}
+            {activeTab === "code" && <CodeWorkspace project={project} />}
           </div>
-          <div className="status-pill">
-            <CheckCircle2 size={16} />
-            {project.version.status}
-          </div>
-        </header>
-
-        {activeTab === "studio" && (
-          <StudioPanel idea={idea} project={project} onIdeaChange={setIdea} />
-        )}
-        {activeTab === "pipeline" && <PipelinePanel project={project} />}
-        {activeTab === "assets" && <AssetPanel project={project} />}
-        {activeTab === "preview" && <PreviewPanel project={project} />}
-        {activeTab === "play" && <PlayPanel project={project} />}
-        {activeTab === "iterate" && <IterationPanel project={project} />}
+        </section>
       </section>
     </main>
   );
 }
 
-function StudioPanel({
+function AgentHeader({ project }: { project: MockProject }) {
+  return (
+    <div className="agent-header">
+      <div className="agent-avatar">
+        <Bot size={18} />
+      </div>
+      <div>
+        <strong>WOW Game Agent</strong>
+        <span>{project.classification.templateFamily} template pipeline</span>
+      </div>
+    </div>
+  );
+}
+
+function AgentIntro({ project }: { project: MockProject }) {
+  return (
+    <article className="chat-card agent-card">
+      <p className="thought-line">Mulling it over...</p>
+      <h2>{project.title} is ready to play</h2>
+      <p>
+        I classified the idea with a physics-first pass, generated standard artifacts, attached a
+        mock asset pack, and assembled a Phaser playable build.
+      </p>
+      <div className="quick-actions">
+        <span>Make hazards more dramatic</span>
+        <span>Add checkpoints between sections</span>
+        <span>Give every pickup a brighter cue</span>
+      </div>
+    </article>
+  );
+}
+
+function UserPrompt({ text }: { text: string }) {
+  return <div className="user-prompt">{text}</div>;
+}
+
+function AgentBuildLog({ project }: { project: MockProject }) {
+  const visibleArtifacts = project.artifacts.slice(0, 8);
+  return (
+    <article className="chat-card log-card">
+      <p className="thought-line">Created the first closed loop...</p>
+      <LogLine ok label="Generated standard GDD" detail="/gdd.json" />
+      <LogLine ok label="Classified template" detail={project.classification.templateFamily} />
+      <LogLine ok label={`Generated ${project.assetPack.assets.length} assets`} detail="/asset-pack.json" />
+      <LogLine ok label="Runtime check completed" detail="build health 92" />
+      <div className="artifact-stack">
+        {visibleArtifacts.map((artifact) => (
+          <span key={artifact.fileName}>{artifact.fileName}</span>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function SuggestionCard() {
+  return (
+    <article className="chat-card suggestion-card">
+      <p>Suggested next step prompt:</p>
+      <strong>"Add a second level with stronger neon feedback and one new reward mechanic"</strong>
+      <button>
+        Continue with next step
+        <Send size={16} />
+      </button>
+    </article>
+  );
+}
+
+function PromptDock({
   idea,
-  project,
   onIdeaChange
 }: {
   idea: string;
-  project: MockProject;
   onIdeaChange: (idea: string) => void;
 }) {
   return (
-    <div className="panel-grid two">
-      <section className="surface">
-        <div className="section-title">
-          <BrainCircuit size={18} />
-          <h3>Studio</h3>
-        </div>
-        <textarea
-          value={idea}
-          onChange={(event) => onIdeaChange(event.target.value)}
-          aria-label="Game idea"
-          className="idea-input"
-        />
-        <div className="question-list">
-          <PromptQuestion label="操作方式" value={project.gameConfig.controls.join(" / ")} />
-          <PromptQuestion label="失败条件" value="撞到危险物或时间耗尽" />
-          <PromptQuestion label="视觉风格" value="明亮 2D 街机，占位资源可替换" />
-          <PromptQuestion label="目标时长" value="单局 60-90 秒" />
-        </div>
-      </section>
-
-      <section className="surface">
-        <div className="section-title">
-          <Boxes size={18} />
-          <h3>Physics-First Classification</h3>
-        </div>
-        <div className="classification-card">
-          <span>Template</span>
-          <strong>{project.classification.templateFamily}</strong>
-        </div>
-        <ul className="compact-list">
-          {project.classification.reasons.map((reason) => (
-            <li key={reason}>{reason}</li>
-          ))}
-        </ul>
-        <div className="risk-box">
-          {project.classification.risks.map((risk) => (
-            <span key={risk}>{risk}</span>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function PipelinePanel({ project }: { project: MockProject }) {
-  return (
-    <section className="surface full">
-      <div className="section-title">
-        <ClipboardList size={18} />
-        <h3>Pipeline Console</h3>
-      </div>
-      <div className="artifact-grid">
-        {project.artifacts.map((artifact) => (
-          <ArtifactCard key={artifact.fileName} artifact={artifact} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function AssetPanel({ project }: { project: MockProject }) {
-  return (
-    <section className="surface full">
-      <div className="section-title">
-        <Library size={18} />
-        <h3>Asset Hub</h3>
-      </div>
-      <div className="asset-table">
-        <div className="asset-row header">
-          <span>Key</span>
-          <span>Type</span>
-          <span>Mode</span>
-          <span>Purpose</span>
-        </div>
-        {project.assetPack.assets.map((asset) => (
-          <div className="asset-row" key={asset.assetKey}>
-            <strong>{asset.assetKey}</strong>
-            <span>{asset.type}</span>
-            <span>{asset.generationMode}</span>
-            <span>{asset.purpose}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function PreviewPanel({ project }: { project: MockProject }) {
-  return (
-    <div className="panel-grid two preview-layout">
-      <section className="surface">
-        <div className="section-title">
-          <Gamepad2 size={18} />
-          <h3>Playable Build</h3>
-        </div>
-        <PhaserPreview config={project.gameConfig} />
-      </section>
-      <section className="surface">
-        <div className="section-title">
-          <CheckCircle2 size={18} />
-          <h3>Verification</h3>
-        </div>
-        <Score label="Build Health" value={project.qaReport.scores.buildHealth} />
-        <Score label="Visual Usability" value={project.qaReport.scores.visualUsability} />
-        <Score label="Intent Alignment" value={project.qaReport.scores.intentAlignment} />
-        <ul className="compact-list">
-          {project.qaReport.checks.map((check) => (
-            <li key={check}>{check}</li>
-          ))}
-        </ul>
-      </section>
-    </div>
-  );
-}
-
-function PlayPanel({ project }: { project: MockProject }) {
-  return (
-    <div className="play-page">
-      <section className="play-hero">
-        <div>
-          <p className="eyebrow">Published Game</p>
-          <h3>{project.title}</h3>
-          <p>{project.gameConfig.playerGoal}</p>
-        </div>
-        <button className="primary-button">
-          <Play size={18} />
-          Play v1
+    <div className="prompt-dock">
+      <textarea
+        value={idea}
+        onChange={(event) => onIdeaChange(event.target.value)}
+        aria-label="Ask WOW Game Agent"
+        placeholder="Ask WOW Game... or drag, drop, or paste an image"
+      />
+      <div className="prompt-tools">
+        <button className="model-select">
+          gemini-flash
+          <ChevronDown size={14} />
         </button>
-      </section>
-      <section className="surface">
-        <div className="section-title">
-          <Gamepad2 size={18} />
-          <h3>Player Experience</h3>
+        <div className="tool-icons">
+          <ImageIcon size={16} />
+          <Wand2 size={16} />
+          <RefreshCcw size={16} />
         </div>
-        <PhaserPreview config={project.gameConfig} compact />
-        <div className="feedback-strip">
-          <span>Rating: {project.feedback.rating}/5</span>
-          <span>{project.feedback.comment}</span>
-        </div>
-      </section>
+        <button className="send-button" title="Send">
+          <Send size={18} />
+        </button>
+      </div>
     </div>
   );
 }
 
-function IterationPanel({ project }: { project: MockProject }) {
+function PreviewWorkspace({ project }: { project: MockProject }) {
   return (
-    <section className="surface full">
-      <div className="section-title">
-        <RotateCcw size={18} />
-        <h3>Iteration Center</h3>
+    <div className="preview-workspace">
+      <div className="preview-canvas-shell">
+        <PhaserPreview config={project.gameConfig} />
       </div>
-      <div className="iteration-card">
-        <strong>Next Version Suggestion</strong>
-        <p>{project.feedback.iterationSuggestion}</p>
+      <div className="floating-status">
+        <CheckCircle2 size={16} />
+        <span>Generated playable v1</span>
       </div>
-      <div className="debug-log">
+      <VerificationRail project={project} />
+    </div>
+  );
+}
+
+function VerificationRail({ project }: { project: MockProject }) {
+  return (
+    <aside className="verification-rail">
+      <h3>Verification</h3>
+      <Score label="Build" value={project.qaReport.scores.buildHealth} />
+      <Score label="Visual" value={project.qaReport.scores.visualUsability} />
+      <Score label="Intent" value={project.qaReport.scores.intentAlignment} />
+      <div className="protocol-list">
         {project.qaReport.debugProtocolEntries.map((entry) => (
           <span key={entry}>{entry}</span>
         ))}
       </div>
+    </aside>
+  );
+}
+
+function AssetWorkspace({ project }: { project: MockProject }) {
+  return (
+    <div className="asset-workspace">
+      <AssetPreview asset={project.assetPack.assets[0]} />
+      <div className="asset-grid">
+        {project.assetPack.assets.map((asset) => (
+          <AssetTile key={asset.assetKey} asset={asset} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AssetPreview({ asset }: { asset: AssetRequirement }) {
+  return (
+    <section className="asset-preview">
+      <div className="generated-image">
+        <span>{asset.type}</span>
+      </div>
+      <div className="asset-meta">
+        <h3>Generated asset: {asset.assetKey}</h3>
+        <label>Prompt</label>
+        <p>{asset.style}</p>
+        <label>Description</label>
+        <p>{asset.spec}</p>
+        <div className="meta-table">
+          <span>Mode</span>
+          <strong>{asset.generationMode}</strong>
+          <span>Copyright</span>
+          <strong>{asset.copyrightStatus}</strong>
+        </div>
+      </div>
     </section>
   );
 }
 
-function PromptQuestion({ label, value }: { label: string; value: string }) {
+function CodeWorkspace({ project }: { project: MockProject }) {
   return (
-    <div className="prompt-question">
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <div className="code-workspace">
+      <section className="code-panel">
+        <h3>Standard Artifacts</h3>
+        <div className="artifact-grid">
+          {project.artifacts.map((artifact) => (
+            <ArtifactCard key={artifact.fileName} artifact={artifact} />
+          ))}
+        </div>
+      </section>
+      <section className="code-panel">
+        <h3>Game Config</h3>
+        <pre>{JSON.stringify(project.gameConfig, null, 2)}</pre>
+      </section>
     </div>
+  );
+}
+
+function AssetTile({ asset }: { asset: AssetRequirement }) {
+  return (
+    <article className="asset-tile">
+      <div className="asset-thumb">
+        <Database size={18} />
+      </div>
+      <strong>{asset.assetKey}</strong>
+      <span>{asset.type} / {asset.generationMode}</span>
+    </article>
   );
 }
 
@@ -285,6 +322,16 @@ function ArtifactCard({ artifact }: { artifact: PipelineArtifact }) {
       </div>
       <code>{artifact.format}</code>
     </article>
+  );
+}
+
+function LogLine({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
+  return (
+    <div className="log-line">
+      <CheckCircle2 size={16} className={ok ? "ok" : ""} />
+      <span>{label}</span>
+      <code>{detail}</code>
+    </div>
   );
 }
 
