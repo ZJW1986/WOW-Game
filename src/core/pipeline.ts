@@ -85,7 +85,7 @@ export function runMockPipeline(idea: string): MockProject {
     playUrl: publishRecord.playUrl,
     feedback: {
       rating: 4,
-      comment: "玩法能跑通，第二版可以增加关卡节奏和美术差异。",
+      comment: "玩法已经跑通，第二版可以增加关卡节奏和美术差异。",
       iterationSuggestion: "下一版建议降低前 20 秒难度，增加奖励道具，并强化失败反馈。"
     }
   };
@@ -141,7 +141,7 @@ function createTitle(idea: string, family: TemplateFamily): string {
   return "闪避迷航";
 }
 
-function createAssetRequirements(templateFamily: TemplateFamily): AssetRequirement[] {
+export function createAssetRequirements(templateFamily: TemplateFamily): AssetRequirement[] {
   const common: AssetRequirement[] = [
     {
       assetKey: "cover.main",
@@ -233,7 +233,7 @@ function mockImage(assetKey: string, purpose: string, spec: string): AssetRequir
   };
 }
 
-function createGameConfig(
+export function createGameConfig(
   title: string,
   idea: string,
   templateFamily: TemplateFamily,
@@ -263,7 +263,7 @@ function createGameConfig(
   };
 }
 
-function createQaReport(config: GameConfig, assetPack: AssetPack): QaReport {
+export function createQaReport(config: GameConfig, assetPack: AssetPack): QaReport {
   const missingAssets = validateAssetReferences(config, assetPack);
   return {
     scores: {
@@ -284,7 +284,7 @@ function createQaReport(config: GameConfig, assetPack: AssetPack): QaReport {
   };
 }
 
-function createArtifacts(input: {
+export function createArtifacts(input: {
   idea: string;
   title: string;
   classification: Classification;

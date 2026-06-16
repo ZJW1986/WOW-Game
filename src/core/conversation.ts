@@ -62,7 +62,7 @@ export function answerDesignQuestion(
       ...session.turns,
       turn("user", "guided_questions", `${question.label}: ${value}`),
       ...(stage === "gdd_review"
-        ? [turn("assistant", "gdd_review", "信息已补齐，可以生成并确认标准 GDD。")]
+        ? [turn("assistant", "gdd_review", "信息已经补齐，可以生成并确认标准 GDD。")]
         : [])
     ]
   };
@@ -89,7 +89,7 @@ function createGuidedQuestions(idea: string): DesignQuestion[] {
       label: "胜利目标",
       prompt: "玩家怎样算赢？",
       inputType: "short_text",
-      defaultAnswer: isPlatformer ? "到达终点并收集 6 个金币" : "收集 6 颗星星并避开所有危险物",
+      defaultAnswer: isPlatformer ? "到达终点并收集 6 枚金币" : "收集 6 颗星星并避开所有危险物",
       required: true
     },
     {

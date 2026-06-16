@@ -12,9 +12,13 @@ export function createPromptForTask(
 
   const taskInstruction: Record<PromptTaskType, string> = {
     "llm.classification":
-      "根据 Physics-First 规则选择 templateFamily，并输出 reasons、risks、unsupportedRequests。",
+      '任务类型 llm.classification。按 Physics-First 规则选择 templateFamily。只返回 {"templateFamily","reasons","risks","unsupportedRequests"}。',
+    "llm.guided_questions":
+      '任务类型 llm.guided_questions。生成 3-5 个设计追问。只返回 {"questions":[{"id","label","prompt","inputType","options","defaultAnswer","required"}]}。',
     "llm.gdd":
-      "生成 6 段式技术 GDD：concept、loop、entities、level、numbers、implementationRoute。",
+      '任务类型 llm.gdd。生成 6 段式技术 GDD。只返回 {"concept","loop","entities","level","numbers","implementationRoute"}。',
+    "llm.game_config":
+      '任务类型 llm.game_config。生成模板可读取的配置。只返回 {"templateFamily","title","pitch","playerGoal","controls","difficulty","referencedAssetKeys","level"}。',
     "image.asset":
       "根据 asset-requirements 生成图片资源任务说明，返回 assetKey、style、spec 和版权状态。",
     "audio.sfx":

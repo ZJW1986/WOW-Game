@@ -15,7 +15,15 @@ export interface StoredVersion {
 }
 
 export interface ModelTaskRequest {
-  taskType: "llm.gdd" | "llm.classification" | "image.asset" | "audio.sfx" | "audio.bgm" | "effect.preset";
+  taskType:
+    | "llm.classification"
+    | "llm.guided_questions"
+    | "llm.gdd"
+    | "llm.game_config"
+    | "image.asset"
+    | "audio.sfx"
+    | "audio.bgm"
+    | "effect.preset";
   prompt: string;
   provider: "mock" | "openai" | "deepseek" | "custom";
   model: string;
