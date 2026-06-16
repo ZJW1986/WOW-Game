@@ -2,22 +2,33 @@ import type {
   ConversationSession,
   ConversationStage,
   ConversationTurn,
-  DesignQuestion
+  DesignQuestion,
+  TemplateFamily
 } from "./types";
 
 const FIXED_TIME = "2026-06-17T00:00:00.000Z";
 
-export function createConversationSession(idea: string): ConversationSession {
+export function createConversationSession(
+  idea: string,
+  options: {
+    projectId?: string;
+    preferredTemplate?: TemplateFamily;
+  } = {}
+): ConversationSession {
   const questions = createGuidedQuestions(idea);
   return {
     id: "session-1",
-    projectId: "project-1",
+    projectId: options.projectId ?? "project-1",
     idea,
     stage: "guided_questions",
     questions,
     answers: [],
     turns: [
-      turn("system", "idea_intake", "WOW Game 会把创意转成标准游戏生产产物。"),
+      turn(
+        "system",
+        "idea_intake",
+        `WOW Game 会把创意转成标准游戏生产产物。推荐模板：${options.preferredTemplate ?? "auto"}`
+      ),
       turn("user", "idea_intake", idea),
       turn(
         "assistant",

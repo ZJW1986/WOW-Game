@@ -11,9 +11,9 @@ import {
   Library,
   Plus,
   RefreshCcw,
+  Search,
   Send,
   Share2,
-  Search,
   Upload,
   Wand2,
   Zap
@@ -24,14 +24,6 @@ import {
   createConversationSession,
   getNextConversationAction
 } from "../core/conversation";
-import { runMockPipeline } from "../core/pipeline";
-import {
-  createStartGameDraft,
-  modelOptions,
-  templateOptions,
-  type StartGameDraft,
-  type StartModelId
-} from "../core/start";
 import {
   getFeaturedGames,
   getGamesByCategory,
@@ -40,6 +32,14 @@ import {
   type PlayCategory,
   type PlayGame
 } from "../core/playCatalog";
+import { runMockPipeline } from "../core/pipeline";
+import {
+  createStartGameDraft,
+  modelOptions,
+  templateOptions,
+  type StartGameDraft,
+  type StartModelId
+} from "../core/start";
 import type {
   AssetRequirement,
   ConversationSession,
@@ -88,7 +88,11 @@ export function App() {
         onCreate={() => {
           const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
           setIdea(nextIdea);
-          setSession(createConversationSession(nextIdea));
+          setSession(
+            createConversationSession(nextIdea, {
+              preferredTemplate: startDraft.templateFamily
+            })
+          );
           setHasStarted(true);
         }}
       />
@@ -204,7 +208,6 @@ function StartPage({
   onPlay: () => void;
   onCreate: () => void;
 }) {
-  const ideaLength = draft.idea.length;
   const canCreate = draft.idea.trim().length > 0;
   const updateDraft = (patch: Partial<StartGameDraft>) => onDraftChange({ ...draft, ...patch });
 
@@ -270,7 +273,7 @@ function StartPage({
                 ))}
               </select>
             </label>
-            <span className="char-count">{ideaLength}/500</span>
+            <span className="char-count">{draft.idea.length}/500</span>
           </div>
 
           <div className="template-picker">
@@ -324,11 +327,7 @@ function PlayPage({
   onPlayGame: (game: PlayGame) => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<PlayCategory>("All");
-  const featured = getFeaturedGames();
-  const popular = getPopularGames();
-  const casual = getGamesByCategory("Casual").slice(0, 8);
-  const advanced = getGamesByCategory("Advanced").slice(0, 8);
-  const filtered = getGamesByCategory(activeCategory).slice(0, 12);
+  const games = activeCategory === "All" ? getFeaturedGames() : getGamesByCategory(activeCategory).slice(0, 12);
 
   return (
     <main className="play-shell">
@@ -352,10 +351,6 @@ function PlayPage({
             <Zap size={15} />
             UPGRADE
           </button>
-          <button className="ghost-button">
-            <Wand2 size={15} />
-            MY PROJECTS
-          </button>
           <button className="play-icon-button" title="Search">
             <Search size={18} />
           </button>
@@ -375,10 +370,15 @@ function PlayPage({
       </nav>
 
       <section className="play-scroll">
-        <GameSection title={activeCategory === "All" ? "Featured games" : `${activeCategory} games`} games={activeCategory === "All" ? featured : filtered} onPlayGame={onPlayGame} compact />
-        <GameMosaic title="Popular games" games={popular} onPlayGame={onPlayGame} />
-        <GameSection title="Casual Games" games={casual} onPlayGame={onPlayGame} />
-        <GameSection title="Advanced Games" games={advanced} onPlayGame={onPlayGame} />
+        <GameSection
+          title={activeCategory === "All" ? "Featured games" : `${activeCategory} games`}
+          games={games}
+          onPlayGame={onPlayGame}
+          compact
+        />
+        <GameMosaic title="Popular games" games={getPopularGames()} onPlayGame={onPlayGame} />
+        <GameSection title="Casual Games" games={getGamesByCategory("Casual").slice(0, 8)} onPlayGame={onPlayGame} />
+        <GameSection title="Advanced Games" games={getGamesByCategory("Advanced").slice(0, 8)} onPlayGame={onPlayGame} />
       </section>
     </main>
   );
@@ -442,7 +442,7 @@ function GameCard({ game, onClick }: { game: PlayGame; onClick: () => void }) {
       </div>
       <div className="game-card-overlay">
         <strong>{game.title}</strong>
-        <span>{formatCount(game.plays)} ▶ · {game.likes} ♥</span>
+        <span>{formatCount(game.plays)} plays · {game.likes} likes</span>
       </div>
     </button>
   );
@@ -456,7 +456,7 @@ function cardBackground(palette: string): string {
 }
 
 function formatCount(value: number): string {
-  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 1 : 1)}K`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
   return `${value}`;
 }
 
