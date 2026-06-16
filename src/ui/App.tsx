@@ -13,6 +13,7 @@ import {
   RefreshCcw,
   Send,
   Share2,
+  Search,
   Upload,
   Wand2,
   Zap
@@ -31,6 +32,14 @@ import {
   type StartGameDraft,
   type StartModelId
 } from "../core/start";
+import {
+  getFeaturedGames,
+  getGamesByCategory,
+  getPopularGames,
+  playCategories,
+  type PlayCategory,
+  type PlayGame
+} from "../core/playCatalog";
 import type {
   AssetRequirement,
   ConversationSession,
@@ -57,6 +66,7 @@ export function App() {
     createStartGameDraft({ idea: t.prompt.defaultIdea })
   );
   const [hasStarted, setHasStarted] = useState(false);
+  const [homeMode, setHomeMode] = useState<"create" | "play">("create");
   const [session, setSession] = useState<ConversationSession>(() =>
     createConversationSession(t.prompt.defaultIdea)
   );
@@ -64,12 +74,17 @@ export function App() {
   const project = useMemo(() => runMockPipeline(idea), [idea]);
 
   if (!hasStarted) {
+    if (homeMode === "play") {
+      return <PlayPage onCreate={() => setHomeMode("create")} onPlayGame={() => setHasStarted(true)} />;
+    }
+
     return (
       <StartPage
         draft={startDraft}
         locale={locale}
         onLocaleToggle={() => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN")}
         onDraftChange={setStartDraft}
+        onPlay={() => setHomeMode("play")}
         onCreate={() => {
           const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
           setIdea(nextIdea);
@@ -179,12 +194,14 @@ function StartPage({
   locale,
   onLocaleToggle,
   onDraftChange,
+  onPlay,
   onCreate
 }: {
   draft: StartGameDraft;
   locale: Locale;
   onLocaleToggle: () => void;
   onDraftChange: (draft: StartGameDraft) => void;
+  onPlay: () => void;
   onCreate: () => void;
 }) {
   const ideaLength = draft.idea.length;
@@ -203,7 +220,7 @@ function StartPage({
             <Plus size={15} />
             CREATE
           </button>
-          <button>
+          <button onClick={onPlay}>
             <Gamepad2 size={15} />
             PLAY
           </button>
@@ -297,6 +314,150 @@ function StartPage({
       </section>
     </main>
   );
+}
+
+function PlayPage({
+  onCreate,
+  onPlayGame
+}: {
+  onCreate: () => void;
+  onPlayGame: (game: PlayGame) => void;
+}) {
+  const [activeCategory, setActiveCategory] = useState<PlayCategory>("All");
+  const featured = getFeaturedGames();
+  const popular = getPopularGames();
+  const casual = getGamesByCategory("Casual").slice(0, 8);
+  const advanced = getGamesByCategory("Advanced").slice(0, 8);
+  const filtered = getGamesByCategory(activeCategory).slice(0, 12);
+
+  return (
+    <main className="play-shell">
+      <header className="play-nav">
+        <div className="start-brand">
+          <div className="brand-mark">W</div>
+          <strong>WOW Game</strong>
+        </div>
+        <nav className="start-mode-tabs" aria-label="Create or play">
+          <button onClick={onCreate}>
+            <Plus size={15} />
+            CREATE
+          </button>
+          <button className="active">
+            <Gamepad2 size={15} />
+            PLAY
+          </button>
+        </nav>
+        <div className="play-actions">
+          <button className="ghost-button">
+            <Zap size={15} />
+            UPGRADE
+          </button>
+          <button className="ghost-button">
+            <Wand2 size={15} />
+            MY PROJECTS
+          </button>
+          <button className="play-icon-button" title="Search">
+            <Search size={18} />
+          </button>
+        </div>
+      </header>
+
+      <nav className="play-category-bar" aria-label="Game categories">
+        {playCategories.map((category) => (
+          <button
+            key={category}
+            className={category === activeCategory ? "active" : ""}
+            onClick={() => setActiveCategory(category)}
+          >
+            {category}
+          </button>
+        ))}
+      </nav>
+
+      <section className="play-scroll">
+        <GameSection title={activeCategory === "All" ? "Featured games" : `${activeCategory} games`} games={activeCategory === "All" ? featured : filtered} onPlayGame={onPlayGame} compact />
+        <GameMosaic title="Popular games" games={popular} onPlayGame={onPlayGame} />
+        <GameSection title="Casual Games" games={casual} onPlayGame={onPlayGame} />
+        <GameSection title="Advanced Games" games={advanced} onPlayGame={onPlayGame} />
+      </section>
+    </main>
+  );
+}
+
+function GameSection({
+  title,
+  games,
+  compact = false,
+  onPlayGame
+}: {
+  title: string;
+  games: PlayGame[];
+  compact?: boolean;
+  onPlayGame: (game: PlayGame) => void;
+}) {
+  return (
+    <section className="game-section">
+      <div className="section-row">
+        <h2>{title}</h2>
+        {!compact && <button>View more</button>}
+      </div>
+      <div className={compact ? "game-row compact" : "game-row"}>
+        {games.map((game) => (
+          <GameCard key={game.id} game={game} onClick={() => onPlayGame(game)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function GameMosaic({
+  title,
+  games,
+  onPlayGame
+}: {
+  title: string;
+  games: PlayGame[];
+  onPlayGame: (game: PlayGame) => void;
+}) {
+  return (
+    <section className="game-section">
+      <div className="section-row">
+        <h2>{title}</h2>
+      </div>
+      <div className="game-mosaic">
+        {games.map((game) => (
+          <GameCard key={game.id} game={game} onClick={() => onPlayGame(game)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function GameCard({ game, onClick }: { game: PlayGame; onClick: () => void }) {
+  return (
+    <button className={`game-card ${game.size ?? "normal"}`} onClick={onClick}>
+      <div className="game-art" style={{ background: cardBackground(game.palette) }}>
+        <span>{game.categories[0]}</span>
+        <strong>{game.title}</strong>
+      </div>
+      <div className="game-card-overlay">
+        <strong>{game.title}</strong>
+        <span>{formatCount(game.plays)} ▶ · {game.likes} ♥</span>
+      </div>
+    </button>
+  );
+}
+
+function cardBackground(palette: string): string {
+  const [a, b] = palette.split(",");
+  return `radial-gradient(circle at 24% 22%, rgba(255,255,255,.34), transparent 12%),
+    linear-gradient(135deg, ${a}, ${b}),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.12) 0 2px, transparent 2px 18px)`;
+}
+
+function formatCount(value: number): string {
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 1 : 1)}K`;
+  return `${value}`;
 }
 
 function AgentHeader({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {

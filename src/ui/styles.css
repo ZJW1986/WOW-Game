@@ -34,6 +34,202 @@ button {
     linear-gradient(180deg, #120329, #061017 70%);
 }
 
+.play-shell {
+  min-height: 100vh;
+  color: #fff;
+  background:
+    radial-gradient(circle at 52% 28%, rgb(130 24 70 / 72%), transparent 28%),
+    linear-gradient(180deg, #12001f 0, #250039 38%, #4e126d 100%);
+}
+
+.play-nav {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 64px;
+  padding: 0 18px;
+  border-bottom: 1px solid #2d1738;
+  background: #020203;
+}
+
+.play-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.play-icon-button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid #3b2b48;
+  border-radius: 8px;
+  color: #d7cbe7;
+  background: #050307;
+}
+
+.play-category-bar {
+  position: sticky;
+  top: 64px;
+  z-index: 4;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 12px 4px;
+  border-bottom: 1px solid #3b1551;
+  background: #12001f;
+}
+
+.play-category-bar button {
+  flex: 0 0 auto;
+  min-width: 42px;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid #6b4615;
+  border-radius: 4px;
+  color: #fff5df;
+  background: #2b1a07;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.play-category-bar button.active {
+  border-color: #a100ff;
+  background: #9600d6;
+}
+
+.play-scroll {
+  overflow-y: auto;
+  height: calc(100vh - 117px);
+  padding: 18px 34px 40px;
+}
+
+.game-section + .game-section {
+  margin-top: 20px;
+}
+
+.section-row {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin-bottom: 10px;
+}
+
+.section-row h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.section-row button {
+  border: 0;
+  color: #b9a7c7;
+  background: transparent;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.game-row {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.game-row.compact {
+  overflow-x: auto;
+  grid-template-columns: repeat(8, minmax(220px, 1fr));
+}
+
+.game-mosaic {
+  display: grid;
+  grid-template-columns: 2.1fr repeat(6, minmax(150px, 1fr));
+  grid-auto-rows: 140px;
+  gap: 10px;
+}
+
+.game-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 140px;
+  padding: 0;
+  border: 1px solid rgb(160 131 183 / 56%);
+  border-radius: 6px;
+  color: #fff;
+  background: #120319;
+  box-shadow: inset 0 -60px 60px rgb(0 0 0 / 44%);
+}
+
+.game-card.large {
+  grid-row: span 2;
+}
+
+.game-card.wide {
+  grid-column: span 2;
+  grid-row: span 2;
+}
+
+.game-art {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 18px;
+  text-align: center;
+}
+
+.game-art span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgb(0 0 0 / 42%);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.game-art strong {
+  max-width: 90%;
+  color: rgb(255 255 255 / 90%);
+  font-size: clamp(18px, 2vw, 34px);
+  line-height: 0.95;
+  text-transform: uppercase;
+  text-shadow: 0 2px 8px rgb(0 0 0 / 70%);
+}
+
+.game-card-overlay {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  gap: 3px;
+  padding: 26px 10px 9px;
+  background: linear-gradient(180deg, transparent, rgb(0 0 0 / 76%));
+  text-align: left;
+}
+
+.game-card-overlay strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-card-overlay span {
+  color: #dacde8;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .start-shell::after {
   position: fixed;
   right: 0;
