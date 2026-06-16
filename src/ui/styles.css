@@ -23,6 +23,279 @@ button {
   cursor: pointer;
 }
 
+.start-shell {
+  min-height: 100vh;
+  color: #e8fbff;
+  background:
+    linear-gradient(180deg, rgb(7 2 15 / 42%), rgb(3 8 13 / 95%)),
+    radial-gradient(circle at 50% 38%, rgb(0 229 255 / 12%), transparent 18%),
+    radial-gradient(circle at 50% 44%, rgb(255 61 190 / 22%), transparent 27%),
+    radial-gradient(circle at 74% 38%, rgb(0 0 0 / 45%), transparent 23%),
+    linear-gradient(180deg, #120329, #061017 70%);
+}
+
+.start-shell::after {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 36vh;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(rgb(118 64 255 / 22%) 2px, transparent 2px),
+    linear-gradient(90deg, rgb(118 64 255 / 19%) 2px, transparent 2px);
+  background-size: 82px 31px;
+  transform: perspective(420px) rotateX(58deg);
+  transform-origin: bottom;
+  opacity: 0.75;
+}
+
+.start-nav,
+.start-brand,
+.start-mode-tabs,
+.start-actions,
+.start-mode-tabs button,
+.create-dialog-row,
+.create-dialog-footer,
+.upload-button,
+.create-button {
+  display: flex;
+  align-items: center;
+}
+
+.start-nav {
+  position: relative;
+  z-index: 2;
+  justify-content: space-between;
+  height: 60px;
+  padding: 0 20px;
+  border-bottom: 1px solid #27313a;
+  background: #020304;
+}
+
+.start-brand {
+  gap: 12px;
+  min-width: 210px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+}
+
+.start-mode-tabs {
+  overflow: hidden;
+  margin-right: auto;
+  border: 1px solid #222935;
+  border-radius: 8px;
+  background: #07090d;
+}
+
+.start-mode-tabs button {
+  gap: 8px;
+  height: 42px;
+  padding: 0 22px;
+  border: 0;
+  color: #7f8b98;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.start-mode-tabs button.active {
+  color: #eaffc9;
+  background: linear-gradient(180deg, rgb(224 255 107 / 18%), rgb(224 255 107 / 9%));
+  box-shadow: inset 0 0 0 1px rgb(224 255 107 / 42%);
+}
+
+.start-actions {
+  gap: 8px;
+}
+
+.start-stage {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-height: calc(100vh - 60px);
+  place-items: center;
+  padding: 9vh 24px 18vh;
+}
+
+.start-copy {
+  margin-bottom: 18px;
+  text-align: center;
+}
+
+.start-copy h1 {
+  margin: 0 0 18px;
+  color: #7c2cff;
+  font-size: clamp(32px, 4vw, 48px);
+  font-weight: 950;
+  letter-spacing: 0;
+  text-shadow: 0 0 32px rgb(124 44 255 / 55%);
+}
+
+.start-copy p {
+  margin: 0;
+  color: #a8a1b0;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 14px;
+}
+
+.start-copy button {
+  border: 0;
+  color: #fff;
+  background: transparent;
+  font-weight: 900;
+  text-decoration: underline;
+}
+
+.create-dialog {
+  width: min(640px, calc(100vw - 32px));
+  padding: 18px;
+  border: 1px solid rgb(182 167 201 / 48%);
+  border-radius: 8px;
+  background: rgb(43 11 20 / 62%);
+  box-shadow:
+    0 0 70px rgb(255 61 190 / 9%),
+    0 22px 60px rgb(0 0 0 / 38%);
+  backdrop-filter: blur(16px);
+}
+
+.create-dialog textarea {
+  width: 100%;
+  height: 88px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  color: #f8fbff;
+  background: transparent;
+}
+
+.create-dialog textarea::placeholder {
+  color: #918999;
+}
+
+.create-dialog-row {
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.field-label {
+  display: grid;
+  gap: 6px;
+  color: #9eb0b8;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.field-label select {
+  min-width: 190px;
+  border: 0;
+  color: #e8fbff;
+  background: transparent;
+  font-weight: 800;
+}
+
+.char-count {
+  color: #5dff63;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+}
+
+.template-picker {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 18px 0;
+}
+
+.template-chip {
+  display: grid;
+  min-height: 64px;
+  gap: 4px;
+  padding: 9px;
+  border: 1px solid rgb(99 78 119 / 76%);
+  border-radius: 8px;
+  color: #c8d7de;
+  background: rgb(22 17 31 / 72%);
+  text-align: left;
+}
+
+.template-chip.active {
+  border-color: #45f6c8;
+  color: #071018;
+  background: linear-gradient(135deg, #00e5ff, #45f6c8);
+}
+
+.template-chip strong {
+  font-size: 12px;
+}
+
+.template-chip span {
+  color: inherit;
+  opacity: 0.78;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.create-dialog-footer {
+  gap: 12px;
+}
+
+.upload-button {
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 7px;
+  color: #f1e9ff;
+  background: #2f2745;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.upload-button input {
+  display: none;
+}
+
+.uploaded-files {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+}
+
+.uploaded-files span {
+  overflow: hidden;
+  max-width: 120px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  color: #a8f7ef;
+  background: rgb(0 229 255 / 12%);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-button {
+  justify-content: center;
+  gap: 8px;
+  min-width: 150px;
+  height: 42px;
+  border: 0;
+  border-radius: 4px;
+  color: #061017;
+  background: linear-gradient(135deg, #00e5ff, #45f6c8);
+  font-weight: 950;
+}
+
+.create-button:disabled {
+  color: #a99daa;
+  background: rgb(255 255 255 / 20%);
+  cursor: default;
+}
+
 .app-shell {
   min-height: 100vh;
   background:
@@ -753,7 +1026,8 @@ pre {
   .creator-shell,
   .preview-workspace,
   .asset-preview,
-  .code-workspace {
+  .code-workspace,
+  .template-picker {
     grid-template-columns: 1fr;
   }
 
