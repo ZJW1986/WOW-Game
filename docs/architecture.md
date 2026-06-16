@@ -1,4 +1,4 @@
-# AI Game Production Platform MVP Architecture
+# WOW Game MVP Architecture
 
 This MVP implements the first closed loop for natural-language game generation:
 

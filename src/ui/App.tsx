@@ -39,7 +39,7 @@ export function App() {
         <div className="brand">
           <div className="brand-mark">AI</div>
           <div>
-            <h1>GameForge</h1>
+            <h1>WOW Game</h1>
             <p>OpenGame-style MVP</p>
           </div>
         </div>
