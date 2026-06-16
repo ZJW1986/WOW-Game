@@ -855,6 +855,41 @@ button {
   font-size: 13px;
 }
 
+.model-status-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.model-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model-status-row span,
+.model-status-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.model-status-card.generating {
+  border-color: #ffb020;
+}
+
+.model-status-card.ready {
+  border-color: #45f6c8;
+}
+
+.model-status-card.fallback,
+.model-status-card.error {
+  border-color: #ff6b6b;
+}
+
 .prompt-dock {
   position: absolute;
   right: 0;

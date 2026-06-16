@@ -49,6 +49,8 @@ import type {
 } from "../core/types";
 import { getMessages, type Locale } from "./i18n";
 import { PhaserPreview } from "./PhaserPreview";
+import { requestPlayableGeneration } from "../services/generationClient";
+import { createGenerationService } from "../services/generationService";
 
 const rightTabs = [
   { id: "preview", labelKey: "preview", icon: Gamepad2 },
@@ -57,6 +59,8 @@ const rightTabs = [
 ] as const;
 
 type RightTab = (typeof rightTabs)[number]["id"];
+type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
+type GenerationStatus = "idle" | "generating" | "ready" | "fallback" | "error";
 
 export function App() {
   const [locale, setLocale] = useState<Locale>("zh-CN");
@@ -70,8 +74,12 @@ export function App() {
   const [session, setSession] = useState<ConversationSession>(() =>
     createConversationSession(t.prompt.defaultIdea)
   );
+  const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
+  const [generationStatus, setGenerationStatus] = useState<GenerationStatus>("idle");
+  const [generationError, setGenerationError] = useState<string>("");
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
-  const project = useMemo(() => runMockPipeline(idea), [idea]);
+  const fallbackProject = useMemo(() => runMockPipeline(idea), [idea]);
+  const project = generationResult?.project ?? fallbackProject;
 
   if (!hasStarted) {
     if (homeMode === "play") {
@@ -87,13 +95,34 @@ export function App() {
         onPlay={() => setHomeMode("play")}
         onCreate={() => {
           const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
+          const nextSession = createConversationSession(nextIdea, {
+            preferredTemplate: startDraft.templateFamily
+          });
           setIdea(nextIdea);
-          setSession(
-            createConversationSession(nextIdea, {
-              preferredTemplate: startDraft.templateFamily
-            })
-          );
+          setSession(nextSession);
+          setGenerationResult(null);
+          setGenerationStatus("generating");
+          setGenerationError("");
           setHasStarted(true);
+          void generatePlayableFromDraft(startDraft, nextIdea, nextSession)
+            .then((result) => {
+              setGenerationResult(result);
+              setGenerationStatus(result.fallbacksUsed.length > 0 ? "fallback" : "ready");
+            })
+            .catch(async (error) => {
+              const message = error instanceof Error ? error.message : String(error);
+              const fallback = await createGenerationService().generatePlayableVersion({
+                idea: nextIdea,
+                answers: nextSession.answers,
+                templateFamily: startDraft.templateFamily,
+                projectId: "project-local-fallback",
+                baseUrl: getBrowserBaseUrl(),
+                model: "mock-designer"
+              });
+              setGenerationResult(fallback);
+              setGenerationStatus("error");
+              setGenerationError(message);
+            });
         }}
       />
     );
@@ -135,6 +164,11 @@ export function App() {
             <AgentIntro project={project} messages={t} />
             <UserPrompt text={idea} />
             <ConversationPanel session={session} onSessionChange={setSession} />
+            <ModelStatusCard
+              status={generationStatus}
+              error={generationError}
+              result={generationResult}
+            />
             <AgentBuildLog project={project} messages={t} />
             <SuggestionCard messages={t} />
           </div>
@@ -191,6 +225,28 @@ export function App() {
       </section>
     </main>
   );
+}
+
+async function generatePlayableFromDraft(
+  draft: StartGameDraft,
+  idea: string,
+  session: ConversationSession
+): Promise<GenerationResult> {
+  return (await requestPlayableGeneration({
+    idea,
+    answers: session.answers,
+    templateFamily: draft.templateFamily,
+    projectId: `project-${Date.now()}`,
+    baseUrl: getBrowserBaseUrl(),
+    model: draft.model
+  })) as GenerationResult;
+}
+
+function getBrowserBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return "http://localhost:5173";
+  }
+  return window.location.origin;
 }
 
 function StartPage({
@@ -527,6 +583,39 @@ function ConversationPanel({
         <span>{action.nextLabel}</span>
         <strong>{action.canGenerateArtifact ? "可生成标准产物" : "等待回答"}</strong>
       </div>
+    </article>
+  );
+}
+
+function ModelStatusCard({
+  status,
+  error,
+  result
+}: {
+  status: GenerationStatus;
+  error: string;
+  result: GenerationResult | null;
+}) {
+  const taskCount = result?.modelTasks.length ?? 0;
+  const fallbackCount = result?.fallbacksUsed.length ?? 0;
+  const label =
+    status === "generating"
+      ? "DeepSeek 正在生成标准产物"
+      : status === "ready"
+        ? "DeepSeek ready"
+        : status === "fallback"
+          ? "Fallback used"
+          : status === "error"
+            ? "Backend unavailable, Mock fallback used"
+            : "Model idle";
+  return (
+    <article className={`chat-card model-status-card ${status}`}>
+      <div className="model-status-row">
+        <strong>{label}</strong>
+        <span>{taskCount > 0 ? `${taskCount} model tasks` : "waiting"}</span>
+      </div>
+      {fallbackCount > 0 && <p>已回退任务：{result?.fallbacksUsed.join(", ")}</p>}
+      {error && <p>错误：{error}</p>}
     </article>
   );
 }
