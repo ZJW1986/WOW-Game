@@ -1,0 +1,50 @@
+import type { TemplateFamily } from "./types";
+
+export type StartModelId = "deepseek-v4-flash" | "mock-designer" | "custom-provider";
+
+export interface StartGameDraft {
+  idea: string;
+  model: StartModelId;
+  templateFamily: TemplateFamily;
+  uploadedFileNames: string[];
+}
+
+export const modelOptions: Array<{ id: StartModelId; label: string; description: string }> = [
+  {
+    id: "deepseek-v4-flash",
+    label: "DeepSeek v4 flash",
+    description: "用于策划、分类、标准产物和迭代建议"
+  },
+  {
+    id: "mock-designer",
+    label: "Mock Designer",
+    description: "离线模拟生成，适合快速跑通流程"
+  },
+  {
+    id: "custom-provider",
+    label: "Custom Provider",
+    description: "预留自定义模型接入"
+  }
+];
+
+export const templateOptions: Array<{ id: TemplateFamily; label: string; description: string }> = [
+  { id: "top_down", label: "俯视角", description: "移动、躲避、收集、追逐" },
+  { id: "platformer", label: "平台跳跃", description: "重力、跳跃、平台、机关" },
+  { id: "grid_logic", label: "格子解谜", description: "棋盘、推箱、回合、消除" },
+  { id: "tower_defense", label: "塔防", description: "路线、防守、波次、炮塔" },
+  { id: "ui_heavy", label: "经营/卡牌", description: "菜单、卡牌、养成、对话" }
+];
+
+export function createStartGameDraft(input: {
+  idea: string;
+  model?: StartModelId;
+  templateFamily?: TemplateFamily;
+  uploadedFileNames?: string[];
+}): StartGameDraft {
+  return {
+    idea: input.idea,
+    model: input.model ?? "deepseek-v4-flash",
+    templateFamily: input.templateFamily ?? "top_down",
+    uploadedFileNames: input.uploadedFileNames ?? []
+  };
+}

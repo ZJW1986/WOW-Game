@@ -9,15 +9,35 @@ import {
   Gamepad2,
   ImageIcon,
   Library,
+  Plus,
   RefreshCcw,
   Send,
   Share2,
+  Upload,
   Wand2,
   Zap
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import {
+  answerDesignQuestion,
+  createConversationSession,
+  getNextConversationAction
+} from "../core/conversation";
 import { runMockPipeline } from "../core/pipeline";
-import type { AssetRequirement, MockProject, PipelineArtifact } from "../core/types";
+import {
+  createStartGameDraft,
+  modelOptions,
+  templateOptions,
+  type StartGameDraft,
+  type StartModelId
+} from "../core/start";
+import type {
+  AssetRequirement,
+  ConversationSession,
+  MockProject,
+  PipelineArtifact,
+  TemplateFamily
+} from "../core/types";
 import { getMessages, type Locale } from "./i18n";
 import { PhaserPreview } from "./PhaserPreview";
 
@@ -33,8 +53,32 @@ export function App() {
   const [locale, setLocale] = useState<Locale>("zh-CN");
   const t = getMessages(locale);
   const [idea, setIdea] = useState<string>(t.prompt.defaultIdea);
+  const [startDraft, setStartDraft] = useState<StartGameDraft>(() =>
+    createStartGameDraft({ idea: t.prompt.defaultIdea })
+  );
+  const [hasStarted, setHasStarted] = useState(false);
+  const [session, setSession] = useState<ConversationSession>(() =>
+    createConversationSession(t.prompt.defaultIdea)
+  );
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const project = useMemo(() => runMockPipeline(idea), [idea]);
+
+  if (!hasStarted) {
+    return (
+      <StartPage
+        draft={startDraft}
+        locale={locale}
+        onLocaleToggle={() => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN")}
+        onDraftChange={setStartDraft}
+        onCreate={() => {
+          const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
+          setIdea(nextIdea);
+          setSession(createConversationSession(nextIdea));
+          setHasStarted(true);
+        }}
+      />
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -71,10 +115,18 @@ export function App() {
           <div className="agent-scroll">
             <AgentIntro project={project} messages={t} />
             <UserPrompt text={idea} />
+            <ConversationPanel session={session} onSessionChange={setSession} />
             <AgentBuildLog project={project} messages={t} />
             <SuggestionCard messages={t} />
           </div>
-          <PromptDock idea={idea} messages={t} onIdeaChange={setIdea} />
+          <PromptDock
+            idea={idea}
+            messages={t}
+            onIdeaChange={(nextIdea) => {
+              setIdea(nextIdea);
+              setSession(createConversationSession(nextIdea));
+            }}
+          />
         </aside>
 
         <section className="stage-panel">
@@ -122,6 +174,131 @@ export function App() {
   );
 }
 
+function StartPage({
+  draft,
+  locale,
+  onLocaleToggle,
+  onDraftChange,
+  onCreate
+}: {
+  draft: StartGameDraft;
+  locale: Locale;
+  onLocaleToggle: () => void;
+  onDraftChange: (draft: StartGameDraft) => void;
+  onCreate: () => void;
+}) {
+  const ideaLength = draft.idea.length;
+  const canCreate = draft.idea.trim().length > 0;
+  const updateDraft = (patch: Partial<StartGameDraft>) => onDraftChange({ ...draft, ...patch });
+
+  return (
+    <main className="start-shell">
+      <header className="start-nav">
+        <div className="start-brand">
+          <div className="brand-mark">W</div>
+          <strong>WOW Game</strong>
+        </div>
+        <nav className="start-mode-tabs" aria-label="Create or play">
+          <button className="active">
+            <Plus size={15} />
+            CREATE
+          </button>
+          <button>
+            <Gamepad2 size={15} />
+            PLAY
+          </button>
+        </nav>
+        <div className="start-actions">
+          <button className="ghost-button">
+            <Zap size={15} />
+            UPGRADE
+          </button>
+          <button className="ghost-button">
+            <Wand2 size={15} />
+            MY PROJECTS
+          </button>
+          <button className="locale-button" onClick={onLocaleToggle}>
+            {locale === "zh-CN" ? "中文" : "EN"}
+          </button>
+        </div>
+      </header>
+
+      <section className="start-stage">
+        <div className="start-copy">
+          <h1>Create from Scratch</h1>
+          <p>
+            Describe your game below, or <button>pick a template</button>
+          </p>
+        </div>
+
+        <section className="create-dialog" aria-label="Create new game">
+          <textarea
+            maxLength={500}
+            value={draft.idea}
+            onChange={(event) => updateDraft({ idea: event.target.value })}
+            placeholder="Tell us what game you want to make..."
+          />
+
+          <div className="create-dialog-row">
+            <label className="field-label">
+              Model
+              <select
+                value={draft.model}
+                onChange={(event) => updateDraft({ model: event.target.value as StartModelId })}
+              >
+                {modelOptions.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="char-count">{ideaLength}/500</span>
+          </div>
+
+          <div className="template-picker">
+            {templateOptions.map((template) => (
+              <button
+                key={template.id}
+                className={draft.templateFamily === template.id ? "template-chip active" : "template-chip"}
+                onClick={() => updateDraft({ templateFamily: template.id as TemplateFamily })}
+              >
+                <strong>{template.label}</strong>
+                <span>{template.description}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="create-dialog-footer">
+            <label className="upload-button">
+              <Upload size={16} />
+              UPLOAD FILE
+              <input
+                multiple
+                type="file"
+                onChange={(event) =>
+                  updateDraft({
+                    uploadedFileNames: Array.from(event.target.files ?? []).map((file) => file.name)
+                  })
+                }
+              />
+            </label>
+            <div className="uploaded-files">
+              {draft.uploadedFileNames.slice(0, 2).map((fileName) => (
+                <span key={fileName}>{fileName}</span>
+              ))}
+            </div>
+            <button className="create-button" disabled={!canCreate} onClick={onCreate}>
+              Create
+              <Send size={17} />
+            </button>
+          </div>
+        </section>
+      </section>
+    </main>
+  );
+}
+
 function AgentHeader({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
   return (
     <div className="agent-header">
@@ -153,6 +330,44 @@ function AgentIntro({ project, messages }: { project: MockProject; messages: Ret
 
 function UserPrompt({ text }: { text: string }) {
   return <div className="user-prompt">{text}</div>;
+}
+
+function ConversationPanel({
+  session,
+  onSessionChange
+}: {
+  session: ConversationSession;
+  onSessionChange: (session: ConversationSession) => void;
+}) {
+  const action = getNextConversationAction(session);
+  return (
+    <article className="chat-card conversation-card">
+      <p className="thought-line">对话阶段：{session.stage}</p>
+      {session.questions.map((question) => {
+        const answer = session.answers.find((item) => item.questionId === question.id);
+        return (
+          <div className="question-card" key={question.id}>
+            <div>
+              <strong>{question.label}</strong>
+              <span>{question.prompt}</span>
+            </div>
+            <button
+              disabled={Boolean(answer)}
+              onClick={() =>
+                onSessionChange(answerDesignQuestion(session, question.id, question.defaultAnswer))
+              }
+            >
+              {answer ? answer.value : `使用推荐：${question.defaultAnswer}`}
+            </button>
+          </div>
+        );
+      })}
+      <div className="conversation-action">
+        <span>{action.nextLabel}</span>
+        <strong>{action.canGenerateArtifact ? "可生成标准产物" : "等待回答"}</strong>
+      </div>
+    </article>
+  );
 }
 
 function AgentBuildLog({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {

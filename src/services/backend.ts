@@ -1,5 +1,5 @@
-import { runMockPipeline } from "../core/pipeline";
-import type { AssetRequirement, MockProject, QaReport } from "../core/types";
+import { createPublishRecord, runMockPipeline } from "../core/pipeline";
+import type { AssetRequirement, MockProject, PlayFeedback, PublishRecord, QaReport } from "../core/types";
 
 export interface StoredProject {
   id: string;
@@ -36,6 +36,7 @@ interface Store {
   projects: StoredProject[];
   versions: StoredVersion[];
   generated: Map<string, MockProject>;
+  feedback: PlayFeedback[];
 }
 
 export interface BackendOptions {
@@ -61,7 +62,8 @@ export function createInMemoryBackend(options: BackendOptions = {}) {
   const store: Store = {
     projects: [],
     versions: [],
-    generated: new Map()
+    generated: new Map(),
+    feedback: []
   };
 
   return {
@@ -105,16 +107,37 @@ export function createInMemoryBackend(options: BackendOptions = {}) {
       }
     },
     play: {
-      publish(versionId: string) {
+      publish(
+        versionId: string,
+        options: {
+          visibility?: PublishRecord["visibility"];
+          baseUrl?: string;
+        } = {}
+      ): PublishRecord {
         const generated = requireGeneratedByVersion(store, versionId);
         const storedVersion = requireVersion(store, versionId);
         storedVersion.status = "published";
-        return {
+        return createPublishRecord(storedVersion.projectId, versionId, generated.title, options);
+      },
+      submitFeedback(
+        versionId: string,
+        input: {
+          rating: number;
+          comment: string;
+          playerName: string;
+        }
+      ): PlayFeedback {
+        requireVersion(store, versionId);
+        const feedback: PlayFeedback = {
           versionId,
-          playUrl: `/play/${storedVersion.projectId}/${versionId}`,
-          title: generated.title,
-          publishedAt: new Date("2026-06-16T00:00:00.000Z").toISOString()
+          rating: input.rating,
+          comment: input.comment,
+          playerName: input.playerName,
+          iterationSuggestion: `下一版建议根据「${input.comment}」优化节奏、反馈和难度。`,
+          createdAt: new Date("2026-06-17T00:00:00.000Z").toISOString()
         };
+        store.feedback.push(feedback);
+        return feedback;
       }
     },
     models: {

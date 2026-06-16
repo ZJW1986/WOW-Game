@@ -7,6 +7,7 @@ export type TemplateFamily =
 
 export type PipelineStage =
   | "idea-intake"
+  | "guided-questions"
   | "classification"
   | "gdd"
   | "asset-requirements"
@@ -96,4 +97,69 @@ export interface MockProject {
     comment: string;
     iterationSuggestion: string;
   };
+}
+
+export type ConversationStage =
+  | "idea_intake"
+  | "guided_questions"
+  | "gdd_review"
+  | "asset_review"
+  | "build_review"
+  | "publish_ready";
+
+export interface ConversationTurn {
+  id: string;
+  role: "system" | "user" | "assistant";
+  stage: ConversationStage;
+  content: string;
+  modelTaskId?: string;
+  createdAt: string;
+}
+
+export interface DesignQuestion {
+  id: string;
+  label: string;
+  prompt: string;
+  inputType: "single_choice" | "multi_choice" | "short_text" | "number";
+  options?: string[];
+  defaultAnswer: string;
+  required: boolean;
+}
+
+export interface UserAnswer {
+  questionId: string;
+  value: string;
+  answeredAt: string;
+}
+
+export interface ConversationSession {
+  id: string;
+  projectId: string;
+  idea: string;
+  stage: ConversationStage;
+  turns: ConversationTurn[];
+  questions: DesignQuestion[];
+  answers: UserAnswer[];
+  currentArtifact?: PipelineArtifact;
+}
+
+export interface PublishRecord {
+  versionId: string;
+  status: "draft" | "published";
+  playUrl: string;
+  publicUrl: string;
+  coverAssetKey: string;
+  shareTitle: string;
+  shareDescription: string;
+  visibility: "private" | "unlisted" | "public";
+  publishedAt: string;
+}
+
+export interface PlayFeedback {
+  versionId: string;
+  rating: number;
+  comment: string;
+  playerName: string;
+  iterationSuggestion: string;
+  createdAt: string;
 }

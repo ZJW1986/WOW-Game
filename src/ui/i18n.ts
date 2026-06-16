@@ -25,7 +25,7 @@ export const messages = {
       thinking: "正在推演方案...",
       readySuffix: "已生成可试玩版本",
       intro:
-        "我已完成 Physics-First 分类，生成标准产物，绑定 Mock 资源包，并组装出 Phaser 可试玩构建。",
+        "我已完成 Physics-First 分类，生成标准产物，绑定资源包，并组装出 Phaser 可试玩构建。",
       actionHazards: "强化危险物表现",
       actionCheckpoints: "增加关卡检查点",
       actionPickupCue: "让收集反馈更醒目",

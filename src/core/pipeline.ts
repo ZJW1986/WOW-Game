@@ -5,16 +5,17 @@ import type {
   GameConfig,
   MockProject,
   PipelineArtifact,
+  PublishRecord,
   QaReport,
   TemplateFamily
 } from "./types";
 
 const TEMPLATE_KEYWORDS: Record<TemplateFamily, string[]> = {
-  platformer: ["跳", "jump", "gravity", "平台", "横版", "尖刺", "攀爬"],
-  top_down: ["俯视", "迷宫", "移动", "躲避", "飞船", "陨石", "钥匙", "收集"],
-  grid_logic: ["格子", "棋盘", "推箱", "回合", "消除", "解谜"],
-  tower_defense: ["塔防", "防守", "波次", "建造", "炮塔", "路线"],
-  ui_heavy: ["经营", "卡牌", "菜单", "养成", "对话", "选择"]
+  platformer: ["跳", "跳跃", "jump", "gravity", "平台", "横版", "尖刺", "攀爬", "金币"],
+  top_down: ["俯视", "迷宫", "移动", "躲避", "飞船", "陨石", "钥匙", "收集", "星星"],
+  grid_logic: ["格子", "棋盘", "推箱", "回合", "消除", "解谜", "谜题"],
+  tower_defense: ["塔防", "防守", "波次", "建造", "炮塔", "路线", "怪物"],
+  ui_heavy: ["经营", "卡牌", "菜单", "养成", "对话", "选择", "模拟"]
 };
 
 export function classifyIdea(idea: string): Classification {
@@ -25,16 +26,19 @@ export function classifyIdea(idea: string): Classification {
   }));
   const selected = scores.sort((a, b) => b.score - a.score)[0];
   const templateFamily = selected.score > 0 ? selected.family : "top_down";
-  const reasons = [
-    `physics-first match: ${templateFamily}`,
-    templateFamily === "platformer"
-      ? "gravity and jump timing are the dominant mechanics"
-      : "2D spatial movement and collision checks are the dominant mechanics"
-  ];
 
   return {
     templateFamily,
-    reasons,
+    reasons: [
+      `physics-first match: ${templateFamily}`,
+      templateFamily === "platformer"
+        ? "gravity and jump timing are the dominant mechanics"
+        : templateFamily === "tower_defense"
+          ? "route defense and wave pressure are the dominant mechanics"
+          : templateFamily === "grid_logic"
+            ? "discrete board logic and puzzle state are the dominant mechanics"
+            : "2D spatial movement and collision checks are the dominant mechanics"
+    ],
     risks: [
       "MVP locks engine lifecycle and scene registration to template code",
       "Generated logic must stay inside config and approved hooks"
@@ -53,6 +57,7 @@ export function runMockPipeline(idea: string): MockProject {
   };
   const gameConfig = createGameConfig(title, idea, classification.templateFamily, assetPack);
   const qaReport = createQaReport(gameConfig, assetPack);
+  const publishRecord = createPublishRecord("project-starlight-001", "v1", title);
   const artifacts = createArtifacts({
     idea,
     title,
@@ -60,7 +65,8 @@ export function runMockPipeline(idea: string): MockProject {
     assetRequirements,
     assetPack,
     gameConfig,
-    qaReport
+    qaReport,
+    publishRecord
   });
 
   return {
@@ -76,12 +82,11 @@ export function runMockPipeline(idea: string): MockProject {
     assetPack,
     gameConfig,
     qaReport,
-    playUrl: "/play/project-starlight-001/v1",
+    playUrl: publishRecord.playUrl,
     feedback: {
       rating: 4,
       comment: "玩法能跑通，第二版可以增加关卡节奏和美术差异。",
-      iterationSuggestion:
-        "降低前 20 秒难度，增加一个奖励道具，并生成更清晰的失败反馈。"
+      iterationSuggestion: "下一版建议降低前 20 秒难度，增加奖励道具，并强化失败反馈。"
     }
   };
 }
@@ -89,6 +94,31 @@ export function runMockPipeline(idea: string): MockProject {
 export function validateAssetReferences(config: GameConfig, assetPack: AssetPack): string[] {
   const available = new Set(assetPack.assets.map((asset) => asset.assetKey));
   return config.referencedAssetKeys.filter((assetKey) => !available.has(assetKey));
+}
+
+export function createPublishRecord(
+  projectId: string,
+  versionId: string,
+  title: string,
+  options: {
+    visibility?: "private" | "unlisted" | "public";
+    baseUrl?: string;
+    coverAssetKey?: string;
+  } = {}
+): PublishRecord {
+  const playUrl = `/play/${projectId}/${versionId}`;
+  const baseUrl = (options.baseUrl ?? "https://wow-game.local").replace(/\/$/, "");
+  return {
+    versionId,
+    status: "published",
+    playUrl,
+    publicUrl: `${baseUrl}${playUrl}`,
+    coverAssetKey: options.coverAssetKey ?? "cover.main",
+    shareTitle: `WOW Game - ${title}`,
+    shareDescription: "我用 WOW Game 生成了一个可以试玩的小游戏，点开就能体验。",
+    visibility: options.visibility ?? "unlisted",
+    publishedAt: "2026-06-17T00:00:00.000Z"
+  };
 }
 
 function detectUnsupportedRequests(idea: string): string[] {
@@ -103,7 +133,7 @@ function detectUnsupportedRequests(idea: string): string[] {
 }
 
 function createTitle(idea: string, family: TemplateFamily): string {
-  if (idea.includes("太空") || idea.includes("飞船")) return "星尘航线";
+  if (idea.includes("太空") || idea.includes("飞船") || idea.includes("星星")) return "星尘航线";
   if (family === "platformer") return "跃动森林";
   if (family === "tower_defense") return "边境塔线";
   if (family === "grid_logic") return "晶格谜阵";
@@ -262,6 +292,7 @@ function createArtifacts(input: {
   assetPack: AssetPack;
   gameConfig: GameConfig;
   qaReport: QaReport;
+  publishRecord: PublishRecord;
 }): PipelineArtifact[] {
   const ideaIntake = {
     summary: input.idea,
@@ -276,12 +307,6 @@ function createArtifacts(input: {
     level: input.gameConfig.level,
     numbers: { winScore: input.gameConfig.level.winScore, hazards: input.gameConfig.level.hazards },
     implementationRoute: `Use ${input.classification.templateFamily} Phaser template with config-only generation.`
-  };
-  const publishRecord = {
-    status: "published",
-    playUrl: "/play/project-starlight-001/v1",
-    version: "v1",
-    reviewMode: "mock verified"
   };
   const iterationReport = {
     source: "mock play feedback",
@@ -304,7 +329,7 @@ function createArtifacts(input: {
     jsonArtifact("game-config", "game-config.json", "Game Config", input.gameConfig),
     jsonArtifact("qa-report", "qa-report.json", "QA Report", input.qaReport),
     mdArtifact("qa-report", "qa-report.md", "QA Report", input.qaReport),
-    jsonArtifact("publish-record", "publish-record.json", "Publish Record", publishRecord),
+    jsonArtifact("publish-record", "publish-record.json", "Publish Record", input.publishRecord),
     jsonArtifact("iteration-report", "iteration-report.json", "Iteration Report", iterationReport),
     mdArtifact("iteration-report", "iteration-report.md", "Iteration Report", iterationReport)
   ];
