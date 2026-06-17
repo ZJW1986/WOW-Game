@@ -23,25 +23,60 @@ export const messages = {
     agent: {
       pipelineLabel: "模板流水线",
       thinking: "正在推演方案...",
-      readySuffix: "已生成可试玩版本",
+      readySuffix: "可试玩方案",
       intro:
-        "我已完成 Physics-First 分类，生成标准产物，绑定资源包，并组装出 Phaser 可试玩构建。",
-      actionHazards: "强化危险物表现",
-      actionCheckpoints: "增加关卡检查点",
-      actionPickupCue: "让收集反馈更醒目",
-      closedLoop: "已完成第一阶段闭环...",
-      gdd: "生成标准 GDD",
-      classified: "完成模板分类",
-      generatedAssets: "生成资源",
-      runtime: "运行检查完成",
-      suggestionLabel: "建议下一步提示词：",
-      suggestion: "增加第二个关卡，强化科幻反馈，并加入一个新的奖励机制",
-      continue: "继续下一步"
+        "我会先按 Physics-First 规则拆解创意，形成标准 GDD、资源协议和模板配置。确认方案后，再进入图片、音效、BGM 与特效资源生成。",
+      actionHazards: "风险与边界识别",
+      actionCheckpoints: "标准产物链路",
+      actionPickupCue: "资源生成准备",
+      closedLoop: "第一阶段闭环产物",
+      gdd: "标准 GDD",
+      classified: "模板分类",
+      generatedAssets: "资源包条目",
+      runtime: "运行验证",
+      suggestionLabel: "迭代建议",
+      suggestion: "发布试玩后，根据玩家反馈生成下一版修改建议，并保留版本记录。",
+      continue: "继续"
+    },
+    thinking: {
+      eyebrow: "模型深度思考中",
+      title: "从创意推导可执行生产方案",
+      steps: {
+        idea: "理解创意目标",
+        physics: "Physics-First 分类",
+        gdd: "生成技术 GDD",
+        assets: "拆解资源协议",
+        config: "规划玩法配置",
+        ready: "准备确认方案"
+      },
+      details: {
+        idea: "提取核心体验、玩家目标与限制条件",
+        gdd: "概念、循环、实体、关卡、数值、实现路线",
+        config: "锁定 Phaser 模板、配置字段与可扩展 Hook",
+        ready: "等待用户同意或补充需求"
+      },
+      template: "模板",
+      goal: "胜利目标",
+      controls: "操作方式",
+      assets: "资源需求",
+      addRequirement: "补充需求",
+      approve: "同意方案，下一步生成",
+      revisionTitle: "补充你的需求",
+      revisionPlaceholder: "例如：敌人节奏更快、画面偏银白色、失败后给玩家一次护盾机会...",
+      clear: "清空",
+      resimulate: "重新推演",
+      generatingTitle: "正在调用资源与代码生成任务",
+      generatingDetail: "生成图片、音效、BGM、特效占位与可试玩构建",
+      completeTitle: "资源与试玩版本已生成",
+      completeDetail: "右侧可预览游戏，也可以进入资源库检查素材。"
     },
     prompt: {
       defaultIdea: "做一个霓虹飞船躲避陨石并收集星星的小游戏。",
-      aria: "询问 WOW Game 智能体",
-      placeholder: "询问 WOW Game，或拖拽、粘贴图片作为参考"
+      aria: "给 WOW Game 智能体补充需求",
+      placeholder: "告诉 WOW Game 你想做什么游戏...",
+      followupPlaceholder: "补充需求或修改意见，发送后模型会重新推演方案...",
+      sendFollowup: "发送补充",
+      generateNext: "下一步生成"
     },
     preview: {
       generated: "已生成可试玩 v1",
@@ -57,13 +92,13 @@ export const messages = {
       mode: "生成方式",
       copyright: "版权状态",
       folder: "assets",
-      upload: "Upload",
-      create: "Create",
-      regenerate: "Regenerate",
-      regenerateMissing: "Regenerate missing",
-      search: "Search assets",
-      ready: "ready",
-      details: "Details"
+      upload: "上传",
+      create: "生成",
+      regenerate: "重新生成",
+      regenerateMissing: "补齐缺失",
+      search: "搜索资源",
+      ready: "就绪",
+      details: "详情"
     },
     code: {
       artifacts: "标准产物",
@@ -89,27 +124,62 @@ export const messages = {
     },
     agent: {
       pipelineLabel: "template pipeline",
-      thinking: "Mulling it over...",
-      readySuffix: "is ready to play",
+      thinking: "Reasoning through the plan...",
+      readySuffix: "playable plan",
       intro:
-        "I classified the idea with a physics-first pass, generated standard artifacts, attached a project asset pack, and assembled a Phaser playable build.",
-      actionHazards: "Make hazards more dramatic",
-      actionCheckpoints: "Add checkpoints between sections",
-      actionPickupCue: "Give every pickup a brighter cue",
-      closedLoop: "Created the first closed loop...",
-      gdd: "Generated standard GDD",
-      classified: "Classified template",
-      generatedAssets: "Generated assets",
-      runtime: "Runtime check completed",
-      suggestionLabel: "Suggested next step prompt:",
-      suggestion: "Add a second level with stronger sci-fi feedback and one new reward mechanic",
-      continue: "Continue with next step"
+        "I first convert the idea into a physics-first plan, standard GDD, asset protocol, and template config. After approval, I start image, audio, BGM, VFX, and playable generation.",
+      actionHazards: "Risk and boundary scan",
+      actionCheckpoints: "Standard artifact chain",
+      actionPickupCue: "Resource generation prep",
+      closedLoop: "Stage-one closed loop",
+      gdd: "Standard GDD",
+      classified: "Template family",
+      generatedAssets: "Asset pack items",
+      runtime: "Runtime verification",
+      suggestionLabel: "Iteration advice",
+      suggestion: "After publishing, use player feedback to produce the next-version plan while preserving version history.",
+      continue: "Continue"
+    },
+    thinking: {
+      eyebrow: "Model deep thinking",
+      title: "Deriving an executable production plan",
+      steps: {
+        idea: "Understand intent",
+        physics: "Physics-first classification",
+        gdd: "Technical GDD",
+        assets: "Asset protocol",
+        config: "Gameplay config",
+        ready: "Proposal ready"
+      },
+      details: {
+        idea: "Extract core experience, player goal, and constraints",
+        gdd: "Concept, loop, entities, levels, numbers, route",
+        config: "Lock Phaser template, config fields, and hooks",
+        ready: "Waiting for approval or extra requirements"
+      },
+      template: "Template",
+      goal: "Goal",
+      controls: "Controls",
+      assets: "Assets",
+      addRequirement: "Add requirement",
+      approve: "Approve and generate",
+      revisionTitle: "Add your requirement",
+      revisionPlaceholder: "Example: faster enemies, silver-white art direction, one shield after failure...",
+      clear: "Clear",
+      resimulate: "Rerun reasoning",
+      generatingTitle: "Calling resource and code generation",
+      generatingDetail: "Producing image, SFX, BGM, VFX placeholders, and a playable build",
+      completeTitle: "Resources and playable version generated",
+      completeDetail: "Preview the game on the right or inspect assets in the asset hub."
     },
     prompt: {
       defaultIdea:
         "Create a neon spaceship dodge game where the player avoids asteroids and collects stars.",
-      aria: "Ask WOW Game Agent",
-      placeholder: "Ask WOW Game, or drag, drop, or paste an image"
+      aria: "Add requirements for WOW Game Agent",
+      placeholder: "Tell WOW Game what game you want to make...",
+      followupPlaceholder: "Add requirements or edits. The model will rerun the plan...",
+      sendFollowup: "Send",
+      generateNext: "Generate next"
     },
     preview: {
       generated: "Generated playable v1",

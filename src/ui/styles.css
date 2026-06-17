@@ -599,13 +599,18 @@ button {
   display: grid;
   grid-template-columns: minmax(420px, 33vw) minmax(0, 1fr);
   height: calc(100vh - 68px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .agent-panel {
   position: relative;
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   border-right: 1px solid #126174;
   background:
     linear-gradient(180deg, rgb(6 32 43 / 94%), rgb(5 13 19 / 94%)),
@@ -666,6 +671,7 @@ button {
   gap: 14px;
   overflow-y: auto;
   min-height: 0;
+  max-height: 100%;
   padding: 10px 12px 14px;
 }
 
@@ -739,6 +745,212 @@ button {
   background: #ffb020;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.thinking-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.thinking-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.thinking-card-header h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.thinking-core {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid #45f6c8;
+  border-radius: 8px;
+  color: #45f6c8;
+  background:
+    linear-gradient(135deg, rgb(0 229 255 / 12%), rgb(255 176 32 / 12%)),
+    #041017;
+  box-shadow: 0 0 22px rgb(0 229 255 / 18%);
+}
+
+.thinking-core span {
+  position: absolute;
+  inset: -5px;
+  border: 1px solid rgb(69 246 200 / 36%);
+  border-radius: 10px;
+  animation: scan-pulse 1.8s linear infinite;
+}
+
+.thinking-stream {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #143944;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgb(0 229 255 / 8%), transparent 38%),
+    #041016;
+}
+
+.thinking-step {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  min-height: 36px;
+  color: #6d8f98;
+}
+
+.thinking-step strong,
+.thinking-step small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.thinking-step strong {
+  color: #b9e8ee;
+  font-size: 13px;
+}
+
+.thinking-step small {
+  margin-top: 2px;
+  color: #789da5;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.step-node {
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border: 1px solid #2d6975;
+  border-radius: 50%;
+  background: #07151d;
+}
+
+.thinking-step.complete .step-node,
+.thinking-step.active .step-node {
+  border-color: #45f6c8;
+  background: #45f6c8;
+  box-shadow: 0 0 12px rgb(69 246 200 / 72%);
+}
+
+.thinking-step.active .step-node {
+  animation: node-blink 1s ease-in-out infinite;
+}
+
+.proposal-summary,
+.revision-box,
+.resource-pulse {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #1d6f82;
+  border-radius: 8px;
+  background: rgb(5 22 31 / 92%);
+}
+
+.proposal-grid {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: start;
+}
+
+.proposal-grid span {
+  color: #8fb6bf;
+  font-size: 12px;
+}
+
+.proposal-grid strong,
+.proposal-summary p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #e8fbff;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.proposal-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 8px;
+}
+
+.primary-action,
+.secondary-action,
+.dock-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.primary-action {
+  border: 1px solid #45f6c8;
+  color: #021114;
+  background: linear-gradient(90deg, #00e5ff, #45f6c8);
+}
+
+.secondary-action,
+.dock-action {
+  border: 1px solid #2d6975;
+  color: #b9e8ee;
+  background: #09212b;
+}
+
+.revision-box textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+  border: 1px solid #143944;
+  border-radius: 7px;
+  outline: 0;
+  padding: 10px;
+  color: #e8fbff;
+  background: #03080d;
+}
+
+.resource-pulse {
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+}
+
+.resource-pulse span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffb020;
+  box-shadow: 0 0 18px rgb(255 176 32 / 80%);
+  animation: node-blink 0.9s ease-in-out infinite;
+}
+
+.resource-pulse strong,
+.resource-pulse small {
+  display: block;
+}
+
+.resource-pulse small {
+  margin-top: 3px;
+  color: #8fb6bf;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.resource-pulse.complete {
+  color: #45f6c8;
 }
 
 .log-card {
@@ -895,6 +1107,7 @@ button {
   position: relative;
   z-index: 2;
   flex: 0 0 auto;
+  flex-shrink: 0;
   padding: 10px 14px 12px;
   border-top: 1px solid #126174;
   background: linear-gradient(180deg, rgb(10 38 49 / 94%), rgb(5 18 26 / 98%));
@@ -940,11 +1153,45 @@ button {
   color: #8fb6bf;
 }
 
+.dock-action:disabled,
+.send-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .send-button {
   display: grid;
   width: 38px;
   place-items: center;
   border: 1px solid #2b5d67;
+}
+
+@keyframes scan-pulse {
+  0% {
+    opacity: 0.2;
+    transform: scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+
+  100% {
+    opacity: 0.2;
+    transform: scale(0.92);
+  }
+}
+
+@keyframes node-blink {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 .stage-panel {
@@ -1535,6 +1782,7 @@ pre {
 
   .agent-panel {
     flex: 0 0 min(54vh, 560px);
+    height: auto;
     min-height: 320px;
     border-right: 0;
     border-bottom: 1px solid #126174;

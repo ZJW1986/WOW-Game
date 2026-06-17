@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Code2,
   Copy,
+  Cpu,
   Database,
   FileCode2,
   Gamepad2,
@@ -18,7 +19,7 @@ import {
   Wand2,
   Zap
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   answerDesignQuestion,
   createConversationSession,
@@ -62,6 +63,7 @@ const rightTabs = [
 type RightTab = (typeof rightTabs)[number]["id"];
 type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
 type GenerationStatus = "idle" | "generating" | "ready" | "fallback" | "error";
+type CreationPhase = "thinking" | "proposal" | "revision" | "generating" | "complete";
 
 export function App() {
   const [locale, setLocale] = useState<Locale>("zh-CN");
@@ -75,12 +77,49 @@ export function App() {
   const [session, setSession] = useState<ConversationSession>(() =>
     createConversationSession(t.prompt.defaultIdea)
   );
+  const [activeDraft, setActiveDraft] = useState<StartGameDraft>(() =>
+    createStartGameDraft({ idea: t.prompt.defaultIdea })
+  );
+  const [creationPhase, setCreationPhase] = useState<CreationPhase>("thinking");
+  const [revisionText, setRevisionText] = useState("");
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
   const [generationStatus, setGenerationStatus] = useState<GenerationStatus>("idle");
   const [generationError, setGenerationError] = useState<string>("");
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const fallbackProject = useMemo(() => runMockPipeline(idea), [idea]);
   const project = generationResult?.project ?? fallbackProject;
+
+  useEffect(() => {
+    if (!hasStarted || creationPhase !== "thinking") return;
+    const timer = window.setTimeout(() => setCreationPhase("proposal"), 2600);
+    return () => window.clearTimeout(timer);
+  }, [creationPhase, hasStarted, idea]);
+
+  const startResourceGeneration = async () => {
+    setCreationPhase("generating");
+    setGenerationStatus("generating");
+    setGenerationError("");
+    try {
+      const result = await generatePlayableFromDraft(activeDraft, idea, session);
+      setGenerationResult(result);
+      setGenerationStatus(result.fallbacksUsed.length > 0 ? "fallback" : "ready");
+      setCreationPhase("complete");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const fallback = await createGenerationService().generatePlayableVersion({
+        idea,
+        answers: session.answers,
+        templateFamily: activeDraft.templateFamily,
+        projectId: "project-local-fallback",
+        baseUrl: getBrowserBaseUrl(),
+        model: "mock-designer"
+      });
+      setGenerationResult(fallback);
+      setGenerationStatus("error");
+      setGenerationError(message);
+      setCreationPhase("complete");
+    }
+  };
 
   if (!hasStarted) {
     if (homeMode === "play") {
@@ -99,31 +138,16 @@ export function App() {
           const nextSession = createConversationSession(nextIdea, {
             preferredTemplate: startDraft.templateFamily
           });
+          const nextDraft = { ...startDraft, idea: nextIdea };
           setIdea(nextIdea);
+          setActiveDraft(nextDraft);
           setSession(nextSession);
           setGenerationResult(null);
-          setGenerationStatus("generating");
+          setGenerationStatus("idle");
           setGenerationError("");
+          setRevisionText("");
+          setCreationPhase("thinking");
           setHasStarted(true);
-          void generatePlayableFromDraft(startDraft, nextIdea, nextSession)
-            .then((result) => {
-              setGenerationResult(result);
-              setGenerationStatus(result.fallbacksUsed.length > 0 ? "fallback" : "ready");
-            })
-            .catch(async (error) => {
-              const message = error instanceof Error ? error.message : String(error);
-              const fallback = await createGenerationService().generatePlayableVersion({
-                idea: nextIdea,
-                answers: nextSession.answers,
-                templateFamily: startDraft.templateFamily,
-                projectId: "project-local-fallback",
-                baseUrl: getBrowserBaseUrl(),
-                model: "mock-designer"
-              });
-              setGenerationResult(fallback);
-              setGenerationStatus("error");
-              setGenerationError(message);
-            });
         }}
       />
     );
@@ -164,7 +188,27 @@ export function App() {
           <div className="agent-scroll">
             <AgentIntro project={project} messages={t} />
             <UserPrompt text={idea} />
-            <ConversationPanel session={session} onSessionChange={setSession} />
+            <ThinkingPipelinePanel
+              phase={creationPhase}
+              project={project}
+              status={generationStatus}
+              revisionText={revisionText}
+              messages={t}
+              onApprove={startResourceGeneration}
+              onRequestRevision={() => setCreationPhase("revision")}
+              onRevisionChange={setRevisionText}
+              onApplyRevision={() => {
+                const nextIdea = revisionText.trim() ? `${idea}\n补充需求：${revisionText.trim()}` : idea;
+                setIdea(nextIdea);
+                setSession(createConversationSession(nextIdea, {
+                  preferredTemplate: activeDraft.templateFamily
+                }));
+                setRevisionText("");
+                setGenerationResult(null);
+                setGenerationStatus("idle");
+                setCreationPhase("thinking");
+              }}
+            />
             <ModelStatusCard
               status={generationStatus}
               error={generationError}
@@ -174,11 +218,22 @@ export function App() {
             <SuggestionCard messages={t} />
           </div>
           <PromptDock
-            idea={idea}
             messages={t}
-            onIdeaChange={(nextIdea) => {
+            revisionText={revisionText}
+            canGenerate={creationPhase === "proposal" || creationPhase === "complete"}
+            onGenerate={startResourceGeneration}
+            onIdeaChange={setRevisionText}
+            onSubmitRevision={() => {
+              if (!revisionText.trim()) return;
+              const nextIdea = `${idea}\n补充需求：${revisionText.trim()}`;
               setIdea(nextIdea);
-              setSession(createConversationSession(nextIdea));
+              setSession(createConversationSession(nextIdea, {
+                preferredTemplate: activeDraft.templateFamily
+              }));
+              setRevisionText("");
+              setGenerationResult(null);
+              setGenerationStatus("idle");
+              setCreationPhase("thinking");
             }}
           />
         </aside>
@@ -552,6 +607,162 @@ function UserPrompt({ text }: { text: string }) {
   return <div className="user-prompt">{text}</div>;
 }
 
+function ThinkingPipelinePanel({
+  phase,
+  project,
+  status,
+  revisionText,
+  messages,
+  onApprove,
+  onRequestRevision,
+  onRevisionChange,
+  onApplyRevision
+}: {
+  phase: CreationPhase;
+  project: MockProject;
+  status: GenerationStatus;
+  revisionText: string;
+  messages: ReturnType<typeof getMessages>;
+  onApprove: () => void;
+  onRequestRevision: () => void;
+  onRevisionChange: (value: string) => void;
+  onApplyRevision: () => void;
+}) {
+  const steps = [
+    { label: messages.thinking.steps.idea, detail: messages.thinking.details.idea },
+    { label: messages.thinking.steps.physics, detail: project.classification.templateFamily },
+    { label: messages.thinking.steps.gdd, detail: messages.thinking.details.gdd },
+    { label: messages.thinking.steps.assets, detail: `${project.assetPack.assets.length} assets` },
+    { label: messages.thinking.steps.config, detail: messages.thinking.details.config },
+    { label: messages.thinking.steps.ready, detail: messages.thinking.details.ready }
+  ];
+  const activeIndex =
+    phase === "thinking" ? 3 : phase === "proposal" || phase === "revision" ? 5 : 6;
+  const isGenerating = phase === "generating" || status === "generating";
+
+  return (
+    <article className={`chat-card thinking-card ${phase}`}>
+      <div className="thinking-card-header">
+        <div className="thinking-core">
+          <Cpu size={18} />
+          <span />
+        </div>
+        <div>
+          <p className="thought-line">{messages.thinking.eyebrow}</p>
+          <h3>{messages.thinking.title}</h3>
+        </div>
+      </div>
+
+      <div className="thinking-stream">
+        {steps.map((step, index) => (
+          <div
+            key={step.label}
+            className={
+              index < activeIndex
+                ? "thinking-step complete"
+                : index === activeIndex
+                  ? "thinking-step active"
+                  : "thinking-step"
+            }
+          >
+            <span className="step-node" />
+            <div>
+              <strong>{step.label}</strong>
+              <small>{step.detail}</small>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {phase === "proposal" && (
+        <ProposalSummary
+          project={project}
+          messages={messages}
+          onApprove={onApprove}
+          onRequestRevision={onRequestRevision}
+        />
+      )}
+
+      {phase === "revision" && (
+        <div className="revision-box">
+          <strong>{messages.thinking.revisionTitle}</strong>
+          <textarea
+            value={revisionText}
+            onChange={(event) => onRevisionChange(event.target.value)}
+            placeholder={messages.thinking.revisionPlaceholder}
+          />
+          <div className="proposal-actions">
+            <button className="secondary-action" onClick={() => onRevisionChange("")}>
+              {messages.thinking.clear}
+            </button>
+            <button className="primary-action" onClick={onApplyRevision}>
+              {messages.thinking.resimulate}
+              <Send size={15} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isGenerating && (
+        <div className="resource-pulse">
+          <span />
+          <div>
+            <strong>{messages.thinking.generatingTitle}</strong>
+            <small>{messages.thinking.generatingDetail}</small>
+          </div>
+        </div>
+      )}
+
+      {phase === "complete" && (
+        <div className="resource-pulse complete">
+          <CheckCircle2 size={18} />
+          <div>
+            <strong>{messages.thinking.completeTitle}</strong>
+            <small>{messages.thinking.completeDetail}</small>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ProposalSummary({
+  project,
+  messages,
+  onApprove,
+  onRequestRevision
+}: {
+  project: MockProject;
+  messages: ReturnType<typeof getMessages>;
+  onApprove: () => void;
+  onRequestRevision: () => void;
+}) {
+  return (
+    <div className="proposal-summary">
+      <div className="proposal-grid">
+        <span>{messages.thinking.template}</span>
+        <strong>{project.classification.templateFamily}</strong>
+        <span>{messages.thinking.goal}</span>
+        <strong>{project.gameConfig.playerGoal}</strong>
+        <span>{messages.thinking.controls}</span>
+        <strong>{project.gameConfig.controls.join(" / ")}</strong>
+        <span>{messages.thinking.assets}</span>
+        <strong>{project.assetPack.assets.length} items</strong>
+      </div>
+      <p>{project.gameConfig.pitch}</p>
+      <div className="proposal-actions">
+        <button className="secondary-action" onClick={onRequestRevision}>
+          {messages.thinking.addRequirement}
+        </button>
+        <button className="primary-action" onClick={onApprove}>
+          {messages.thinking.approve}
+          <Send size={15} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ConversationPanel({
   session,
   onSessionChange
@@ -655,21 +866,27 @@ function SuggestionCard({ messages }: { messages: ReturnType<typeof getMessages>
 }
 
 function PromptDock({
-  idea,
   messages,
-  onIdeaChange
+  revisionText,
+  canGenerate,
+  onGenerate,
+  onIdeaChange,
+  onSubmitRevision
 }: {
-  idea: string;
   messages: ReturnType<typeof getMessages>;
+  revisionText: string;
+  canGenerate: boolean;
+  onGenerate: () => void;
   onIdeaChange: (idea: string) => void;
+  onSubmitRevision: () => void;
 }) {
   return (
     <div className="prompt-dock">
       <textarea
-        value={idea}
+        value={revisionText}
         onChange={(event) => onIdeaChange(event.target.value)}
         aria-label={messages.prompt.aria}
-        placeholder={messages.prompt.placeholder}
+        placeholder={messages.prompt.followupPlaceholder}
       />
       <div className="prompt-tools">
         <button className="model-select">
@@ -681,7 +898,10 @@ function PromptDock({
           <Wand2 size={16} />
           <RefreshCcw size={16} />
         </div>
-        <button className="send-button" title={messages.agent.continue}>
+        <button className="dock-action" onClick={onSubmitRevision} disabled={!revisionText.trim()}>
+          {messages.prompt.sendFollowup}
+        </button>
+        <button className="send-button" title={messages.prompt.generateNext} onClick={onGenerate} disabled={!canGenerate}>
           <Send size={18} />
         </button>
       </div>
