@@ -19,6 +19,7 @@
   Trash2,
   Upload,
   Wand2,
+  X,
   Zap
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -45,6 +46,7 @@ import type {
   TemplateFamily
 } from "../core/types";
 import { getMessages, type Locale } from "./i18n";
+import { buildIdeaDialogModel } from "./ideaDialogModel";
 import { PhaserPreview } from "./PhaserPreview";
 import {
   buildGenerationIdea,
@@ -70,7 +72,7 @@ const rightTabs = [
 
 type RightTab = (typeof rightTabs)[number]["id"];
 type CreationPhase = "chatting" | "ready_to_generate" | "revision" | "cooking" | "ready" | "failed";
-type AppPage = "create" | "play" | "projects" | "studio";
+type AppPage = "create" | "play" | "projects" | "idea_dialog" | "studio";
 type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
 type GuidedQuestionStatus = "idle" | "loading" | "ready" | "fallback";
 type GenerationNoticeTone = "working" | "success" | "fallback" | "error";
@@ -284,13 +286,20 @@ export function App() {
   };
 
   useEffect(() => {
-    if (page !== "studio" || creationPhase !== "chatting" || !hasAnsweredGuidedQuestions) return;
+    if (
+      (page !== "studio" && page !== "idea_dialog") ||
+      creationPhase !== "chatting" ||
+      !hasAnsweredGuidedQuestions
+    ) {
+      return;
+    }
     setCreationPhase("ready_to_generate");
   }, [creationPhase, hasAnsweredGuidedQuestions, page]);
 
   const startResourceGeneration = async () => {
     setCreationPhase("cooking");
     setActiveTab("preview");
+    setPage("studio");
     setGenerationNotice({
       tone: "working",
       title: t.preview.cookingTitle,
@@ -344,6 +353,14 @@ export function App() {
     }
   };
 
+  const answerCurrentDialogQuestion = (value: string) => {
+    const nextQuestion = session.questions.find(
+      (question) => !session.answers.some((answer) => answer.questionId === question.id)
+    );
+    if (!nextQuestion) return;
+    setSession(answerDesignQuestion(session, nextQuestion.id, value));
+  };
+
   const loadGuidedQuestions = async (
     nextIdea: string,
     templateFamily: TemplateFamily,
@@ -368,6 +385,25 @@ export function App() {
     } catch {
       setGuidedQuestionStatus("fallback");
     }
+  };
+
+  const openIdeaDialog = (nextIdea: string, templateFamily?: TemplateFamily) => {
+    const normalizedIdea = nextIdea.trim() || t.prompt.defaultIdea;
+    const nextTemplate = templateFamily ?? startDraft.templateFamily;
+    const nextDraft = { ...startDraft, idea: normalizedIdea, templateFamily: nextTemplate };
+    setIdea(normalizedIdea);
+    setActiveDraft(nextDraft);
+    setSession(createConversationSession(normalizedIdea, { preferredTemplate: nextTemplate }));
+    setGuidedQuestionStatus("loading");
+    setGeneratedProject(null);
+    setGenerationResult(null);
+    setGenerationNotice(null);
+    setRevisionText("");
+    setFollowups([]);
+    setCreationPhase("chatting");
+    setActiveTab("preview");
+    setPage("idea_dialog");
+    loadGuidedQuestions(normalizedIdea, nextTemplate, nextDraft.model);
   };
 
   const openStudio = (nextIdea: string, templateFamily?: TemplateFamily, nextProject?: MockProject) => {
@@ -492,7 +528,7 @@ export function App() {
         uploadMessage={uploadedPackageMessage}
         onCreate={() => {
           const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
-          openStudio(nextIdea, startDraft.templateFamily);
+          openIdeaDialog(nextIdea, startDraft.templateFamily);
         }}
         onUploadPackage={async (file) => {
           const payload = await uploadPlayablePackage({
@@ -505,6 +541,23 @@ export function App() {
           setUploadedPackageMessage(`${file.name} 已加入游戏商城，可试玩和分享。`);
           setPage("projects");
         }}
+      />
+    );
+  }
+
+  if (page === "idea_dialog") {
+    return (
+      <IdeaDialogPage
+        session={session}
+        statusLabel={readGuidedQuestionStatus(guidedQuestionStatus)}
+        draft={activeDraft}
+        revisionText={revisionText}
+        canGenerate={canGeneratePlayable}
+        isGenerating={creationPhase === "cooking"}
+        onRevisionTextChange={setRevisionText}
+        onAnswer={answerCurrentDialogQuestion}
+        onGenerate={startResourceGeneration}
+        onClose={() => setPage("create")}
       />
     );
   }
@@ -638,7 +691,7 @@ export function App() {
 
           <div className="stage-content">
             {activeTab === "preview" && (
-              <PreviewWorkspace project={project} messages={t} phase={creationPhase} notice={generationNotice} />
+              <PreviewWorkspace project={generatedProject} messages={t} phase={creationPhase} notice={generationNotice} />
             )}
             {activeTab === "assets" && (
               <AssetWorkspace key={`${project.id}-${project.version.id}`} project={project} messages={t} />
@@ -807,6 +860,139 @@ function StartPage({
             </button>
           </div>
         </section>
+      </section>
+    </main>
+  );
+}
+
+function IdeaDialogPage({
+  session,
+  statusLabel,
+  draft,
+  revisionText,
+  canGenerate,
+  isGenerating,
+  onRevisionTextChange,
+  onAnswer,
+  onGenerate,
+  onClose
+}: {
+  session: ConversationSession;
+  statusLabel: string;
+  draft: StartGameDraft;
+  revisionText: string;
+  canGenerate: boolean;
+  isGenerating: boolean;
+  onRevisionTextChange: (value: string) => void;
+  onAnswer: (value: string) => void;
+  onGenerate: () => void;
+  onClose: () => void;
+}) {
+  const dialog = buildIdeaDialogModel(session);
+  const currentQuestion = dialog.currentQuestion;
+  const answerValue = revisionText.trim() || currentQuestion?.defaultAnswer || "";
+  const progressText = `${dialog.answeredCount}/${dialog.totalQuestions}`;
+
+  const submitAnswer = () => {
+    if (!currentQuestion || !answerValue) return;
+    onAnswer(answerValue);
+    onRevisionTextChange("");
+  };
+
+  return (
+    <main className="idea-dialog-shell">
+      <section className="idea-dialog-window" aria-label="Shape your game idea">
+        <header className="idea-dialog-header">
+          <div>
+            <span>CREATIVE KICKOFF</span>
+            <h1>Shape your game idea</h1>
+          </div>
+          <button className="idea-dialog-close" onClick={onClose} aria-label="Close dialog">
+            <X size={24} />
+          </button>
+        </header>
+
+        <div className="idea-dialog-body">
+          <div className="idea-dialog-scroll">
+            <div className="idea-dialog-status">
+              <span>{statusLabel}</span>
+              <strong>{draft.templateFamily}</strong>
+              <em>{progressText}</em>
+            </div>
+            {dialog.turns.map((turn) =>
+              turn.role === "user" ? (
+                <div className="idea-message-row user" key={turn.id}>
+                  <article className="idea-user-bubble">{turn.content}</article>
+                </div>
+              ) : (
+                <div className="idea-message-row assistant" key={turn.id}>
+                  <div className="idea-avatar">AI</div>
+                  <article className="idea-assistant-bubble">
+                    <p>{turn.content}</p>
+                    {turn.question?.options && (
+                      <div className="idea-option-stack">
+                        {turn.question.options.map((option, index) => (
+                          <button
+                            key={option}
+                            className="idea-option-card"
+                            onClick={() => {
+                              onAnswer(option);
+                              onRevisionTextChange("");
+                            }}
+                          >
+                            <span>{index + 1}</span>
+                            <strong>{option}</strong>
+                            <small>选择后进入下一步设定</small>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                </div>
+              )
+            )}
+          </div>
+
+          <footer className="idea-dialog-composer">
+            <textarea
+              value={revisionText}
+              onChange={(event) => onRevisionTextChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  if (canGenerate) onGenerate();
+                  else submitAnswer();
+                }
+              }}
+              placeholder={
+                canGenerate
+                  ? "All set. Click generate to build your playable preview..."
+                  : "Type a reply or choose an option above..."
+              }
+            />
+            <div className="idea-dialog-actions">
+              <button
+                className="idea-pick-button"
+                disabled={!currentQuestion}
+                onClick={() => {
+                  if (!currentQuestion) return;
+                  onAnswer(currentQuestion.defaultAnswer);
+                  onRevisionTextChange("");
+                }}
+              >
+                Pick for me
+              </button>
+              <button
+                className={canGenerate ? "idea-send-button generate" : "idea-send-button"}
+                disabled={isGenerating || (!canGenerate && !currentQuestion)}
+                onClick={canGenerate ? onGenerate : submitAnswer}
+              >
+                {isGenerating ? <RefreshCcw size={18} /> : canGenerate ? <Wand2 size={18} /> : <Send size={18} />}
+                <span>{canGenerate ? "生成游戏" : "发送"}</span>
+              </button>
+            </div>
+          </footer>
+        </div>
       </section>
     </main>
   );
@@ -1473,12 +1659,13 @@ function PreviewWorkspace({
   phase,
   notice
 }: {
-  project: MockProject;
+  project: MockProject | null;
   messages: ReturnType<typeof getMessages>;
   phase: CreationPhase;
   notice: GenerationNotice | null;
 }) {
   const isCooking = phase === "cooking";
+  const isPlayableReady = phase === "ready" && project;
   return (
     <div className="preview-workspace">
       {isCooking ? (
@@ -1502,17 +1689,25 @@ function PreviewWorkspace({
           </div>
         </div>
       )}
-      {!isCooking && (
+      {!isCooking && !isPlayableReady && (
+        <div className="preview-empty-state">
+          <div className="preview-empty-icon">
+            <Gamepad2 size={30} />
+          </div>
+          <p>WAITING FOR GENERATION</p>
+          <h2>生成后才会出现可玩的游戏</h2>
+          <span>先完成左侧一问一答，然后点击生成游戏。这里会切换为开始界面、可操作角色、胜利/失败和重新开始流程。</span>
+        </div>
+      )}
+      {!isCooking && isPlayableReady && (
         <>
           <div className="preview-canvas-shell">
             <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
           </div>
-          {phase !== "ready" && (
-            <div className="floating-status">
-              <CheckCircle2 size={16} />
-              <span>{messages.preview.generated}</span>
-            </div>
-          )}
+          <div className="floating-status">
+            <CheckCircle2 size={16} />
+            <span>{messages.preview.generated}</span>
+          </div>
           <VerificationRail project={project} messages={messages} />
         </>
       )}

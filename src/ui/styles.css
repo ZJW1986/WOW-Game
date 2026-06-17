@@ -662,6 +662,262 @@ button {
   cursor: default;
 }
 
+.idea-dialog-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 12px;
+  color: #f8f4ff;
+  background:
+    radial-gradient(circle at 50% 28%, rgb(122 54 151 / 26%), transparent 34%),
+    linear-gradient(180deg, #07030d, #09000d 62%, #15001f);
+}
+
+.idea-dialog-window {
+  display: grid;
+  overflow: hidden;
+  width: min(680px, calc(100vw - 24px));
+  height: min(820px, calc(100vh - 24px));
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid rgb(171 72 223 / 78%);
+  border-radius: 7px;
+  background: #07080b;
+  box-shadow:
+    0 0 0 1px rgb(77 19 108 / 70%),
+    0 22px 80px rgb(0 0 0 / 58%),
+    0 0 48px rgb(144 55 219 / 22%);
+}
+
+.idea-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 56px;
+  padding: 12px 22px;
+  border-bottom: 1px solid rgb(112 65 130 / 56%);
+  background: #3d3047;
+}
+
+.idea-dialog-header span {
+  color: #f5a6c8;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.22em;
+}
+
+.idea-dialog-header h1 {
+  margin: 2px 0 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.idea-dialog-close {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  color: rgb(232 222 239 / 58%);
+  background: transparent;
+}
+
+.idea-dialog-body {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.idea-dialog-scroll {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 16px 22px 20px;
+  background:
+    linear-gradient(90deg, rgb(116 34 150 / 22%) 0 1px, transparent 1px),
+    linear-gradient(180deg, #030609, #0e020d 74%);
+}
+
+.idea-dialog-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #b7a5c8;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.idea-dialog-status strong,
+.idea-dialog-status em {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgb(92 54 111 / 50%);
+  color: #f8eaff;
+  font-style: normal;
+}
+
+.idea-message-row {
+  display: flex;
+  gap: 10px;
+}
+
+.idea-message-row.user {
+  justify-content: flex-end;
+}
+
+.idea-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid #a62dff;
+  border-radius: 999px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 38% 32%, #ff6fb7, transparent 35%),
+    linear-gradient(135deg, #5b16d9, #da237f);
+  font-size: 10px;
+  font-weight: 950;
+  box-shadow: 0 0 18px rgb(183 70 255 / 42%);
+}
+
+.idea-user-bubble,
+.idea-assistant-bubble {
+  max-width: min(555px, 86%);
+  border-radius: 7px;
+}
+
+.idea-user-bubble {
+  padding: 10px 13px;
+  color: #fff9b8;
+  background: #74700a;
+  font-weight: 850;
+}
+
+.idea-assistant-bubble {
+  padding: 13px;
+  border: 1px solid rgb(178 75 238 / 82%);
+  color: #fff;
+  background: rgb(37 5 45 / 92%);
+}
+
+.idea-assistant-bubble p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.idea-option-stack {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.idea-option-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  padding: 11px 14px;
+  border: 1px solid rgb(153 89 205 / 86%);
+  border-radius: 14px;
+  color: #f4edf8;
+  background: rgb(58 24 78 / 78%);
+  text-align: left;
+}
+
+.idea-option-card span {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 14%);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.idea-option-card strong {
+  align-self: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.idea-option-card small {
+  grid-column: 1 / -1;
+  color: #c9b9d8;
+  line-height: 1.45;
+}
+
+.idea-dialog-composer {
+  display: grid;
+  gap: 10px;
+  padding: 16px 22px;
+  border-top: 1px solid rgb(92 65 103 / 86%);
+  background: #09050c;
+}
+
+.idea-dialog-composer textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: none;
+  border: 1px solid rgb(163 139 176 / 52%);
+  border-radius: 5px;
+  outline: 0;
+  padding: 16px;
+  color: #fff;
+  background: #43374a;
+}
+
+.idea-dialog-composer textarea::placeholder {
+  color: #b7adbd;
+}
+
+.idea-dialog-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.idea-pick-button,
+.idea-send-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  border-radius: 5px;
+  font-weight: 900;
+}
+
+.idea-pick-button {
+  padding: 0 18px;
+  border: 1px solid rgb(170 152 181 / 38%);
+  color: #f4edf8;
+  background: rgb(91 79 101 / 56%);
+}
+
+.idea-send-button {
+  min-width: 42px;
+  padding: 0 14px;
+  border: 1px solid rgb(201 132 255 / 84%);
+  color: #fff;
+  background: #633288;
+}
+
+.idea-send-button.generate {
+  min-width: 118px;
+  color: #fffbd2;
+  background: #74700a;
+}
+
+.idea-pick-button:disabled,
+.idea-send-button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
 .app-shell {
   min-height: 100vh;
   background:
@@ -1929,6 +2185,58 @@ button {
   animation-duration: 0.9s;
 }
 
+.preview-empty-state {
+  display: grid;
+  grid-column: 1 / -1;
+  min-height: calc(100vh - 176px);
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  padding: 44px;
+  border: 1px solid rgb(69 246 200 / 20%);
+  border-radius: 8px;
+  text-align: center;
+  background:
+    linear-gradient(180deg, rgb(5 17 25 / 96%), rgb(2 8 14 / 98%)),
+    repeating-linear-gradient(0deg, rgb(255 255 255 / 4%) 0 1px, transparent 1px 42px);
+}
+
+.preview-empty-icon {
+  display: grid;
+  width: 74px;
+  height: 74px;
+  place-items: center;
+  border: 1px solid rgb(69 246 200 / 32%);
+  border-radius: 50%;
+  color: #45f6c8;
+  background: rgb(69 246 200 / 8%);
+  box-shadow: 0 0 32px rgb(69 246 200 / 12%);
+}
+
+.preview-empty-state p,
+.preview-empty-state h2 {
+  margin: 0;
+}
+
+.preview-empty-state p {
+  color: #45f6c8;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.preview-empty-state h2 {
+  color: #e8fbff;
+  font-size: 28px;
+}
+
+.preview-empty-state span {
+  max-width: 560px;
+  color: #9fc8d0;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
 .preview-canvas-shell {
   display: grid;
   align-items: start;
@@ -1946,6 +2254,11 @@ button {
   border-radius: 8px;
   background: #03080d;
   box-shadow: 0 0 48px rgb(0 0 0 / 58%);
+}
+
+.game-frame:focus {
+  outline: 2px solid #45f6c8;
+  outline-offset: 4px;
 }
 
 .game-frame canvas {
