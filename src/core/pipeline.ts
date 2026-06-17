@@ -183,10 +183,64 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       spec: "under 1 second"
     }),
     projectAsset({
+      assetKey: "sfx.hit",
+      type: "sfx",
+      purpose: "damage or collision feedback",
+      style: "short warning impact",
+      generationMode: "mock",
+      copyrightStatus: "placeholder",
+      spec: "under 1 second"
+    }),
+    projectAsset({
+      assetKey: "sfx.win",
+      type: "sfx",
+      purpose: "victory feedback",
+      style: "bright success jingle",
+      generationMode: "mock",
+      copyrightStatus: "placeholder",
+      spec: "1-2 seconds"
+    }),
+    projectAsset({
+      assetKey: "sfx.lose",
+      type: "sfx",
+      purpose: "failure feedback",
+      style: "soft fail tone",
+      generationMode: "mock",
+      copyrightStatus: "placeholder",
+      spec: "1-2 seconds"
+    }),
+    projectAsset({
+      assetKey: "sfx.click",
+      type: "sfx",
+      purpose: "UI button feedback",
+      style: "minimal sci-fi click",
+      generationMode: "mock",
+      copyrightStatus: "placeholder",
+      spec: "under 0.5 seconds"
+    }),
+    projectAsset({
       assetKey: "effect.hit",
       type: "effect",
       purpose: "collision or damage feedback",
       style: "small burst particles",
+      generationMode: "preset",
+      copyrightStatus: "placeholder",
+      spec: "8-12 frame visual effect"
+    }),
+    projectAsset({
+      assetKey: "effect.win",
+      type: "effect",
+      purpose: "victory celebration feedback",
+      style: "small success particles",
+      generationMode: "preset",
+      copyrightStatus: "placeholder",
+      spec: "12-18 frame visual effect"
+    }),
+    projectAsset({
+      assetKey: "effect.lose",
+      type: "effect",
+      purpose: "failure state feedback",
+      style: "subtle warning particles",
       generationMode: "preset",
       copyrightStatus: "placeholder",
       spec: "8-12 frame visual effect"

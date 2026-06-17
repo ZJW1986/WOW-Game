@@ -12,75 +12,99 @@ export const messages = {
     },
     tabs: {
       preview: "预览",
-      assets: "资源",
-      code: "代码"
+      assets: "资源库",
+      code: "配置"
     },
     toolbar: {
       refresh: "刷新",
-      console: "运行控制台",
+      console: "运行面板",
       fullscreen: "全屏"
     },
+    start: {
+      create: "创建",
+      play: "试玩",
+      title: "从创意开始生成",
+      subtitlePrefix: "描述你的游戏，或",
+      subtitleAction: "选择一个模板",
+      dialogAria: "创建新游戏",
+      modeAria: "创建或试玩",
+      engine: "引擎",
+      upload: "上传文件",
+      myProjects: "我的项目"
+    },
+    play: {
+      search: "搜索",
+      featured: "精选游戏",
+      popular: "热门游戏",
+      casual: "休闲游戏",
+      advanced: "进阶游戏",
+      viewMore: "查看更多",
+      plays: "游玩",
+      likes: "喜欢"
+    },
     agent: {
-      pipelineLabel: "模板流水线",
-      thinking: "正在推演方案...",
-      readySuffix: "可试玩方案",
+      pipelineLabel: "生成工作台",
+      thinking: "AI 正在推演体验方案",
+      readySuffix: "试玩方案",
       intro:
-        "我会先按 Physics-First 规则拆解创意，形成标准 GDD、资源协议和模板配置。确认方案后，再进入图片、音效、BGM 与特效资源生成。",
-      actionHazards: "风险与边界识别",
-      actionCheckpoints: "标准产物链路",
-      actionPickupCue: "资源生成准备",
-      closedLoop: "第一阶段闭环产物",
-      gdd: "标准 GDD",
+        "输入你的游戏想法后，我会先生成可执行方案。确认后进入本地生成流程，试玩展示在右侧，图片、音效、BGM 和特效统一进入资源库。",
+      actionHazards: "识别玩法边界",
+      actionCheckpoints: "生成方案摘要",
+      actionPickupCue: "准备资源任务",
+      closedLoop: "第一阶段闭环",
+      gdd: "方案推演",
       classified: "模板分类",
-      generatedAssets: "资源包条目",
+      generatedAssets: "资源条目",
       runtime: "运行验证",
       suggestionLabel: "迭代建议",
-      suggestion: "发布试玩后，根据玩家反馈生成下一版修改建议，并保留版本记录。",
+      suggestion: "发布试玩后，可根据玩家反馈生成下一版优化建议。",
       continue: "继续"
     },
     thinking: {
-      eyebrow: "模型深度思考中",
-      title: "从创意推导可执行生产方案",
+      eyebrow: "深度思考",
+      title: "把创意转成可试玩方案",
       steps: {
-        idea: "理解创意目标",
-        physics: "Physics-First 分类",
-        gdd: "生成技术 GDD",
-        assets: "拆解资源协议",
-        config: "规划玩法配置",
-        ready: "准备确认方案"
+        idea: "理解创意",
+        physics: "玩法分类",
+        gdd: "方案摘要",
+        assets: "资源准备",
+        config: "玩法配置",
+        ready: "等待确认"
       },
       details: {
-        idea: "提取核心体验、玩家目标与限制条件",
-        gdd: "概念、循环、实体、关卡、数值、实现路线",
-        config: "锁定 Phaser 模板、配置字段与可扩展 Hook",
-        ready: "等待用户同意或补充需求"
+        idea: "提取核心体验、目标和约束",
+        gdd: "整理玩法循环、角色、关卡和数值方向",
+        assets: "资源细节将进入右侧资源库",
+        ready: "同意方案或补充需求"
       },
       template: "模板",
-      goal: "胜利目标",
-      controls: "操作方式",
-      assets: "资源需求",
+      goal: "目标",
+      controls: "操作",
+      assets: "资源",
       addRequirement: "补充需求",
-      approve: "同意方案，下一步生成",
+      approve: "生成体验",
       revisionTitle: "补充你的需求",
-      revisionPlaceholder: "例如：敌人节奏更快、画面偏银白色、失败后给玩家一次护盾机会...",
+      revisionPlaceholder:
+        "例如：敌人节奏更快、画面偏银白色、失败后给玩家一次护盾机会...",
       clear: "清空",
       resimulate: "重新推演",
-      generatingTitle: "正在调用资源与代码生成任务",
-      generatingDetail: "生成图片、音效、BGM、特效占位与可试玩构建",
-      completeTitle: "资源与试玩版本已生成",
-      completeDetail: "右侧可预览游戏，也可以进入资源库检查素材。"
+      generatingTitle: "正在生成体验",
+      generatingDetail: "试玩结果显示在右侧，资源细节进入资源库。",
+      completeTitle: "体验已生成",
+      completeDetail: "请在右侧预览试玩，也可以切到资源库查看素材。"
     },
     prompt: {
       defaultIdea: "做一个霓虹飞船躲避陨石并收集星星的小游戏。",
       aria: "给 WOW Game 智能体补充需求",
       placeholder: "告诉 WOW Game 你想做什么游戏...",
-      followupPlaceholder: "补充需求或修改意见，发送后模型会重新推演方案...",
+      followupPlaceholder: "补充需求或修改意见，发送后 AI 会重新推演方案...",
       sendFollowup: "发送补充",
-      generateNext: "下一步生成"
+      generateNext: "生成体验",
+      localEngine: "本地体验引擎"
     },
     preview: {
-      generated: "已生成可试玩 v1",
-      verification: "验证报告",
+      generated: "可试玩体验 v1",
+      verification: "体验状态",
       build: "构建",
       visual: "视觉",
       intent: "意图"
@@ -91,14 +115,18 @@ export const messages = {
       description: "描述",
       mode: "生成方式",
       copyright: "版权状态",
-      folder: "assets",
+      folder: "Asset Hub",
       upload: "上传",
       create: "生成",
       regenerate: "重新生成",
       regenerateMissing: "补齐缺失",
       search: "搜索资源",
       ready: "就绪",
-      details: "详情"
+      details: "详情",
+      back: "返回",
+      provider: "Provider",
+      model: "Model",
+      audio: "Audio"
     },
     code: {
       artifacts: "标准产物",
@@ -114,76 +142,99 @@ export const messages = {
     },
     tabs: {
       preview: "Preview",
-      assets: "Assets",
-      code: "Code"
+      assets: "Asset Hub",
+      code: "Config"
     },
     toolbar: {
       refresh: "Refresh",
-      console: "Runtime console",
+      console: "Runtime panel",
       fullscreen: "Fullscreen"
     },
+    start: {
+      create: "Create",
+      play: "Play",
+      title: "Create from Scratch",
+      subtitlePrefix: "Describe your game below, or",
+      subtitleAction: "pick a template",
+      dialogAria: "Create new game",
+      modeAria: "Create or play",
+      engine: "Engine",
+      upload: "Upload file",
+      myProjects: "My projects"
+    },
+    play: {
+      search: "Search",
+      featured: "Featured games",
+      popular: "Popular games",
+      casual: "Casual Games",
+      advanced: "Advanced Games",
+      viewMore: "View more",
+      plays: "plays",
+      likes: "likes"
+    },
     agent: {
-      pipelineLabel: "template pipeline",
-      thinking: "Reasoning through the plan...",
+      pipelineLabel: "generation workspace",
+      thinking: "AI is shaping the play experience",
       readySuffix: "playable plan",
       intro:
-        "I first convert the idea into a physics-first plan, standard GDD, asset protocol, and template config. After approval, I start image, audio, BGM, VFX, and playable generation.",
-      actionHazards: "Risk and boundary scan",
-      actionCheckpoints: "Standard artifact chain",
-      actionPickupCue: "Resource generation prep",
-      closedLoop: "Stage-one closed loop",
-      gdd: "Standard GDD",
+        "Describe a game idea and I will turn it into an executable plan first. After approval, the local generation flow creates a playable preview on the right and keeps image, audio, BGM, and VFX assets in the hub.",
+      actionHazards: "Map gameplay boundaries",
+      actionCheckpoints: "Create plan summary",
+      actionPickupCue: "Prepare resource tasks",
+      closedLoop: "Stage-one loop",
+      gdd: "Plan reasoning",
       classified: "Template family",
-      generatedAssets: "Asset pack items",
-      runtime: "Runtime verification",
+      generatedAssets: "Asset items",
+      runtime: "Runtime validation",
       suggestionLabel: "Iteration advice",
-      suggestion: "After publishing, use player feedback to produce the next-version plan while preserving version history.",
+      suggestion: "After publishing, use player feedback to produce the next optimization pass.",
       continue: "Continue"
     },
     thinking: {
-      eyebrow: "Model deep thinking",
-      title: "Deriving an executable production plan",
+      eyebrow: "Deep reasoning",
+      title: "Turn an idea into a playable plan",
       steps: {
         idea: "Understand intent",
-        physics: "Physics-first classification",
-        gdd: "Technical GDD",
-        assets: "Asset protocol",
+        physics: "Classify play",
+        gdd: "Plan summary",
+        assets: "Prepare assets",
         config: "Gameplay config",
-        ready: "Proposal ready"
+        ready: "Await approval"
       },
       details: {
-        idea: "Extract core experience, player goal, and constraints",
-        gdd: "Concept, loop, entities, levels, numbers, route",
-        config: "Lock Phaser template, config fields, and hooks",
-        ready: "Waiting for approval or extra requirements"
+        idea: "Extract core experience, goals, and constraints",
+        gdd: "Shape loop, entities, level, and numbers",
+        assets: "Resource details stay in the Asset Hub",
+        ready: "Approve or add requirements"
       },
       template: "Template",
       goal: "Goal",
       controls: "Controls",
       assets: "Assets",
       addRequirement: "Add requirement",
-      approve: "Approve and generate",
+      approve: "Generate experience",
       revisionTitle: "Add your requirement",
       revisionPlaceholder: "Example: faster enemies, silver-white art direction, one shield after failure...",
       clear: "Clear",
       resimulate: "Rerun reasoning",
-      generatingTitle: "Calling resource and code generation",
-      generatingDetail: "Producing image, SFX, BGM, VFX placeholders, and a playable build",
-      completeTitle: "Resources and playable version generated",
-      completeDetail: "Preview the game on the right or inspect assets in the asset hub."
+      generatingTitle: "Generating experience",
+      generatingDetail: "The playable preview appears on the right and resources go to the hub.",
+      completeTitle: "Experience generated",
+      completeDetail: "Play the preview on the right or inspect materials in the Asset Hub."
     },
     prompt: {
       defaultIdea:
         "Create a neon spaceship dodge game where the player avoids asteroids and collects stars.",
       aria: "Add requirements for WOW Game Agent",
       placeholder: "Tell WOW Game what game you want to make...",
-      followupPlaceholder: "Add requirements or edits. The model will rerun the plan...",
+      followupPlaceholder: "Add requirements or edits. The AI will rerun the plan...",
       sendFollowup: "Send",
-      generateNext: "Generate next"
+      generateNext: "Generate experience",
+      localEngine: "Local Experience Engine"
     },
     preview: {
-      generated: "Generated playable v1",
-      verification: "Verification",
+      generated: "Playable experience v1",
+      verification: "Experience status",
       build: "Build",
       visual: "Visual",
       intent: "Intent"
@@ -194,14 +245,18 @@ export const messages = {
       description: "Description",
       mode: "Mode",
       copyright: "Copyright",
-      folder: "assets",
+      folder: "Asset Hub",
       upload: "Upload",
       create: "Create",
       regenerate: "Regenerate",
       regenerateMissing: "Regenerate missing",
       search: "Search assets",
       ready: "ready",
-      details: "Details"
+      details: "Details",
+      back: "Back",
+      provider: "Provider",
+      model: "Model",
+      audio: "Audio"
     },
     code: {
       artifacts: "Standard Artifacts",

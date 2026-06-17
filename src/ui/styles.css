@@ -1,6 +1,20 @@
 :root {
-  color: #e8fbff;
-  background: #03080d;
+  color: #edf8fb;
+  background: #05080d;
+  --bg-0: #05080d;
+  --bg-1: #080f17;
+  --bg-2: #0d1720;
+  --panel: rgb(9 18 28 / 88%);
+  --panel-strong: rgb(13 25 36 / 94%);
+  --line: rgb(107 228 235 / 22%);
+  --line-strong: rgb(88 242 218 / 48%);
+  --text: #edf8fb;
+  --muted: #8fa7b3;
+  --cyan: #33d9ff;
+  --teal: #45f6c8;
+  --amber: #ffbf4d;
+  --coral: #ff6b5f;
+  --shadow-cyan: 0 0 30px rgb(51 217 255 / 14%);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -1829,5 +1843,731 @@ pre {
     position: static;
     width: fit-content;
     margin: 0;
+  }
+}
+
+/* International neon console theme */
+.start-shell,
+.play-shell,
+.app-shell {
+  color: var(--text);
+  background:
+    radial-gradient(circle at 12% 18%, rgb(51 217 255 / 15%), transparent 26%),
+    radial-gradient(circle at 82% 8%, rgb(69 246 200 / 13%), transparent 24%),
+    radial-gradient(circle at 74% 78%, rgb(255 191 77 / 9%), transparent 28%),
+    linear-gradient(180deg, #071019 0%, #05080d 62%, #030609 100%);
+}
+
+.start-shell::after {
+  background:
+    linear-gradient(rgb(51 217 255 / 13%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(69 246 200 / 10%) 1px, transparent 1px);
+  background-size: 88px 34px;
+  opacity: 0.44;
+}
+
+.chrome-bar,
+.start-nav,
+.play-nav {
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgb(11 22 32 / 96%), rgb(5 10 15 / 96%)),
+    linear-gradient(90deg, rgb(51 217 255 / 10%), transparent 45%, rgb(255 191 77 / 6%));
+  box-shadow: 0 14px 40px rgb(0 0 0 / 26%);
+}
+
+.brand-mark {
+  color: #021114;
+  background: linear-gradient(135deg, var(--cyan), var(--teal) 58%, var(--amber));
+  box-shadow: 0 0 28px rgb(69 246 200 / 26%);
+}
+
+.project-menu,
+.ghost-button,
+.locale-button,
+.play-icon-button,
+.start-mode-tabs,
+.asset-path,
+.asset-search,
+.asset-toolbar-button,
+.model-select,
+.send-button,
+.dock-action {
+  border-color: var(--line);
+  color: var(--text);
+  background: rgb(8 18 27 / 78%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+}
+
+.share-button,
+.create-button,
+.primary-action,
+.asset-create-button {
+  border: 1px solid rgb(69 246 200 / 58%);
+  color: #041014;
+  background: linear-gradient(135deg, var(--cyan), var(--teal));
+  box-shadow: 0 0 26px rgb(69 246 200 / 22%);
+}
+
+.start-mode-tabs button.active,
+.play-category-bar button.active,
+.template-chip.active {
+  color: #031014;
+  border-color: rgb(69 246 200 / 72%);
+  background: linear-gradient(135deg, var(--cyan), var(--teal));
+  box-shadow: 0 0 22px rgb(51 217 255 / 18%);
+}
+
+.start-copy h1 {
+  color: var(--text);
+  text-shadow:
+    0 0 28px rgb(51 217 255 / 38%),
+    0 0 46px rgb(69 246 200 / 20%);
+}
+
+.start-copy p,
+.field-label,
+.agent-header span,
+.thought-line,
+.score-row span,
+.asset-browser-summary,
+.asset-inspector label {
+  color: var(--muted);
+}
+
+.create-dialog,
+.chat-card,
+.verification-rail,
+.code-panel,
+.asset-inspector {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgb(14 26 37 / 88%), rgb(6 12 18 / 92%)),
+    radial-gradient(circle at 12% 8%, rgb(51 217 255 / 10%), transparent 32%);
+  box-shadow:
+    var(--shadow-cyan),
+    inset 0 1px 0 rgb(255 255 255 / 5%);
+  backdrop-filter: blur(18px);
+}
+
+.creator-shell {
+  grid-template-columns: minmax(390px, 30vw) minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 3%) 1px, transparent 1px),
+    linear-gradient(rgb(255 255 255 / 3%) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+.agent-panel,
+.stage-panel {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgb(10 20 31 / 92%), rgb(5 10 16 / 96%)),
+    radial-gradient(circle at 50% 0%, rgb(51 217 255 / 10%), transparent 38%);
+  box-shadow: 0 22px 70px rgb(0 0 0 / 34%);
+}
+
+.agent-panel {
+  border-right: 1px solid var(--line);
+}
+
+.agent-panel::before {
+  background:
+    linear-gradient(rgb(51 217 255 / 8%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(69 246 200 / 7%) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.agent-header {
+  min-height: 66px;
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-avatar,
+.thinking-core {
+  border-radius: 10px;
+  border-color: rgb(69 246 200 / 58%);
+  color: #041014;
+  background: linear-gradient(135deg, var(--teal), var(--amber));
+}
+
+.agent-scroll {
+  gap: 10px;
+  padding: 10px;
+}
+
+.agent-card {
+  padding: 13px;
+}
+
+.agent-card h2 {
+  font-size: 15px;
+}
+
+.agent-card p {
+  color: #bed0d7;
+  font-size: 13px;
+}
+
+.quick-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.quick-actions span {
+  width: auto;
+  padding: 7px 8px;
+  border-color: var(--line);
+  border-radius: 7px;
+  color: #c9f7f2;
+  background: rgb(6 22 31 / 72%);
+  font-size: 11px;
+  text-align: center;
+}
+
+.user-prompt {
+  max-width: 88%;
+  border: 1px solid rgb(255 191 77 / 42%);
+  color: #160f03;
+  background: linear-gradient(135deg, var(--amber), #ffdf7a);
+  box-shadow: 0 0 18px rgb(255 191 77 / 20%);
+}
+
+.thinking-card {
+  gap: 10px;
+  padding: 12px;
+}
+
+.thinking-stream {
+  gap: 7px;
+  padding: 9px;
+  border-color: rgb(51 217 255 / 18%);
+  background: rgb(3 11 17 / 72%);
+}
+
+.thinking-step {
+  min-height: 31px;
+}
+
+.thinking-step strong {
+  color: #d8fbff;
+  font-size: 12px;
+}
+
+.thinking-step small {
+  color: #88a4ae;
+}
+
+.proposal-summary,
+.revision-box,
+.resource-pulse {
+  border-color: rgb(255 191 77 / 22%);
+  background:
+    linear-gradient(135deg, rgb(255 191 77 / 10%), transparent 35%),
+    rgb(6 15 22 / 86%);
+}
+
+.prompt-dock {
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgb(7 18 27 / 96%), rgb(4 9 14 / 98%));
+}
+
+.prompt-dock textarea {
+  height: 44px;
+}
+
+.model-select {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--teal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-tabs {
+  height: 52px;
+  border-bottom: 1px solid var(--line);
+}
+
+.stage-tab {
+  color: #78939e;
+  background: rgb(8 18 27 / 82%);
+  border-right: 1px solid var(--line);
+  letter-spacing: 0.02em;
+}
+
+.stage-tab.active {
+  color: var(--text);
+  background:
+    linear-gradient(180deg, rgb(51 217 255 / 12%), transparent),
+    rgb(5 10 15 / 94%);
+  box-shadow: inset 0 -2px 0 var(--teal);
+}
+
+.stage-toolbar {
+  height: 40px;
+  border-bottom: 1px solid var(--line);
+  background: rgb(4 10 15 / 86%);
+}
+
+.live-dot {
+  background: var(--teal);
+  box-shadow: 0 0 16px rgb(69 246 200 / 80%);
+}
+
+.preview-workspace {
+  grid-template-columns: minmax(0, 1fr) 260px;
+  padding: 18px;
+  background:
+    radial-gradient(circle at 24% 18%, rgb(51 217 255 / 10%), transparent 32%),
+    radial-gradient(circle at 80% 70%, rgb(255 191 77 / 8%), transparent 28%);
+}
+
+.preview-canvas-shell {
+  align-items: center;
+}
+
+.game-frame {
+  width: min(100%, 980px);
+  height: min(560px, calc(100vh - 190px));
+  min-height: 420px;
+  border: 1px solid rgb(51 217 255 / 24%);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgb(3 8 13 / 95%), rgb(1 4 7 / 98%));
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 4%),
+    0 0 58px rgb(51 217 255 / 13%),
+    0 34px 80px rgb(0 0 0 / 44%);
+}
+
+.floating-status {
+  right: 304px;
+  bottom: 18px;
+  color: #041014;
+  background: linear-gradient(135deg, #c8fff3, var(--teal));
+}
+
+.verification-rail {
+  padding: 16px;
+}
+
+.score-bar {
+  background: rgb(255 255 255 / 8%);
+}
+
+.score-bar div {
+  background: linear-gradient(90deg, var(--cyan), var(--teal), var(--amber));
+}
+
+.protocol-list span,
+.artifact-stack span {
+  color: #d6f8fb;
+  background: rgb(8 24 34 / 72%);
+}
+
+.asset-browser {
+  color: var(--text);
+  background:
+    radial-gradient(circle at 10% 0%, rgb(51 217 255 / 11%), transparent 28%),
+    linear-gradient(180deg, #050a0f, #020406);
+}
+
+.asset-browser-toolbar {
+  grid-template-columns: minmax(170px, 1fr) minmax(180px, 280px) auto auto auto;
+}
+
+.asset-create-button {
+  border-color: rgb(69 246 200 / 62%);
+}
+
+.asset-browser-summary strong,
+.asset-status {
+  color: #041014;
+  background: var(--teal);
+}
+
+.asset-tile {
+  border-color: rgb(255 255 255 / 6%);
+  background:
+    linear-gradient(180deg, rgb(14 25 36 / 86%), rgb(4 8 12 / 96%));
+}
+
+.asset-tile.selected {
+  border-color: var(--teal);
+  background:
+    linear-gradient(180deg, rgb(22 53 58 / 72%), rgb(5 14 18 / 96%));
+}
+
+.asset-check {
+  accent-color: var(--teal);
+}
+
+.asset-thumb.image,
+.asset-thumb.ui {
+  background:
+    radial-gradient(circle at 58% 36%, rgb(69 246 200 / 75%) 0 20%, transparent 21%),
+    linear-gradient(135deg, #0a1620, #145967);
+}
+
+.asset-thumb.sfx,
+.asset-thumb.bgm {
+  background:
+    repeating-linear-gradient(90deg, rgb(255 255 255 / 22%) 0 4px, transparent 4px 12px),
+    linear-gradient(135deg, #0c1c2a, #11728a);
+}
+
+.asset-thumb.effect {
+  background:
+    radial-gradient(circle, var(--cyan) 0 16%, transparent 17%),
+    radial-gradient(circle at 35% 70%, var(--amber) 0 12%, transparent 13%),
+    #07151d;
+}
+
+.asset-visual,
+.audio-preview {
+  background: linear-gradient(135deg, var(--cyan), var(--teal));
+  color: #041014;
+  font-size: 16px;
+}
+
+.asset-inspector {
+  border-color: var(--line);
+  background: rgb(5 11 17 / 94%);
+}
+
+.meta-table {
+  background: rgb(10 27 37 / 82%);
+}
+
+.code-workspace {
+  background: radial-gradient(circle at 30% 10%, rgb(51 217 255 / 8%), transparent 32%);
+}
+
+pre,
+.artifact-card {
+  border: 1px solid rgb(255 255 255 / 6%);
+  background: rgb(3 8 13 / 86%);
+}
+
+@media (max-width: 1080px) {
+  .creator-shell {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .agent-panel {
+    flex-basis: min(52vh, 520px);
+  }
+
+  .quick-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .game-frame {
+    height: min(380px, calc(46vh - 110px));
+    min-height: 240px;
+  }
+}
+
+/* Final unified WOW Game console skin */
+.start-shell,
+.play-shell,
+.app-shell {
+  color: var(--text);
+  background:
+    linear-gradient(120deg, rgb(51 217 255 / 8%) 0 1px, transparent 1px 26px),
+    radial-gradient(circle at 16% 18%, rgb(51 217 255 / 16%), transparent 26%),
+    radial-gradient(circle at 76% 18%, rgb(69 246 200 / 12%), transparent 24%),
+    radial-gradient(circle at 70% 82%, rgb(255 191 77 / 9%), transparent 30%),
+    linear-gradient(180deg, #071018 0%, #04080d 62%, #020407 100%);
+}
+
+.start-copy h1 {
+  color: #f2fcff;
+  text-shadow: 0 0 30px rgb(51 217 255 / 36%);
+}
+
+.start-copy p,
+.game-card-overlay span,
+.section-row button,
+.asset-browser-summary,
+.asset-inspector label {
+  color: var(--muted);
+}
+
+.start-copy button {
+  color: var(--teal);
+}
+
+.play-category-bar {
+  border-bottom: 1px solid var(--line);
+  background: rgb(4 10 16 / 94%);
+}
+
+.play-category-bar button {
+  border-color: rgb(51 217 255 / 20%);
+  color: #c9f7f2;
+  background: rgb(8 18 27 / 78%);
+}
+
+.play-category-bar button.active {
+  border-color: rgb(69 246 200 / 70%);
+  color: #031014;
+  background: linear-gradient(135deg, var(--cyan), var(--teal));
+}
+
+.play-scroll {
+  background:
+    radial-gradient(circle at 24% 12%, rgb(51 217 255 / 9%), transparent 24%),
+    radial-gradient(circle at 82% 70%, rgb(255 191 77 / 7%), transparent 24%);
+}
+
+.game-card {
+  border-color: rgb(51 217 255 / 20%);
+  background: #061018;
+  box-shadow:
+    inset 0 -72px 80px rgb(0 0 0 / 52%),
+    0 18px 38px rgb(0 0 0 / 26%);
+}
+
+.game-card:hover {
+  border-color: rgb(69 246 200 / 58%);
+  transform: translateY(-2px);
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+
+.game-art {
+  background:
+    linear-gradient(120deg, rgb(255 255 255 / 8%) 0 1px, transparent 1px 18px),
+    radial-gradient(circle at 30% 24%, rgb(255 191 77 / 24%), transparent 18%),
+    radial-gradient(circle at 70% 62%, rgb(69 246 200 / 22%), transparent 28%),
+    linear-gradient(135deg, rgb(8 18 28 / 18%), rgb(2 8 12 / 28%));
+}
+
+.create-dialog {
+  border-color: rgb(51 217 255 / 24%);
+  background:
+    linear-gradient(180deg, rgb(14 28 39 / 86%), rgb(6 12 18 / 94%)),
+    radial-gradient(circle at 16% 0%, rgb(51 217 255 / 12%), transparent 32%);
+}
+
+.template-chip {
+  border-color: rgb(51 217 255 / 16%);
+  background: rgb(8 18 27 / 76%);
+}
+
+.upload-button {
+  color: #d9fbff;
+  background: rgb(8 24 34 / 82%);
+}
+
+.char-count {
+  color: var(--teal);
+}
+
+.asset-browser {
+  color: var(--text);
+  background:
+    radial-gradient(circle at 12% 0%, rgb(51 217 255 / 12%), transparent 30%),
+    radial-gradient(circle at 88% 80%, rgb(255 191 77 / 7%), transparent 24%),
+    linear-gradient(180deg, #050b11, #020406);
+}
+
+.asset-path,
+.asset-search,
+.asset-toolbar-button {
+  border-color: var(--line);
+  color: #d9fbff;
+  background: rgb(8 18 27 / 78%);
+}
+
+.asset-path {
+  color: var(--teal);
+}
+
+.asset-create-button {
+  border-color: rgb(69 246 200 / 62%);
+  color: #041014;
+  background: linear-gradient(135deg, var(--cyan), var(--teal));
+}
+
+.asset-tile {
+  border-color: rgb(51 217 255 / 12%);
+  background:
+    linear-gradient(180deg, rgb(13 26 37 / 84%), rgb(5 10 15 / 96%));
+}
+
+.asset-tile.selected {
+  border-color: var(--teal);
+  background:
+    linear-gradient(180deg, rgb(21 55 61 / 70%), rgb(5 14 18 / 96%));
+}
+
+.asset-thumb.image,
+.asset-thumb.ui {
+  background:
+    radial-gradient(circle at 56% 34%, rgb(69 246 200 / 78%) 0 19%, transparent 20%),
+    radial-gradient(circle at 28% 70%, rgb(255 191 77 / 48%) 0 14%, transparent 15%),
+    linear-gradient(135deg, #0a1620, #145967);
+}
+
+.asset-thumb.sfx,
+.asset-thumb.bgm {
+  background:
+    repeating-linear-gradient(90deg, rgb(255 255 255 / 22%) 0 4px, transparent 4px 12px),
+    linear-gradient(135deg, #0b1b28, #11728a);
+}
+
+.asset-thumb.effect {
+  background:
+    radial-gradient(circle, var(--cyan) 0 16%, transparent 17%),
+    radial-gradient(circle at 35% 70%, var(--amber) 0 12%, transparent 13%),
+    #07151d;
+}
+
+.asset-check {
+  accent-color: var(--teal);
+}
+
+.asset-visual,
+.audio-preview {
+  color: #041014;
+  background: linear-gradient(135deg, var(--cyan), var(--teal));
+}
+
+.asset-status,
+.asset-browser-summary strong {
+  color: #041014;
+  background: var(--teal);
+}
+
+.asset-status.failed,
+.asset-status.missing {
+  background: var(--amber);
+}
+
+@media (min-width: 1081px) {
+  .agent-panel {
+    max-height: calc(100vh - 96px);
+  }
+
+  .agent-scroll {
+    overflow: hidden;
+  }
+
+  .agent-card {
+    display: none;
+  }
+
+  .thinking-stream {
+    max-height: 126px;
+    overflow: hidden;
+  }
+
+  .thinking-card {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .thinking-card-header {
+    gap: 9px;
+  }
+
+  .thinking-card-header h3 {
+    font-size: 14px;
+  }
+
+  .thinking-core {
+    width: 34px;
+    height: 34px;
+  }
+
+  .thinking-step {
+    min-height: 21px;
+  }
+
+  .thinking-step small {
+    display: none;
+  }
+
+  .user-prompt {
+    max-height: 42px;
+    overflow: hidden;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .proposal-summary {
+    gap: 8px;
+    padding: 9px;
+  }
+
+  .proposal-grid {
+    grid-template-columns: 54px minmax(0, 1fr);
+    gap: 5px 8px;
+  }
+
+  .proposal-grid span,
+  .proposal-grid strong,
+  .proposal-summary p {
+    font-size: 11px;
+    line-height: 1.25;
+  }
+
+  .proposal-actions {
+    gap: 6px;
+  }
+
+  .primary-action,
+  .secondary-action,
+  .dock-action {
+    min-height: 32px;
+  }
+
+  .prompt-dock {
+    padding: 8px 10px;
+  }
+
+  .prompt-dock textarea {
+    height: 34px;
+  }
+
+  .prompt-tools {
+    margin-top: 7px;
+  }
+
+  .stage-tabs {
+    height: 46px;
+  }
+
+  .stage-toolbar {
+    height: 34px;
+  }
+
+  .preview-workspace {
+    grid-template-columns: minmax(0, 1fr) 238px;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .game-frame {
+    height: min(500px, calc(100vh - 218px));
+    min-height: 330px;
+  }
+
+  .floating-status {
+    right: 266px;
+    bottom: 12px;
+  }
+
+  .verification-rail {
+    padding: 12px;
   }
 }

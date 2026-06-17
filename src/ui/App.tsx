@@ -20,11 +20,7 @@ import {
   Zap
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import {
-  answerDesignQuestion,
-  createConversationSession,
-  getNextConversationAction
-} from "../core/conversation";
+import { createConversationSession } from "../core/conversation";
 import {
   getFeaturedGames,
   getGamesByCategory,
@@ -36,10 +32,8 @@ import {
 import { runMockPipeline } from "../core/pipeline";
 import {
   createStartGameDraft,
-  modelOptions,
   templateOptions,
-  type StartGameDraft,
-  type StartModelId
+  type StartGameDraft
 } from "../core/start";
 import type {
   AssetRequirement,
@@ -50,8 +44,6 @@ import type {
 } from "../core/types";
 import { getMessages, type Locale } from "./i18n";
 import { PhaserPreview } from "./PhaserPreview";
-import { requestPlayableGeneration } from "../services/generationClient";
-import { createGenerationService } from "../services/generationService";
 import { createMediaGateway } from "../services/mediaGateway";
 
 const rightTabs = [
@@ -61,8 +53,6 @@ const rightTabs = [
 ] as const;
 
 type RightTab = (typeof rightTabs)[number]["id"];
-type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
-type GenerationStatus = "idle" | "generating" | "ready" | "fallback" | "error";
 type CreationPhase = "thinking" | "proposal" | "revision" | "generating" | "complete";
 
 export function App() {
@@ -82,12 +72,10 @@ export function App() {
   );
   const [creationPhase, setCreationPhase] = useState<CreationPhase>("thinking");
   const [revisionText, setRevisionText] = useState("");
-  const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
-  const [generationStatus, setGenerationStatus] = useState<GenerationStatus>("idle");
-  const [generationError, setGenerationError] = useState<string>("");
+  const [generatedProject, setGeneratedProject] = useState<MockProject | null>(null);
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const fallbackProject = useMemo(() => runMockPipeline(idea), [idea]);
-  const project = generationResult?.project ?? fallbackProject;
+  const project = generatedProject ?? fallbackProject;
 
   useEffect(() => {
     if (!hasStarted || creationPhase !== "thinking") return;
@@ -97,28 +85,11 @@ export function App() {
 
   const startResourceGeneration = async () => {
     setCreationPhase("generating");
-    setGenerationStatus("generating");
-    setGenerationError("");
-    try {
-      const result = await generatePlayableFromDraft(activeDraft, idea, session);
-      setGenerationResult(result);
-      setGenerationStatus(result.fallbacksUsed.length > 0 ? "fallback" : "ready");
+    window.setTimeout(() => {
+      setGeneratedProject(runMockPipeline(idea));
       setCreationPhase("complete");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const fallback = await createGenerationService().generatePlayableVersion({
-        idea,
-        answers: session.answers,
-        templateFamily: activeDraft.templateFamily,
-        projectId: "project-local-fallback",
-        baseUrl: getBrowserBaseUrl(),
-        model: "mock-designer"
-      });
-      setGenerationResult(fallback);
-      setGenerationStatus("error");
-      setGenerationError(message);
-      setCreationPhase("complete");
-    }
+      setActiveTab("preview");
+    }, 900);
   };
 
   if (!hasStarted) {
@@ -142,9 +113,7 @@ export function App() {
           setIdea(nextIdea);
           setActiveDraft(nextDraft);
           setSession(nextSession);
-          setGenerationResult(null);
-          setGenerationStatus("idle");
-          setGenerationError("");
+          setGeneratedProject(null);
           setRevisionText("");
           setCreationPhase("thinking");
           setHasStarted(true);
@@ -191,7 +160,6 @@ export function App() {
             <ThinkingPipelinePanel
               phase={creationPhase}
               project={project}
-              status={generationStatus}
               revisionText={revisionText}
               messages={t}
               onApprove={startResourceGeneration}
@@ -204,18 +172,10 @@ export function App() {
                   preferredTemplate: activeDraft.templateFamily
                 }));
                 setRevisionText("");
-                setGenerationResult(null);
-                setGenerationStatus("idle");
+                setGeneratedProject(null);
                 setCreationPhase("thinking");
               }}
             />
-            <ModelStatusCard
-              status={generationStatus}
-              error={generationError}
-              result={generationResult}
-            />
-            <AgentBuildLog project={project} messages={t} />
-            <SuggestionCard messages={t} />
           </div>
           <PromptDock
             messages={t}
@@ -231,8 +191,7 @@ export function App() {
                 preferredTemplate: activeDraft.templateFamily
               }));
               setRevisionText("");
-              setGenerationResult(null);
-              setGenerationStatus("idle");
+              setGeneratedProject(null);
               setCreationPhase("thinking");
             }}
           />
@@ -285,28 +244,6 @@ export function App() {
   );
 }
 
-async function generatePlayableFromDraft(
-  draft: StartGameDraft,
-  idea: string,
-  session: ConversationSession
-): Promise<GenerationResult> {
-  return (await requestPlayableGeneration({
-    idea,
-    answers: session.answers,
-    templateFamily: draft.templateFamily,
-    projectId: `project-${Date.now()}`,
-    baseUrl: getBrowserBaseUrl(),
-    model: draft.model
-  })) as GenerationResult;
-}
-
-function getBrowserBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return "http://localhost:5173";
-  }
-  return window.location.origin;
-}
-
 function StartPage({
   draft,
   locale,
@@ -323,6 +260,7 @@ function StartPage({
   onCreate: () => void;
 }) {
   const canCreate = draft.idea.trim().length > 0;
+  const t = getMessages(locale);
   const updateDraft = (patch: Partial<StartGameDraft>) => onDraftChange({ ...draft, ...patch });
 
   return (
@@ -332,24 +270,24 @@ function StartPage({
           <div className="brand-mark">W</div>
           <strong>WOW Game</strong>
         </div>
-        <nav className="start-mode-tabs" aria-label="Create or play">
+        <nav className="start-mode-tabs" aria-label={t.start.modeAria}>
           <button className="active">
             <Plus size={15} />
-            CREATE
+            {t.start.create}
           </button>
           <button onClick={onPlay}>
             <Gamepad2 size={15} />
-            PLAY
+            {t.start.play}
           </button>
         </nav>
         <div className="start-actions">
           <button className="ghost-button">
             <Zap size={15} />
-            UPGRADE
+            {t.brand.upgrade}
           </button>
           <button className="ghost-button">
             <Wand2 size={15} />
-            MY PROJECTS
+            {t.start.myProjects}
           </button>
           <button className="locale-button" onClick={onLocaleToggle}>
             {locale === "zh-CN" ? "中文" : "EN"}
@@ -359,33 +297,24 @@ function StartPage({
 
       <section className="start-stage">
         <div className="start-copy">
-          <h1>Create from Scratch</h1>
+          <h1>{t.start.title}</h1>
           <p>
-            Describe your game below, or <button>pick a template</button>
+            {t.start.subtitlePrefix} <button>{t.start.subtitleAction}</button>
           </p>
         </div>
 
-        <section className="create-dialog" aria-label="Create new game">
+        <section className="create-dialog" aria-label={t.start.dialogAria}>
           <textarea
             maxLength={500}
             value={draft.idea}
             onChange={(event) => updateDraft({ idea: event.target.value })}
-            placeholder="Tell us what game you want to make..."
+            placeholder={t.prompt.placeholder}
           />
 
           <div className="create-dialog-row">
             <label className="field-label">
-              Model
-              <select
-                value={draft.model}
-                onChange={(event) => updateDraft({ model: event.target.value as StartModelId })}
-              >
-                {modelOptions.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
+              {t.start.engine}
+              <span className="engine-pill">{t.prompt.localEngine}</span>
             </label>
             <span className="char-count">{draft.idea.length}/500</span>
           </div>
@@ -406,7 +335,7 @@ function StartPage({
           <div className="create-dialog-footer">
             <label className="upload-button">
               <Upload size={16} />
-              UPLOAD FILE
+              {t.start.upload}
               <input
                 multiple
                 type="file"
@@ -423,7 +352,7 @@ function StartPage({
               ))}
             </div>
             <button className="create-button" disabled={!canCreate} onClick={onCreate}>
-              Create
+              {t.start.create}
               <Send size={17} />
             </button>
           </div>
@@ -442,6 +371,7 @@ function PlayPage({
 }) {
   const [activeCategory, setActiveCategory] = useState<PlayCategory>("All");
   const games = activeCategory === "All" ? getFeaturedGames() : getGamesByCategory(activeCategory).slice(0, 12);
+  const t = getMessages("zh-CN");
 
   return (
     <main className="play-shell">
@@ -450,22 +380,22 @@ function PlayPage({
           <div className="brand-mark">W</div>
           <strong>WOW Game</strong>
         </div>
-        <nav className="start-mode-tabs" aria-label="Create or play">
+        <nav className="start-mode-tabs" aria-label={t.start.modeAria}>
           <button onClick={onCreate}>
             <Plus size={15} />
-            CREATE
+            {t.start.create}
           </button>
           <button className="active">
             <Gamepad2 size={15} />
-            PLAY
+            {t.start.play}
           </button>
         </nav>
         <div className="play-actions">
           <button className="ghost-button">
             <Zap size={15} />
-            UPGRADE
+            {t.brand.upgrade}
           </button>
-          <button className="play-icon-button" title="Search">
+          <button className="play-icon-button" title={t.play.search}>
             <Search size={18} />
           </button>
         </div>
@@ -485,14 +415,14 @@ function PlayPage({
 
       <section className="play-scroll">
         <GameSection
-          title={activeCategory === "All" ? "Featured games" : `${activeCategory} games`}
+          title={activeCategory === "All" ? t.play.featured : `${activeCategory} games`}
           games={games}
           onPlayGame={onPlayGame}
           compact
         />
-        <GameMosaic title="Popular games" games={getPopularGames()} onPlayGame={onPlayGame} />
-        <GameSection title="Casual Games" games={getGamesByCategory("Casual").slice(0, 8)} onPlayGame={onPlayGame} />
-        <GameSection title="Advanced Games" games={getGamesByCategory("Advanced").slice(0, 8)} onPlayGame={onPlayGame} />
+        <GameMosaic title={t.play.popular} games={getPopularGames()} onPlayGame={onPlayGame} />
+        <GameSection title={t.play.casual} games={getGamesByCategory("Casual").slice(0, 8)} onPlayGame={onPlayGame} />
+        <GameSection title={t.play.advanced} games={getGamesByCategory("Advanced").slice(0, 8)} onPlayGame={onPlayGame} />
       </section>
     </main>
   );
@@ -513,7 +443,7 @@ function GameSection({
     <section className="game-section">
       <div className="section-row">
         <h2>{title}</h2>
-        {!compact && <button>View more</button>}
+        {!compact && <button>查看更多</button>}
       </div>
       <div className={compact ? "game-row compact" : "game-row"}>
         {games.map((game) => (
@@ -556,7 +486,7 @@ function GameCard({ game, onClick }: { game: PlayGame; onClick: () => void }) {
       </div>
       <div className="game-card-overlay">
         <strong>{game.title}</strong>
-        <span>{formatCount(game.plays)} plays · {game.likes} likes</span>
+        <span>{formatCount(game.plays)} 游玩 / {game.likes} 喜欢</span>
       </div>
     </button>
   );
@@ -610,7 +540,6 @@ function UserPrompt({ text }: { text: string }) {
 function ThinkingPipelinePanel({
   phase,
   project,
-  status,
   revisionText,
   messages,
   onApprove,
@@ -620,7 +549,6 @@ function ThinkingPipelinePanel({
 }: {
   phase: CreationPhase;
   project: MockProject;
-  status: GenerationStatus;
   revisionText: string;
   messages: ReturnType<typeof getMessages>;
   onApprove: () => void;
@@ -632,13 +560,11 @@ function ThinkingPipelinePanel({
     { label: messages.thinking.steps.idea, detail: messages.thinking.details.idea },
     { label: messages.thinking.steps.physics, detail: project.classification.templateFamily },
     { label: messages.thinking.steps.gdd, detail: messages.thinking.details.gdd },
-    { label: messages.thinking.steps.assets, detail: `${project.assetPack.assets.length} assets` },
-    { label: messages.thinking.steps.config, detail: messages.thinking.details.config },
+    { label: messages.thinking.steps.assets, detail: messages.thinking.details.assets },
     { label: messages.thinking.steps.ready, detail: messages.thinking.details.ready }
   ];
   const activeIndex =
     phase === "thinking" ? 3 : phase === "proposal" || phase === "revision" ? 5 : 6;
-  const isGenerating = phase === "generating" || status === "generating";
 
   return (
     <article className={`chat-card thinking-card ${phase}`}>
@@ -703,7 +629,7 @@ function ThinkingPipelinePanel({
         </div>
       )}
 
-      {isGenerating && (
+      {phase === "generating" && (
         <div className="resource-pulse">
           <span />
           <div>
@@ -763,108 +689,6 @@ function ProposalSummary({
   );
 }
 
-function ConversationPanel({
-  session,
-  onSessionChange
-}: {
-  session: ConversationSession;
-  onSessionChange: (session: ConversationSession) => void;
-}) {
-  const action = getNextConversationAction(session);
-  return (
-    <article className="chat-card conversation-card">
-      <p className="thought-line">对话阶段：{session.stage}</p>
-      {session.questions.map((question) => {
-        const answer = session.answers.find((item) => item.questionId === question.id);
-        return (
-          <div className="question-card" key={question.id}>
-            <div>
-              <strong>{question.label}</strong>
-              <span>{question.prompt}</span>
-            </div>
-            <button
-              disabled={Boolean(answer)}
-              onClick={() =>
-                onSessionChange(answerDesignQuestion(session, question.id, question.defaultAnswer))
-              }
-            >
-              {answer ? answer.value : `使用推荐：${question.defaultAnswer}`}
-            </button>
-          </div>
-        );
-      })}
-      <div className="conversation-action">
-        <span>{action.nextLabel}</span>
-        <strong>{action.canGenerateArtifact ? "可生成标准产物" : "等待回答"}</strong>
-      </div>
-    </article>
-  );
-}
-
-function ModelStatusCard({
-  status,
-  error,
-  result
-}: {
-  status: GenerationStatus;
-  error: string;
-  result: GenerationResult | null;
-}) {
-  const taskCount = result?.modelTasks.length ?? 0;
-  const fallbackCount = result?.fallbacksUsed.length ?? 0;
-  const label =
-    status === "generating"
-      ? "DeepSeek 正在生成标准产物"
-      : status === "ready"
-        ? "DeepSeek ready"
-        : status === "fallback"
-          ? "Fallback used"
-          : status === "error"
-            ? "Backend unavailable, Mock fallback used"
-            : "Model idle";
-  return (
-    <article className={`chat-card model-status-card ${status}`}>
-      <div className="model-status-row">
-        <strong>{label}</strong>
-        <span>{taskCount > 0 ? `${taskCount} model tasks` : "waiting"}</span>
-      </div>
-      {fallbackCount > 0 && <p>已回退任务：{result?.fallbacksUsed.join(", ")}</p>}
-      {error && <p>错误：{error}</p>}
-    </article>
-  );
-}
-
-function AgentBuildLog({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
-  const visibleArtifacts = project.artifacts.slice(0, 8);
-  return (
-    <article className="chat-card log-card">
-      <p className="thought-line">{messages.agent.closedLoop}</p>
-      <LogLine ok label={messages.agent.gdd} detail="/gdd.json" />
-      <LogLine ok label={messages.agent.classified} detail={project.classification.templateFamily} />
-      <LogLine ok label={`${messages.agent.generatedAssets} ${project.assetPack.assets.length}`} detail="/asset-pack.json" />
-      <LogLine ok label={messages.agent.runtime} detail="build health 92" />
-      <div className="artifact-stack">
-        {visibleArtifacts.map((artifact) => (
-          <span key={artifact.fileName}>{artifact.fileName}</span>
-        ))}
-      </div>
-    </article>
-  );
-}
-
-function SuggestionCard({ messages }: { messages: ReturnType<typeof getMessages> }) {
-  return (
-    <article className="chat-card suggestion-card">
-      <p>{messages.agent.suggestionLabel}</p>
-      <strong>"{messages.agent.suggestion}"</strong>
-      <button>
-        {messages.agent.continue}
-        <Send size={16} />
-      </button>
-    </article>
-  );
-}
-
 function PromptDock({
   messages,
   revisionText,
@@ -890,8 +714,7 @@ function PromptDock({
       />
       <div className="prompt-tools">
         <button className="model-select">
-          deepseek-v4-flash
-          <ChevronDown size={14} />
+          {messages.prompt.localEngine}
         </button>
         <div className="tool-icons">
           <ImageIcon size={16} />
@@ -988,8 +811,8 @@ function AssetWorkspace({ project, messages }: { project: MockProject; messages:
     <div className="asset-browser">
       <div className="asset-browser-toolbar">
         <div className="asset-path">
-          <button title="Back">←</button>
-          <strong>▣ {messages.assets.folder}</strong>
+          <button title={messages.assets.back}>{messages.assets.back}</button>
+          <strong>{messages.assets.folder}</strong>
         </div>
         <label className="asset-search">
           <Search size={16} />
@@ -1027,7 +850,7 @@ function AssetWorkspace({ project, messages }: { project: MockProject; messages:
 
       <div className="asset-browser-summary">
         <strong>{readyCount}/{assets.length} {messages.assets.ready}</strong>
-        <span>asset-pack.json · project {project.id} · version {project.version.id}</span>
+        <span>asset-pack.json / project {project.id} / version {project.version.id}</span>
       </div>
 
       <div className="asset-browser-layout">
@@ -1036,6 +859,7 @@ function AssetWorkspace({ project, messages }: { project: MockProject; messages:
             <AssetTile
               key={asset.assetKey}
               asset={asset}
+              audioLabel={messages.assets.audio}
               selected={asset.assetKey === selectedAsset?.assetKey}
               onSelect={() => setSelectedKey(asset.assetKey)}
               onRegenerate={() => regenerateAsset(asset)}
@@ -1054,7 +878,7 @@ function AssetInspector({ asset, messages }: { asset: AssetRequirement; messages
     <aside className="asset-inspector">
       <div className="asset-inspector-preview">
         {asset.type === "sfx" || asset.type === "bgm" ? (
-          <div className="audio-preview">♪</div>
+          <div className="audio-preview">{messages.assets.audio}</div>
         ) : (
           <div className={`asset-visual ${asset.type}`}>{asset.type}</div>
         )}
@@ -1069,9 +893,9 @@ function AssetInspector({ asset, messages }: { asset: AssetRequirement; messages
       <div className="meta-table">
         <span>{messages.assets.mode}</span>
         <strong>{asset.source}</strong>
-        <span>Provider</span>
+        <span>{messages.assets.provider}</span>
         <strong>{asset.provider}</strong>
-        <span>Model</span>
+        <span>{messages.assets.model}</span>
         <strong>{asset.model}</strong>
         <span>{messages.assets.copyright}</span>
         <strong>{asset.copyrightStatus}</strong>
@@ -1102,12 +926,14 @@ function CodeWorkspace({ project, messages }: { project: MockProject; messages: 
 
 function AssetTile({
   asset,
+  audioLabel,
   selected,
   onSelect,
   onRegenerate,
   onUpload
 }: {
   asset: AssetRequirement;
+  audioLabel: string;
   selected: boolean;
   onSelect: () => void;
   onRegenerate: () => void;
@@ -1117,7 +943,7 @@ function AssetTile({
     <article className={selected ? "asset-tile selected" : "asset-tile"} onClick={onSelect}>
       <input className="asset-check" type="checkbox" checked={selected} readOnly aria-label={asset.assetKey} />
       <div className={`asset-thumb ${asset.type}`}>
-        {asset.type === "sfx" || asset.type === "bgm" ? <span>♪</span> : <Database size={22} />}
+        {asset.type === "sfx" || asset.type === "bgm" ? <span>{audioLabel}</span> : <Database size={22} />}
       </div>
       <strong>{asset.assetKey}</strong>
       <span>{asset.type} / {asset.status}</span>

@@ -60,4 +60,24 @@ describe("standard artifact pipeline", () => {
 
     expect(validateAssetReferences(invalidConfig, project.assetPack)).toEqual(["missing.enemy"]);
   });
+
+  it("includes built-in demo audio and effect assets for playable feedback", () => {
+    const project = runMockPipeline("做一个飞船躲避陨石并收集星星的小游戏");
+    const keys = project.assetPack.assets.map((asset) => asset.assetKey);
+
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        "bgm.loop",
+        "sfx.collect",
+        "sfx.hit",
+        "sfx.win",
+        "sfx.lose",
+        "sfx.click",
+        "effect.hit",
+        "effect.win",
+        "effect.lose"
+      ])
+    );
+    expect(project.assetPack.assets.every((asset) => asset.status !== "missing")).toBe(true);
+  });
 });
