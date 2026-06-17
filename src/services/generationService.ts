@@ -1,4 +1,4 @@
-import { createConversationSession } from "../core/conversation";
+import { createConversationSession, createGuidedQuestions } from "../core/conversation";
 import {
   createArtifacts,
   createAssetRequirements,
@@ -7,9 +7,10 @@ import {
   runMockPipeline,
   validateAssetReferences
 } from "../core/pipeline";
-import { classificationSchema, gameConfigSchema, gddSchema } from "../core/schemas";
+import { classificationSchema, gameConfigSchema, gddSchema, guidedQuestionsSchema } from "../core/schemas";
 import type {
   AssetPack,
+  DesignQuestion,
   GameConfig,
   MockProject,
   PlayFeedback,
@@ -32,6 +33,13 @@ export interface GeneratePlayableInput {
   model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
 }
 
+export interface GenerateGuidedQuestionsInput {
+  idea: string;
+  templateFamily: TemplateFamily;
+  projectId?: string;
+  model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
+}
+
 export interface GenerationServiceOptions {
   deepseekApiKey?: string;
   deepseekBaseUrl?: string;
@@ -51,6 +59,7 @@ export interface SharePayload {
 type GenerationModelTask =
   | GatewayResult<unknown>
   | GatewayResult<ReturnType<typeof classificationSchema.parse>>
+  | GatewayResult<ReturnType<typeof guidedQuestionsSchema.parse>>
   | GatewayResult<ReturnType<typeof gddSchema.parse>>
   | GatewayResult<ReturnType<typeof gameConfigSchema.parse>>;
 
@@ -78,6 +87,37 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
   const mediaGateway = createMediaGateway(options.mediaGateway);
 
   return {
+    async generateGuidedQuestions(input: GenerateGuidedQuestionsInput) {
+      const fallbackQuestions = createGuidedQuestions(input.idea);
+      const useRealModel = (input.model ?? "deepseek-v4-flash") === "deepseek-v4-flash";
+      const provider = useRealModel ? "deepseek" : "mock";
+      const model = useRealModel ? "deepseek-v4-flash" : "mock-designer";
+      const task = await gateway.runModelTask({
+        taskType: "llm.guided_questions",
+        provider,
+        model,
+        prompt: createPromptForTask("llm.guided_questions", {
+          idea: input.idea,
+          templateFamily: input.templateFamily,
+          projectId: input.projectId,
+          designGuardrails: [
+            "Only ask questions that can affect a first playable 2D game.",
+            "Prefer controls, win condition, fail condition, visual style, target duration.",
+            "Keep platformer/top_down constraints compatible with Phaser templates."
+          ]
+        }),
+        schema: guidedQuestionsSchema,
+        preprocess: (raw) => normalizeGuidedQuestions(raw, fallbackQuestions),
+        fallback: { questions: fallbackQuestions }
+      });
+
+      return {
+        questions: task.output.questions,
+        modelTask: task,
+        fallbackUsed: task.status === "fallback"
+      };
+    },
+
     async generatePlayableVersion(input: GeneratePlayableInput) {
       const session = createConversationSession(input.idea, {
         projectId: input.projectId,
@@ -230,6 +270,71 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       };
     }
   };
+}
+
+function normalizeGuidedQuestions(raw: unknown, fallbackQuestions: DesignQuestion[]) {
+  const value = asRecord(raw);
+  const rawQuestions = Array.isArray(value.questions) ? value.questions : Array.isArray(raw) ? raw : [];
+  if (rawQuestions.length < 3) {
+    return { questions: [] };
+  }
+  const questions = rawQuestions
+    .map((item, index) => normalizeDesignQuestion(item, fallbackQuestions[index], index))
+    .filter((item): item is DesignQuestion => Boolean(item));
+  if (questions.length < 3) {
+    throw new Error("Guided questions artifact must include at least 3 usable questions");
+  }
+  return {
+    questions: questions.slice(0, 5)
+  };
+}
+
+function normalizeDesignQuestion(
+  raw: unknown,
+  fallback: DesignQuestion | undefined,
+  index: number
+): DesignQuestion | null {
+  const value = asRecord(raw);
+  const inputType = normalizeInputType(value.inputType, fallback?.inputType ?? "short_text");
+  const id = normalizeQuestionId(value.id, fallback?.id ?? `question_${index + 1}`);
+  const label = normalizeString(value.label, fallback?.label ?? `问题 ${index + 1}`);
+  const prompt = normalizeString(value.prompt, fallback?.prompt ?? label);
+  const defaultAnswer = normalizeString(value.defaultAnswer, fallback?.defaultAnswer ?? "");
+  const options = normalizeStringArray(value.options, fallback?.options ?? []);
+  if (!prompt || !defaultAnswer) return null;
+  return {
+    id,
+    label,
+    prompt,
+    inputType,
+    options: inputType === "short_text" || inputType === "number" ? undefined : options,
+    defaultAnswer,
+    required: typeof value.required === "boolean" ? value.required : fallback?.required ?? true
+  };
+}
+
+function normalizeQuestionId(value: unknown, fallback: string): string {
+  const text = normalizeString(value, fallback)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return text || fallback;
+}
+
+function normalizeInputType(value: unknown, fallback: DesignQuestion["inputType"]): DesignQuestion["inputType"] {
+  if (
+    value === "single_choice" ||
+    value === "multi_choice" ||
+    value === "short_text" ||
+    value === "number"
+  ) {
+    return value;
+  }
+  const text = normalizeString(value, "").toLowerCase();
+  if (text.includes("single") || text.includes("单选")) return "single_choice";
+  if (text.includes("multi") || text.includes("多选")) return "multi_choice";
+  if (text.includes("number") || text.includes("数字")) return "number";
+  return fallback;
 }
 
 function normalizeClassification(raw: unknown, fallbackFamily: TemplateFamily) {

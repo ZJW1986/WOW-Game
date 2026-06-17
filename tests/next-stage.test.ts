@@ -88,8 +88,9 @@ describe("model gateway orchestration", () => {
       templateFamily: "platformer"
     });
 
-    expect(prompt).toContain("标准 JSON");
-    expect(prompt).toContain("不要生成 Phaser 生命周期代码");
+    expect(prompt).toContain("Return strict JSON only");
+    expect(prompt).toContain("Do not generate Phaser lifecycle code");
+    expect(prompt).toContain('"implementationRoute"');
     expect(prompt).toContain("platformer");
   });
 });

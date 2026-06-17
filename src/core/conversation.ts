@@ -13,9 +13,10 @@ export function createConversationSession(
   options: {
     projectId?: string;
     preferredTemplate?: TemplateFamily;
+    questions?: DesignQuestion[];
   } = {}
 ): ConversationSession {
-  const questions = createGuidedQuestions(idea);
+  const questions = options.questions ?? createGuidedQuestions(idea);
   return {
     id: "session-1",
     projectId: options.projectId ?? "project-1",
@@ -81,8 +82,8 @@ export function getNextConversationAction(session: ConversationSession) {
   };
 }
 
-function createGuidedQuestions(idea: string): DesignQuestion[] {
-  const isPlatformer = /跳|横版|平台|jump/i.test(idea);
+export function createGuidedQuestions(idea: string): DesignQuestion[] {
+  const isPlatformer = /跳|横版|平台|platform|jump/i.test(idea);
   return [
     {
       id: "goal",

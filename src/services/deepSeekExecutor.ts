@@ -72,8 +72,9 @@ export function createDeepSeekExecutor(options: DeepSeekExecutorOptions = {}) {
         if (!content) {
           return { status: "error", rawJson: raw, error: "DeepSeek response missing choices[0].message.content" };
         }
-        JSON.parse(content);
-        return { status: "success", rawJson: content };
+        const jsonContent = extractJsonContent(content);
+        JSON.parse(jsonContent);
+        return { status: "success", rawJson: jsonContent };
       } catch (error) {
         return {
           status: "error",
@@ -91,4 +92,18 @@ async function defaultFetch(
 ): Promise<string> {
   const response = await fetch(url, init);
   return response.text();
+}
+
+function extractJsonContent(content: string): string {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fenced) {
+    return fenced[1].trim();
+  }
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1).trim();
+  }
+  return trimmed;
 }

@@ -30,7 +30,7 @@ function splitIdeaTurns(idea: string): { idea: string; inferredFollowups: string
   const [firstLine = idea, ...rest] = lines;
   return {
     idea: firstLine,
-    inferredFollowups: rest.map((line) => line.replace(/^(补充需求|琛ゅ厖闇\S*)[:：]\s*/, ""))
+    inferredFollowups: rest.map((line) => line.replace(/^(补充需求|追加需求|需求补充)\s*[:：]\s*/, ""))
   };
 }
 

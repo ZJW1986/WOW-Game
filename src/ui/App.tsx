@@ -55,6 +55,7 @@ import {
 import { createMediaGateway } from "../services/mediaGateway";
 import {
   requestPlayableGeneration,
+  requestGuidedQuestions,
   requestPlayableProject,
   submitPlayableFeedback,
   uploadPlayablePackage
@@ -71,6 +72,7 @@ type RightTab = (typeof rightTabs)[number]["id"];
 type CreationPhase = "thinking" | "proposal" | "revision" | "generating" | "complete";
 type AppPage = "create" | "play" | "projects" | "studio";
 type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
+type GuidedQuestionStatus = "idle" | "loading" | "ready" | "fallback";
 
 interface ProjectRecord {
   id: string;
@@ -152,6 +154,13 @@ function addFollowup(current: StudioFollowup[], content: string): StudioFollowup
   ];
 }
 
+function readGuidedQuestionStatus(status: GuidedQuestionStatus): string {
+  if (status === "loading") return "DeepSeek 正在生成追问";
+  if (status === "ready") return "DeepSeek 追问已就绪";
+  if (status === "fallback") return "已使用本地追问兜底";
+  return "DeepSeek v4 flash";
+}
+
 export function App() {
   const [locale, setLocale] = useState<Locale>("zh-CN");
   const t = getMessages(locale);
@@ -175,6 +184,7 @@ export function App() {
   const [followups, setFollowups] = useState<StudioFollowup[]>([]);
   const [generatedProject, setGeneratedProject] = useState<MockProject | null>(null);
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
+  const [guidedQuestionStatus, setGuidedQuestionStatus] = useState<GuidedQuestionStatus>("idle");
   const [uploadedPackageMessage, setUploadedPackageMessage] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -203,9 +213,11 @@ export function App() {
     }
     const nextFollowups = addFollowup(followups, revisionText);
     setFollowups(nextFollowups);
-    setSession(createConversationSession(buildGenerationIdea(idea, nextFollowups), {
+    const nextIdea = buildGenerationIdea(idea, nextFollowups);
+    setSession(createConversationSession(nextIdea, {
       preferredTemplate: activeDraft.templateFamily
     }));
+    loadGuidedQuestions(nextIdea, activeDraft.templateFamily, activeDraft.model);
     setRevisionText("");
     setGeneratedProject(null);
     setCreationPhase("thinking");
@@ -255,12 +267,40 @@ export function App() {
     }
   };
 
+  const loadGuidedQuestions = async (
+    nextIdea: string,
+    templateFamily: TemplateFamily,
+    model: StartGameDraft["model"]
+  ) => {
+    setGuidedQuestionStatus("loading");
+    try {
+      const result = await requestGuidedQuestions({
+        idea: nextIdea,
+        templateFamily,
+        model,
+        projectId: `project-${Date.now()}`
+      });
+      setSession((current) => {
+        if (current.idea !== nextIdea || current.answers.length > 0) return current;
+        return createConversationSession(nextIdea, {
+          preferredTemplate: templateFamily,
+          questions: result.questions
+        });
+      });
+      setGuidedQuestionStatus(result.fallbackUsed ? "fallback" : "ready");
+    } catch {
+      setGuidedQuestionStatus("fallback");
+    }
+  };
+
   const openStudio = (nextIdea: string, templateFamily?: TemplateFamily, nextProject?: MockProject) => {
     const normalizedIdea = nextIdea.trim() || t.prompt.defaultIdea;
     const nextTemplate = templateFamily ?? startDraft.templateFamily;
+    const nextDraft = { ...startDraft, idea: normalizedIdea, templateFamily: nextTemplate };
     setIdea(normalizedIdea);
-    setActiveDraft({ ...startDraft, idea: normalizedIdea, templateFamily: nextTemplate });
+    setActiveDraft(nextDraft);
     setSession(createConversationSession(normalizedIdea, { preferredTemplate: nextTemplate }));
+    setGuidedQuestionStatus(nextProject ? "idle" : "loading");
     setGeneratedProject(nextProject ?? null);
     setGenerationResult(null);
     setRevisionText("");
@@ -268,6 +308,9 @@ export function App() {
     setCreationPhase(nextProject ? "complete" : "thinking");
     setActiveTab("preview");
     setPage("studio");
+    if (!nextProject) {
+      loadGuidedQuestions(normalizedIdea, nextTemplate, nextDraft.model);
+    }
   };
 
   const openProjectPlay = (record: ProjectRecord) => {
@@ -479,6 +522,7 @@ export function App() {
           <PromptDock
             messages={t}
             revisionText={revisionText}
+            modelStatusLabel={readGuidedQuestionStatus(guidedQuestionStatus)}
             canGenerate={hasAnsweredGuidedQuestions && (creationPhase === "proposal" || creationPhase === "complete")}
             onGenerate={startResourceGeneration}
             onIdeaChange={setRevisionText}
@@ -1436,6 +1480,7 @@ function ProposalSummary({
 function PromptDock({
   messages,
   revisionText,
+  modelStatusLabel,
   canGenerate,
   onGenerate,
   onIdeaChange,
@@ -1443,6 +1488,7 @@ function PromptDock({
 }: {
   messages: ReturnType<typeof getMessages>;
   revisionText: string;
+  modelStatusLabel: string;
   canGenerate: boolean;
   onGenerate: () => void;
   onIdeaChange: (idea: string) => void;
@@ -1458,7 +1504,7 @@ function PromptDock({
       />
       <div className="prompt-tools">
         <button className="model-select">
-          {messages.prompt.localEngine}
+          {modelStatusLabel}
         </button>
         <div className="tool-icons">
           <ImageIcon size={16} />

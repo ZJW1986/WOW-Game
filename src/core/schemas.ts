@@ -22,6 +22,20 @@ export const ideaIntakeSchema = z.object({
   missingFields: z.array(z.string())
 });
 
+export const designQuestionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  prompt: z.string(),
+  inputType: z.enum(["single_choice", "multi_choice", "short_text", "number"]),
+  options: z.array(z.string()).optional(),
+  defaultAnswer: z.string(),
+  required: z.boolean()
+});
+
+export const guidedQuestionsSchema = z.object({
+  questions: z.array(designQuestionSchema).min(3).max(5)
+});
+
 export const gddSchema = z.object({
   concept: z.string(),
   loop: z.array(z.string()),
@@ -118,6 +132,7 @@ export const iterationReportSchema = z.object({
 
 export const artifactSchemas = {
   "idea-intake": ideaIntakeSchema,
+  "guided-questions": guidedQuestionsSchema,
   classification: classificationSchema,
   gdd: gddSchema,
   "asset-requirements": assetRequirementsSchema,

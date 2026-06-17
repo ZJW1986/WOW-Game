@@ -131,6 +131,68 @@ describe("generation api handler", () => {
     );
   });
 
+  it("returns DeepSeek guided questions through the api with fallback metadata", async () => {
+    const handler = createGenerationApiHandler({
+      env: {
+        DEEPSEEK_API_KEY: "server-key"
+      },
+      storeIO: memoryStore(),
+      fetcher: async () =>
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  questions: [
+                    {
+                      id: "controls",
+                      label: "操作方式",
+                      prompt: "玩家用键盘还是鼠标控制？",
+                      inputType: "single_choice",
+                      options: ["键盘", "鼠标"],
+                      defaultAnswer: "键盘",
+                      required: true
+                    },
+                    {
+                      id: "goal",
+                      label: "胜利目标",
+                      prompt: "玩家怎样算赢？",
+                      inputType: "short_text",
+                      defaultAnswer: "收集星星",
+                      required: true
+                    },
+                    {
+                      id: "failure",
+                      label: "失败条件",
+                      prompt: "玩家怎样失败？",
+                      inputType: "short_text",
+                      defaultAnswer: "碰到敌人",
+                      required: true
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        })
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/guided-questions",
+      body: {
+        idea: "做一个飞船躲避陨石并收集星星的小游戏",
+        templateFamily: "top_down",
+        model: "deepseek-v4-flash"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.fallbackUsed).toBe(false);
+    expect(response.body.modelTask.taskType).toBe("llm.guided_questions");
+    expect(response.body.questions).toHaveLength(3);
+  });
+
   it("saves player feedback for a persisted playable", async () => {
     const storeIO = memoryStore();
     const handler = createGenerationApiHandler({

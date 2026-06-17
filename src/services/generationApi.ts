@@ -109,6 +109,28 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       }
     }
 
+    if (request.method === "POST" && request.path === "/api/guided-questions") {
+      try {
+        const service = createGenerationService({
+          deepseekApiKey: env.DEEPSEEK_API_KEY,
+          deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
+          fetcher: options.fetcher
+        });
+        const result = await service.generateGuidedQuestions({
+          idea: requireString(request.body.idea, "idea"),
+          templateFamily: parseTemplateFamily(request.body.templateFamily),
+          projectId: optionalString(request.body.projectId),
+          model: parseModel(request.body.model)
+        });
+        return { status: 200, body: result as unknown as Record<string, any> };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
     if (request.method !== "POST" || request.path !== "/api/generate-playable") {
       return {
         status: 404,

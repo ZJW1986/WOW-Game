@@ -2,32 +2,69 @@ import type { ModelTaskRequest } from "./backend";
 
 type PromptTaskType = ModelTaskRequest["taskType"];
 
+const TEMPLATE_FAMILIES = '"platformer" | "top_down" | "grid_logic" | "tower_defense" | "ui_heavy"';
+
 export function createPromptForTask(
   taskType: PromptTaskType,
   input: Record<string, unknown>
 ): string {
-  const sharedGuardrail =
-    "你是 WOW Game 的游戏生产智能体。只输出标准 JSON artifact，不要生成 Phaser 生命周期代码，不要绕过模板与资源协议。";
   const payload = JSON.stringify(input, null, 2);
-
   const taskInstruction: Record<PromptTaskType, string> = {
-    "llm.classification":
-      '任务类型 llm.classification。按 Physics-First 规则选择 templateFamily。templateFamily 只能是 "platformer"、"top_down"、"grid_logic"、"tower_defense"、"ui_heavy"。reasons、risks、unsupportedRequests 必须是字符串数组。只返回 {"templateFamily","reasons","risks","unsupportedRequests"}。',
-    "llm.guided_questions":
-      '任务类型 llm.guided_questions。生成 3-5 个设计追问。只返回 {"questions":[{"id","label","prompt","inputType","options","defaultAnswer","required"}]}。',
-    "llm.gdd":
-      '任务类型 llm.gdd。生成 6 段式技术 GDD。loop 和 entities 必须是字符串数组。level 必须是 {"width":960,"height":540,"collectibles":6,"hazards":4,"winScore":6} 这样的数字对象。只返回 {"concept","loop","entities","level","numbers","implementationRoute"}。',
-    "llm.game_config":
-      '任务类型 llm.game_config。生成模板可读取的配置。templateFamily 只能使用英文枚举；difficulty 只能是 "easy"、"normal"、"hard"；controls 和 referencedAssetKeys 必须是字符串数组。只返回 {"templateFamily","title","pitch","playerGoal","controls","difficulty","referencedAssetKeys","level"}。',
-    "image.asset":
-      "根据 asset-requirements 生成图片资源任务说明，返回 assetKey、style、spec、prompt 和版权状态。",
-    "audio.sfx":
-      "根据 asset-requirements 生成短音效任务说明，返回用途、时长、风格和循环要求。",
-    "audio.bgm":
-      "根据 asset-requirements 生成 BGM 任务说明，返回用途、时长、风格和循环点。",
-    "effect.preset":
-      "根据玩法事件选择预设特效，返回触发条件、assetKey 和参数。"
+    "llm.classification": [
+      "Task: llm.classification.",
+      "Choose a Physics-First templateFamily.",
+      `templateFamily must be one of: ${TEMPLATE_FAMILIES}.`,
+      'Return exactly this JSON shape: {"templateFamily":"top_down","reasons":["..."],"risks":["..."],"unsupportedRequests":["..."]}.',
+      "reasons, risks, and unsupportedRequests must be string arrays."
+    ].join("\n"),
+    "llm.guided_questions": [
+      "Task: llm.guided_questions.",
+      "Generate 3 to 5 concise design questions.",
+      'inputType must be "single_choice", "multi_choice", "short_text", or "number".',
+      'Return exactly this JSON shape: {"questions":[{"id":"goal","label":"Goal","prompt":"...","inputType":"short_text","options":[],"defaultAnswer":"...","required":true}]}'
+    ].join("\n"),
+    "llm.gdd": [
+      "Task: llm.gdd.",
+      "Create a constrained technical GDD that fits the selected template capability.",
+      'Return exactly this JSON shape: {"concept":"...","loop":["..."],"entities":["..."],"level":{"width":960,"height":540,"collectibles":6,"hazards":4,"winScore":6},"numbers":{"playerSpeed":260},"implementationRoute":"..."}.',
+      "loop and entities must be string arrays.",
+      "level must contain numeric width, height, collectibles, hazards, and winScore."
+    ].join("\n"),
+    "llm.game_config": [
+      "Task: llm.game_config.",
+      "Create template-readable config from the GDD and asset-pack.",
+      `templateFamily must be one of: ${TEMPLATE_FAMILIES}.`,
+      'difficulty must be "easy", "normal", or "hard".',
+      'Return exactly this JSON shape: {"templateFamily":"top_down","title":"...","pitch":"...","playerGoal":"...","controls":["ArrowUp"],"difficulty":"normal","referencedAssetKeys":["player.hero"],"level":{"width":960,"height":540,"collectibles":6,"hazards":4,"winScore":6}}.',
+      "referencedAssetKeys must only use keys already present in asset-pack."
+    ].join("\n"),
+    "image.asset": [
+      "Task: image.asset.",
+      'Return JSON with {"assetKey","style","spec","prompt","copyrightStatus"}.'
+    ].join("\n"),
+    "audio.sfx": [
+      "Task: audio.sfx.",
+      'Return JSON with {"assetKey","purpose","duration","style","loop"} for a short sound effect.'
+    ].join("\n"),
+    "audio.bgm": [
+      "Task: audio.bgm.",
+      'Return JSON with {"assetKey","purpose","duration","style","loop"} for background music.'
+    ].join("\n"),
+    "effect.preset": [
+      "Task: effect.preset.",
+      'Return JSON with {"assetKey","trigger","preset","params"} for a preset visual effect.'
+    ].join("\n")
   };
 
-  return `${sharedGuardrail}\n\n任务：${taskInstruction[taskType]}\n\n输入：\n${payload}`;
+  return [
+    "You are the WOW Game production agent.",
+    "Return strict JSON only. Do not wrap the response in markdown fences.",
+    "Do not generate Phaser lifecycle code, scene registration code, asset loader code, or engine setup.",
+    "Only produce the requested standard artifact for the configured template pipeline.",
+    "",
+    taskInstruction[taskType],
+    "",
+    "Input JSON:",
+    payload
+  ].join("\n");
 }

@@ -112,6 +112,82 @@ describe("fast playable generation experience", () => {
     expect(result.fallbacksUsed).toEqual([]);
   });
 
+  it("uses DeepSeek to generate guided questions when the model returns a valid artifact", async () => {
+    const service = createGenerationService({
+      deepseekApiKey: "test-key",
+      fetcher: async () =>
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  questions: [
+                    {
+                      id: "control_mode",
+                      label: "操作方式",
+                      prompt: "玩家主要如何操作角色？",
+                      inputType: "single_choice",
+                      options: ["方向键移动", "WASD 移动", "鼠标点击"],
+                      defaultAnswer: "方向键移动",
+                      required: true
+                    },
+                    {
+                      id: "win_goal",
+                      label: "胜利目标",
+                      prompt: "玩家完成什么目标后胜利？",
+                      inputType: "short_text",
+                      defaultAnswer: "收集 6 颗星星并到达出口",
+                      required: true
+                    },
+                    {
+                      id: "fail_state",
+                      label: "失败条件",
+                      prompt: "玩家遇到什么情况会失败？",
+                      inputType: "short_text",
+                      defaultAnswer: "碰到陨石或生命值耗尽",
+                      required: true
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        })
+    });
+
+    const result = await service.generateGuidedQuestions({
+      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      templateFamily: "top_down",
+      projectId: "project-guided-1",
+      model: "deepseek-v4-flash"
+    });
+
+    expect(result.fallbackUsed).toBe(false);
+    expect(result.modelTask.taskType).toBe("llm.guided_questions");
+    expect(result.questions.map((question) => question.prompt)).toContain("玩家主要如何操作角色？");
+  });
+
+  it("falls back to fixed guided questions when model question output is invalid", async () => {
+    const service = createGenerationService({
+      deepseekApiKey: "test-key",
+      fetcher: async () =>
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({ questions: [{ prompt: "" }] }) } }]
+        })
+    });
+
+    const result = await service.generateGuidedQuestions({
+      idea: "做一个横版跳跃收集金币的森林游戏",
+      templateFamily: "platformer",
+      model: "deepseek-v4-flash"
+    });
+
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.questions).toHaveLength(4);
+    expect(result.questions[0].prompt).toBe("玩家怎样算赢？");
+    expect(result.questions[0].defaultAnswer).toContain("金币");
+  });
+
   it("falls back to mock artifacts when DeepSeek key is missing", async () => {
     const service = createGenerationService();
 

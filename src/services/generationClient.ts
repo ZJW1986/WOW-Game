@@ -1,4 +1,4 @@
-import type { UserAnswer, TemplateFamily } from "../core/types";
+import type { DesignQuestion, UserAnswer, TemplateFamily } from "../core/types";
 import type { StartModelId } from "../core/start";
 
 export interface PlayableGenerationRequest {
@@ -15,6 +15,13 @@ export interface UploadPlayablePackageRequest {
   packageFileName: string;
   packageEntry: string;
   description?: string;
+}
+
+export interface GuidedQuestionsRequest {
+  idea: string;
+  templateFamily: TemplateFamily;
+  projectId?: string;
+  model: StartModelId;
 }
 
 type BrowserFetcher = typeof fetch;
@@ -42,6 +49,32 @@ export async function requestPlayableGeneration(
     throw new Error(`Generation request failed: ${message}`);
   }
   return payload;
+}
+
+export async function requestGuidedQuestions(
+  input: GuidedQuestionsRequest,
+  fetcher: BrowserFetcher = fetch
+): Promise<{
+  questions: DesignQuestion[];
+  modelTask: Record<string, any>;
+  fallbackUsed: boolean;
+}> {
+  const response = await fetcher("/api/guided-questions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Guided questions request failed: ${readError(payload, response)}`);
+  }
+  return payload as {
+    questions: DesignQuestion[];
+    modelTask: Record<string, any>;
+    fallbackUsed: boolean;
+  };
 }
 
 export async function requestPlayableProject(

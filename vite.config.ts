@@ -16,7 +16,11 @@ export default defineConfig({
         const handler = createGenerationApiHandler();
         server.middlewares.use("/api", async (req: any, res: any, next: () => void) => {
           const url = req.url ?? "";
-          if (!url.startsWith("/generate-playable") && !url.startsWith("/play/")) {
+          if (
+            !url.startsWith("/generate-playable") &&
+            !url.startsWith("/guided-questions") &&
+            !url.startsWith("/play/")
+          ) {
             next();
             return;
           }
