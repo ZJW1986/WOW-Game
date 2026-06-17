@@ -1,46 +1,62 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { createGenerationApiHandler } from "./src/services/generationApi";
 
-export default defineConfig({
-  server: {
-    allowedHosts: [
-      "generators-correct-min-powerpoint.trycloudflare.com"
-    ]
-  },
-  plugins: [
-    react(),
-    {
-      name: "wow-game-generation-api",
-      configureServer(server) {
-        const handler = createGenerationApiHandler();
-        server.middlewares.use("/api", async (req: any, res: any, next: () => void) => {
-          const url = req.url ?? "";
-          if (
-            !url.startsWith("/generate-playable") &&
-            !url.startsWith("/guided-questions") &&
-            !url.startsWith("/play/")
-          ) {
-            next();
-            return;
-          }
-          const body = await readJsonBody(req);
-          const response = await handler({
-            method: req.method ?? "GET",
-            path: `/api${url.split("?")[0]}`,
-            body
+export default defineConfig(({ mode }) => {
+  const nodeProcess = globalThis as {
+    process?: {
+      cwd: () => string;
+      env: Record<string, string | undefined>;
+    };
+  };
+  const cwd = nodeProcess.process?.cwd() ?? ".";
+  const processEnv = nodeProcess.process?.env ?? {};
+  const fileEnv = loadEnv(mode, cwd, "");
+  const serverEnv = {
+    ...fileEnv,
+    ...processEnv
+  };
+
+  return {
+    server: {
+      allowedHosts: [
+        "generators-correct-min-powerpoint.trycloudflare.com"
+      ]
+    },
+    plugins: [
+      react(),
+      {
+        name: "wow-game-generation-api",
+        configureServer(server) {
+          const handler = createGenerationApiHandler({ env: serverEnv });
+          server.middlewares.use("/api", async (req: any, res: any, next: () => void) => {
+            const url = req.url ?? "";
+            if (
+              !url.startsWith("/generate-playable") &&
+              !url.startsWith("/guided-questions") &&
+              !url.startsWith("/play/")
+            ) {
+              next();
+              return;
+            }
+            const body = await readJsonBody(req);
+            const response = await handler({
+              method: req.method ?? "GET",
+              path: `/api${url.split("?")[0]}`,
+              body
+            });
+            res.statusCode = response.status;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify(response.body));
           });
-          res.statusCode = response.status;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify(response.body));
-        });
+        }
       }
+    ],
+    test: {
+      environment: "jsdom",
+      globals: true
     }
-  ],
-  test: {
-    environment: "jsdom",
-    globals: true
-  }
+  };
 });
 
 async function readJsonBody(req: { on: (event: string, listener: (chunk?: unknown) => void) => void }) {
