@@ -6,11 +6,13 @@ describe("ui i18n messages", () => {
     expect(getMessages("zh-CN").brand.agent).toBe("WOW Game 智能体");
     expect(getMessages("zh-CN").tabs.preview).toBe("预览");
     expect(getMessages("zh-CN").prompt.localEngine).toBe("本地体验引擎");
+    expect(getMessages("zh-CN").projects.title).toBe("我的项目");
   });
 
   it("keeps an English locale available for future language switching", () => {
     expect(supportedLocales).toEqual(["zh-CN", "en-US"]);
     expect(getMessages("en-US").tabs.assets).toBe("Asset Hub");
     expect(getMessages("en-US").prompt.localEngine).toBe("Local Experience Engine");
+    expect(getMessages("en-US").projects.title).toBe("My Projects");
   });
 });

@@ -9,11 +9,16 @@ export default defineConfig({
       name: "wow-game-generation-api",
       configureServer(server) {
         const handler = createGenerationApiHandler();
-        server.middlewares.use("/api/generate-playable", async (req: any, res: any) => {
+        server.middlewares.use("/api", async (req: any, res: any, next: () => void) => {
+          const url = req.url ?? "";
+          if (!url.startsWith("/generate-playable") && !url.startsWith("/play/")) {
+            next();
+            return;
+          }
           const body = await readJsonBody(req);
           const response = await handler({
             method: req.method ?? "GET",
-            path: "/api/generate-playable",
+            path: `/api${url.split("?")[0]}`,
             body
           });
           res.statusCode = response.status;

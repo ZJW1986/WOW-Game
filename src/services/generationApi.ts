@@ -1,6 +1,7 @@
 import type { TemplateFamily, UserAnswer } from "../core/types";
 import type { StartModelId } from "../core/start";
 import { createGenerationService, type GenerationServiceOptions } from "./generationService";
+import { createPlayableStore, type PlayableStoreOptions } from "./playableStore";
 
 export interface GenerationApiRequest {
   method: string;
@@ -16,12 +17,45 @@ export interface GenerationApiResponse {
 export interface GenerationApiOptions {
   env?: Record<string, string | undefined>;
   fetcher?: GenerationServiceOptions["fetcher"];
+  storeIO?: Pick<PlayableStoreOptions, "writeText" | "readText" | "ensureDir">;
 }
 
 export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
   return async function handleGenerationRequest(
     request: GenerationApiRequest
   ): Promise<GenerationApiResponse> {
+    const env = options.env ?? readRuntimeEnv();
+    const store = createPlayableStore({
+      dataDir: env.DATA_DIR ?? "data",
+      ...options.storeIO
+    });
+    const playMatch = request.path.match(/^\/api\/play\/([^/]+)\/([^/]+)$/);
+    if (request.method === "GET" && playMatch) {
+      const record = await store.readPlayable(playMatch[1], playMatch[2]);
+      if (!record) {
+        return { status: 404, body: { error: "Playable version not found" } };
+      }
+      return { status: 200, body: record as unknown as Record<string, any> };
+    }
+
+    const feedbackMatch = request.path.match(/^\/api\/play\/([^/]+)\/([^/]+)\/feedback$/);
+    if (request.method === "POST" && feedbackMatch) {
+      try {
+        const feedback = await store.addFeedback(feedbackMatch[1], feedbackMatch[2], {
+          versionId: feedbackMatch[2],
+          rating: requireNumber(request.body.rating, "rating"),
+          comment: requireString(request.body.comment, "comment"),
+          playerName: optionalString(request.body.playerName) ?? "player"
+        });
+        return { status: 201, body: { feedback } };
+      } catch (error) {
+        return {
+          status: 404,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
     if (request.method !== "POST" || request.path !== "/api/generate-playable") {
       return {
         status: 404,
@@ -30,7 +64,6 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
     }
 
     try {
-      const env = options.env ?? readRuntimeEnv();
       const service = createGenerationService({
         deepseekApiKey: env.DEEPSEEK_API_KEY,
         deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
@@ -43,6 +76,11 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         projectId: optionalString(request.body.projectId) ?? `project-${Date.now()}`,
         baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
         model: parseModel(request.body.model)
+      });
+      await store.savePlayable({
+        project: result.project,
+        publishRecord: result.publishRecord,
+        feedback: []
       });
 
       return { status: 200, body: result as unknown as Record<string, any> };
@@ -58,6 +96,13 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`Missing required string field: ${field}`);
+  }
+  return value;
+}
+
+function requireNumber(value: unknown, field: string): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    throw new Error(`Missing required number field: ${field}`);
   }
   return value;
 }

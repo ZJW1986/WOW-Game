@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { requestPlayableGeneration } from "../src/services/generationClient";
+import {
+  requestPlayableGeneration,
+  requestPlayableProject,
+  submitPlayableFeedback
+} from "../src/services/generationClient";
 
 describe("browser generation client", () => {
   it("posts generation input without exposing the DeepSeek api key", async () => {
@@ -39,5 +43,33 @@ describe("browser generation client", () => {
         async () => new Response(JSON.stringify({ error: "missing idea" }), { status: 400 })
       )
     ).rejects.toThrow("Generation request failed: missing idea");
+  });
+
+  it("loads persisted playable projects by project and version id", async () => {
+    const result = await requestPlayableProject(
+      "project-client-play",
+      "v1",
+      async (url) => {
+        expect(url).toBe("/api/play/project-client-play/v1");
+        return new Response(JSON.stringify({ project: { id: "project-client-play" } }), { status: 200 });
+      }
+    );
+
+    expect(result.project.id).toBe("project-client-play");
+  });
+
+  it("submits playable feedback", async () => {
+    const result = await submitPlayableFeedback(
+      "project-client-play",
+      "v1",
+      { rating: 5, comment: "好玩", playerName: "tester" },
+      async (url, init) => {
+        expect(url).toBe("/api/play/project-client-play/v1/feedback");
+        expect(init?.method).toBe("POST");
+        return new Response(JSON.stringify({ feedback: { comment: "好玩" } }), { status: 201 });
+      }
+    );
+
+    expect(result.feedback.comment).toBe("好玩");
   });
 });

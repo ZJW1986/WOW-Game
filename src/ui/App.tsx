@@ -10,11 +10,13 @@ import {
   Gamepad2,
   ImageIcon,
   Library,
+  Pencil,
   Plus,
   RefreshCcw,
   Search,
   Send,
   Share2,
+  Trash2,
   Upload,
   Wand2,
   Zap
@@ -45,6 +47,12 @@ import type {
 import { getMessages, type Locale } from "./i18n";
 import { PhaserPreview } from "./PhaserPreview";
 import { createMediaGateway } from "../services/mediaGateway";
+import {
+  requestPlayableGeneration,
+  requestPlayableProject,
+  submitPlayableFeedback
+} from "../services/generationClient";
+import { createGenerationService } from "../services/generationService";
 
 const rightTabs = [
   { id: "preview", labelKey: "preview", icon: Gamepad2 },
@@ -54,6 +62,67 @@ const rightTabs = [
 
 type RightTab = (typeof rightTabs)[number]["id"];
 type CreationPhase = "thinking" | "proposal" | "revision" | "generating" | "complete";
+type AppPage = "create" | "play" | "projects" | "studio";
+type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
+
+interface ProjectRecord {
+  id: string;
+  title: string;
+  idea: string;
+  status: "published" | "draft" | "private";
+  visibility: "public" | "unlisted" | "private";
+  updatedAt: string;
+  plays: number;
+  likes: number;
+  templateFamily: TemplateFamily;
+  project: MockProject;
+}
+
+function createProjectRecord(idea: string, index: number): ProjectRecord {
+  const project = runMockPipeline(idea);
+  return {
+    id: `${project.id}-${index}`,
+    title: project.title,
+    idea,
+    status: index % 3 === 0 ? "draft" : "published",
+    visibility: index % 4 === 0 ? "private" : index % 2 === 0 ? "unlisted" : "public",
+    updatedAt: `2026-06-${String(17 - index).padStart(2, "0")}`,
+    plays: 1200 - index * 73,
+    likes: 180 - index * 9,
+    templateFamily: project.classification.templateFamily,
+    project
+  };
+}
+
+const seedProjectIdeas = [
+  "做一个霓虹飞船躲避陨石并收集星星的小游戏。",
+  "做一个横版机器人跳跃躲避尖刺并收集能量的游戏。",
+  "做一个俯视角迷宫里躲避敌人并收集钥匙的游戏。",
+  "做一个网格解谜，把能量块推到终点。",
+  "做一个塔防小游戏，守住星门抵挡三波敌人。",
+  "做一个卡牌选择冒险，玩家通过选择改变结局。",
+  "做一个赛博猫收集芯片并避开巡逻机的游戏。",
+  "做一个太空矿工收集水晶并返回基地的游戏。",
+  "做一个办公室逃脱解谜，用道具打开安全门。",
+  "做一个海底潜艇躲避水雷并收集氧气的游戏。",
+  "做一个魔法训练场，躲避火球并点亮符文。",
+  "做一个城市跑酷，跳过障碍并收集金币。"
+];
+
+function getPlayRoute(): { projectId: string; versionId: string } | null {
+  if (typeof window === "undefined") return null;
+  const match = window.location.pathname.match(/^\/play\/([^/]+)\/([^/]+)$/);
+  if (!match) return null;
+  return {
+    projectId: decodeURIComponent(match[1]),
+    versionId: decodeURIComponent(match[2])
+  };
+}
+
+function getBrowserBaseUrl(): string {
+  if (typeof window === "undefined") return "http://localhost:5173";
+  return window.location.origin;
+}
 
 export function App() {
   const [locale, setLocale] = useState<Locale>("zh-CN");
@@ -62,8 +131,11 @@ export function App() {
   const [startDraft, setStartDraft] = useState<StartGameDraft>(() =>
     createStartGameDraft({ idea: t.prompt.defaultIdea })
   );
-  const [hasStarted, setHasStarted] = useState(false);
-  const [homeMode, setHomeMode] = useState<"create" | "play">("create");
+  const [page, setPage] = useState<AppPage>("create");
+  const [welcomeName, setWelcomeName] = useState("@zhoujiaweizjw1986.b67y");
+  const [projects, setProjects] = useState<ProjectRecord[]>(() =>
+    seedProjectIdeas.map((item, index) => createProjectRecord(item, index + 1))
+  );
   const [session, setSession] = useState<ConversationSession>(() =>
     createConversationSession(t.prompt.defaultIdea)
   );
@@ -73,50 +145,129 @@ export function App() {
   const [creationPhase, setCreationPhase] = useState<CreationPhase>("thinking");
   const [revisionText, setRevisionText] = useState("");
   const [generatedProject, setGeneratedProject] = useState<MockProject | null>(null);
+  const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const fallbackProject = useMemo(() => runMockPipeline(idea), [idea]);
   const project = generatedProject ?? fallbackProject;
+  const playRoute = getPlayRoute();
 
   useEffect(() => {
-    if (!hasStarted || creationPhase !== "thinking") return;
+    if (page !== "studio" || creationPhase !== "thinking") return;
     const timer = window.setTimeout(() => setCreationPhase("proposal"), 2600);
     return () => window.clearTimeout(timer);
-  }, [creationPhase, hasStarted, idea]);
+  }, [creationPhase, page, idea]);
 
   const startResourceGeneration = async () => {
     setCreationPhase("generating");
-    window.setTimeout(() => {
-      setGeneratedProject(runMockPipeline(idea));
+    try {
+      const result = (await requestPlayableGeneration({
+        idea,
+        answers: session.answers,
+        templateFamily: activeDraft.templateFamily,
+        projectId: `project-${Date.now()}`,
+        baseUrl: getBrowserBaseUrl(),
+        model: "deepseek-v4-flash"
+      })) as GenerationResult;
+      setGenerationResult(result);
+      setGeneratedProject(result.project);
       setCreationPhase("complete");
       setActiveTab("preview");
-    }, 900);
+    } catch {
+      const fallback = await createGenerationService().generatePlayableVersion({
+        idea,
+        answers: session.answers,
+        templateFamily: activeDraft.templateFamily,
+        projectId: "project-local-fallback",
+        baseUrl: getBrowserBaseUrl(),
+        model: "mock-designer"
+      });
+      setGenerationResult(fallback);
+      setGeneratedProject(fallback.project);
+      setCreationPhase("complete");
+      setActiveTab("preview");
+    }
   };
 
-  if (!hasStarted) {
-    if (homeMode === "play") {
-      return <PlayPage onCreate={() => setHomeMode("create")} onPlayGame={() => setHasStarted(true)} />;
-    }
+  const openStudio = (nextIdea: string, templateFamily?: TemplateFamily, nextProject?: MockProject) => {
+    const normalizedIdea = nextIdea.trim() || t.prompt.defaultIdea;
+    const nextTemplate = templateFamily ?? startDraft.templateFamily;
+    setIdea(normalizedIdea);
+    setActiveDraft({ ...startDraft, idea: normalizedIdea, templateFamily: nextTemplate });
+    setSession(createConversationSession(normalizedIdea, { preferredTemplate: nextTemplate }));
+    setGeneratedProject(nextProject ?? null);
+    setGenerationResult(null);
+    setRevisionText("");
+    setCreationPhase(nextProject ? "complete" : "thinking");
+    setActiveTab("preview");
+    setPage("studio");
+  };
 
+  if (playRoute) {
+    return (
+      <PlayableDetailPage
+        projectId={playRoute.projectId}
+        versionId={playRoute.versionId}
+        onCreate={() => {
+          window.history.pushState({}, "", "/");
+          setPage("create");
+        }}
+      />
+    );
+  }
+
+  if (page === "play") {
+    return (
+      <PlayPage
+        onCreate={() => setPage("create")}
+        onProjects={() => setPage("projects")}
+        onPlayGame={() => openStudio(idea)}
+      />
+    );
+  }
+
+  if (page === "projects") {
+    return (
+      <ProjectsPage
+        locale={locale}
+        projects={projects}
+        welcomeName={welcomeName}
+        onWelcomeNameChange={setWelcomeName}
+        onCreate={() => setPage("create")}
+        onPlay={() => setPage("play")}
+        onEdit={(record) => openStudio(record.idea, record.templateFamily, record.project)}
+        onRun={(record) => openStudio(record.idea, record.templateFamily, record.project)}
+        onDuplicate={(record) =>
+          setProjects((current) => [
+            {
+              ...record,
+              id: `${record.id}-copy-${Date.now()}`,
+              title: `${record.title} Copy`,
+              status: "draft",
+              visibility: "private",
+              updatedAt: "2026-06-17",
+              project: runMockPipeline(record.idea)
+            },
+            ...current
+          ])
+        }
+        onDelete={(record) => setProjects((current) => current.filter((item) => item.id !== record.id))}
+      />
+    );
+  }
+
+  if (page === "create") {
     return (
       <StartPage
         draft={startDraft}
         locale={locale}
         onLocaleToggle={() => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN")}
         onDraftChange={setStartDraft}
-        onPlay={() => setHomeMode("play")}
+        onPlay={() => setPage("play")}
+        onProjects={() => setPage("projects")}
         onCreate={() => {
           const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
-          const nextSession = createConversationSession(nextIdea, {
-            preferredTemplate: startDraft.templateFamily
-          });
-          const nextDraft = { ...startDraft, idea: nextIdea };
-          setIdea(nextIdea);
-          setActiveDraft(nextDraft);
-          setSession(nextSession);
-          setGeneratedProject(null);
-          setRevisionText("");
-          setCreationPhase("thinking");
-          setHasStarted(true);
+          openStudio(nextIdea, startDraft.templateFamily);
         }}
       />
     );
@@ -143,7 +294,7 @@ export function App() {
             <Zap size={15} />
             {t.brand.upgrade}
           </button>
-          <button className="share-button">
+          <button className="share-button" onClick={() => setShareOpen(true)}>
             <Share2 size={16} />
             {t.brand.share}
           </button>
@@ -240,6 +391,14 @@ export function App() {
           </div>
         </section>
       </section>
+      {shareOpen && (
+        <SharePanel
+          project={project}
+          publicUrl={generationResult?.publishRecord.publicUrl ?? `${getBrowserBaseUrl()}${project.playUrl}`}
+          qrPayload={generationResult?.share.qrPayload ?? `WOW Game Share URL: ${getBrowserBaseUrl()}${project.playUrl}`}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </main>
   );
 }
@@ -250,6 +409,7 @@ function StartPage({
   onLocaleToggle,
   onDraftChange,
   onPlay,
+  onProjects,
   onCreate
 }: {
   draft: StartGameDraft;
@@ -257,6 +417,7 @@ function StartPage({
   onLocaleToggle: () => void;
   onDraftChange: (draft: StartGameDraft) => void;
   onPlay: () => void;
+  onProjects: () => void;
   onCreate: () => void;
 }) {
   const canCreate = draft.idea.trim().length > 0;
@@ -285,7 +446,7 @@ function StartPage({
             <Zap size={15} />
             {t.brand.upgrade}
           </button>
-          <button className="ghost-button">
+          <button className="ghost-button" onClick={onProjects}>
             <Wand2 size={15} />
             {t.start.myProjects}
           </button>
@@ -362,11 +523,170 @@ function StartPage({
   );
 }
 
+function PlayableDetailPage({
+  projectId,
+  versionId,
+  onCreate
+}: {
+  projectId: string;
+  versionId: string;
+  onCreate: () => void;
+}) {
+  const [record, setRecord] = useState<{ project: MockProject; publishRecord: { publicUrl: string } } | null>(null);
+  const [error, setError] = useState("");
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    requestPlayableProject(projectId, versionId)
+      .then((payload) => {
+        if (active) setRecord(payload as { project: MockProject; publishRecord: { publicUrl: string } });
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : String(loadError));
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId, versionId]);
+
+  if (error) {
+    return (
+      <main className="play-detail-shell">
+        <section className="play-detail-empty">
+          <h1>游戏未找到</h1>
+          <p>这个 Play 链接可能已经失效，或者当前服务没有对应版本。</p>
+          <button onClick={onCreate}>创建一个新游戏</button>
+        </section>
+      </main>
+    );
+  }
+
+  if (!record) {
+    return (
+      <main className="play-detail-shell">
+        <section className="play-detail-empty">
+          <h1>正在加载游戏...</h1>
+          <p>正在读取本地发布版本。</p>
+        </section>
+      </main>
+    );
+  }
+
+  const project = record.project;
+  return (
+    <main className="play-detail-shell">
+      <header className="play-detail-header">
+        <div>
+          <strong>WOW Game Play</strong>
+          <h1>{project.title}</h1>
+          <p>{project.gameConfig.pitch}</p>
+        </div>
+        <button onClick={onCreate}>Create your game</button>
+      </header>
+      <section className="play-detail-layout">
+        <div className="play-detail-game">
+          <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
+        </div>
+        <aside className="play-detail-side">
+          <h2>玩法目标</h2>
+          <p>{project.gameConfig.playerGoal}</p>
+          <h2>操作方式</h2>
+          <p>{project.gameConfig.controls.join(" / ")}</p>
+          <h2>分享链接</h2>
+          <code>{record.publishRecord.publicUrl}</code>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitPlayableFeedback(projectId, versionId, {
+                rating,
+                comment: comment.trim() || "好玩",
+                playerName: "guest"
+              }).then((payload) => {
+                setFeedbackMessage(payload.feedback.iterationSuggestion);
+                setComment("");
+              });
+            }}
+          >
+            <label>
+              评分
+              <input
+                type="number"
+                min={1}
+                max={5}
+                value={rating}
+                onChange={(event) => setRating(Number(event.target.value))}
+              />
+            </label>
+            <label>
+              反馈
+              <textarea value={comment} onChange={(event) => setComment(event.target.value)} />
+            </label>
+            <button type="submit">提交反馈</button>
+          </form>
+          {feedbackMessage && <p className="feedback-message">{feedbackMessage}</p>}
+        </aside>
+      </section>
+    </main>
+  );
+}
+
+function SharePanel({
+  project,
+  publicUrl,
+  qrPayload,
+  onClose
+}: {
+  project: MockProject;
+  publicUrl: string;
+  qrPayload: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copyLink = async () => {
+    await navigator.clipboard?.writeText(publicUrl);
+    setCopied(true);
+  };
+  const shareNative = async () => {
+    if (navigator.share) {
+      await navigator.share({
+        title: `WOW Game - ${project.title}`,
+        text: project.gameConfig.pitch,
+        url: publicUrl
+      });
+    } else {
+      await copyLink();
+    }
+  };
+  return (
+    <div className="share-overlay">
+      <section className="share-panel">
+        <button className="share-close" onClick={onClose}>Close</button>
+        <h2>分享试玩链接</h2>
+        <p>{project.title}</p>
+        <input readOnly value={publicUrl} />
+        <div className="share-actions">
+          <button onClick={copyLink}>{copied ? "已复制" : "复制链接"}</button>
+          <button onClick={shareNative}>系统分享</button>
+        </div>
+        <div className="qr-box">
+          <span>QR Payload</span>
+          <code>{qrPayload}</code>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function PlayPage({
   onCreate,
+  onProjects,
   onPlayGame
 }: {
   onCreate: () => void;
+  onProjects: () => void;
   onPlayGame: (game: PlayGame) => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<PlayCategory>("All");
@@ -394,6 +714,10 @@ function PlayPage({
           <button className="ghost-button">
             <Zap size={15} />
             {t.brand.upgrade}
+          </button>
+          <button className="ghost-button" onClick={onProjects}>
+            <Wand2 size={15} />
+            {t.start.myProjects}
           </button>
           <button className="play-icon-button" title={t.play.search}>
             <Search size={18} />
@@ -425,6 +749,223 @@ function PlayPage({
         <GameSection title={t.play.advanced} games={getGamesByCategory("Advanced").slice(0, 8)} onPlayGame={onPlayGame} />
       </section>
     </main>
+  );
+}
+
+function ProjectsPage({
+  locale,
+  projects,
+  welcomeName,
+  onWelcomeNameChange,
+  onCreate,
+  onPlay,
+  onEdit,
+  onRun,
+  onDuplicate,
+  onDelete
+}: {
+  locale: Locale;
+  projects: ProjectRecord[];
+  welcomeName: string;
+  onWelcomeNameChange: (value: string) => void;
+  onCreate: () => void;
+  onPlay: () => void;
+  onEdit: (project: ProjectRecord) => void;
+  onRun: (project: ProjectRecord) => void;
+  onDuplicate: (project: ProjectRecord) => void;
+  onDelete: (project: ProjectRecord) => void;
+}) {
+  const t = getMessages(locale);
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(6);
+  const [filter, setFilter] = useState<"all" | ProjectRecord["status"]>("all");
+  const [sort, setSort] = useState<"updated" | "plays" | "name">("updated");
+  const visibleProjects = projects
+    .filter((project) => filter === "all" || project.status === filter)
+    .sort((left, right) => {
+      if (sort === "plays") return right.plays - left.plays;
+      if (sort === "name") return left.title.localeCompare(right.title);
+      return right.updatedAt.localeCompare(left.updatedAt);
+    });
+  const totalPages = Math.max(1, Math.ceil(visibleProjects.length / pageSize));
+  const safePage = Math.min(pageIndex, totalPages);
+  const pageProjects = visibleProjects.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  useEffect(() => {
+    setPageIndex(1);
+  }, [filter, pageSize]);
+
+  return (
+    <main className="projects-shell">
+      <header className="start-nav projects-nav">
+        <div className="start-brand">
+          <div className="brand-mark">W</div>
+          <strong>WOW Game</strong>
+        </div>
+        <nav className="start-mode-tabs" aria-label={t.start.modeAria}>
+          <button onClick={onCreate}>
+            <Plus size={15} />
+            {t.start.create}
+          </button>
+          <button onClick={onPlay}>
+            <Gamepad2 size={15} />
+            {t.start.play}
+          </button>
+          <button className="active">
+            <Wand2 size={15} />
+            {t.start.myProjects}
+          </button>
+        </nav>
+        <div className="start-actions">
+          <button className="ghost-button">
+            <Zap size={15} />
+            {t.brand.upgrade}
+          </button>
+          <button className="locale-button">{locale === "zh-CN" ? "中文" : "EN"}</button>
+        </div>
+      </header>
+
+      <section className="projects-scroll">
+        <div className="welcome-panel">
+          <label>
+            <span>{t.projects.welcomeLabel}</span>
+            <input
+              value={welcomeName}
+              onChange={(event) => onWelcomeNameChange(event.target.value)}
+              aria-label={t.projects.welcomeLabel}
+            />
+          </label>
+          <button className="ghost-button">
+            <Share2 size={16} />
+            {t.projects.shareProfile}
+          </button>
+        </div>
+
+        <section className="tips-panel">
+          <div>
+            <strong>{t.projects.tipsTitle}</strong>
+            <span>{t.projects.tipsDescription}</span>
+          </div>
+          <button className="primary-action">{t.projects.enableTips}</button>
+        </section>
+
+        <section className="projects-board">
+          <div className="projects-board-header">
+            <div>
+              <h1>{t.projects.title}</h1>
+              <p>{t.projects.subtitle}</p>
+            </div>
+            <div className="projects-filters">
+              <label>
+                {t.projects.filter}
+                <select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)}>
+                  <option value="all">{t.projects.all}</option>
+                  <option value="published">{t.projects.published}</option>
+                  <option value="draft">{t.projects.draft}</option>
+                  <option value="private">{t.projects.private}</option>
+                </select>
+              </label>
+              <label>
+                {t.projects.sort}
+                <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}>
+                  <option value="updated">{t.projects.lastModified}</option>
+                  <option value="plays">{t.projects.mostPlayed}</option>
+                  <option value="name">{t.projects.nameSort}</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div className="project-grid">
+            {pageProjects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                messages={t}
+                onEdit={() => onEdit(project)}
+                onRun={() => onRun(project)}
+                onDuplicate={() => onDuplicate(project)}
+                onDelete={() => onDelete(project)}
+              />
+            ))}
+          </div>
+
+          <div className="project-pagination">
+            <label>
+              {t.projects.perPage}
+              <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}>
+                {[6, 9, 12].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="pagination-controls">
+              <button disabled={safePage <= 1} onClick={() => setPageIndex((value) => Math.max(1, value - 1))}>
+                <ChevronDown size={16} />
+              </button>
+              <span>{t.projects.page} {safePage} / {totalPages}</span>
+              <button disabled={safePage >= totalPages} onClick={() => setPageIndex((value) => Math.min(totalPages, value + 1))}>
+                <ChevronDown size={16} />
+              </button>
+            </div>
+            <span>{visibleProjects.length} {t.projects.countSuffix}</span>
+          </div>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function ProjectCard({
+  project,
+  messages,
+  onEdit,
+  onRun,
+  onDuplicate,
+  onDelete
+}: {
+  project: ProjectRecord;
+  messages: ReturnType<typeof getMessages>;
+  onEdit: () => void;
+  onRun: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <article className="project-card">
+      <div className="project-cover" style={{ background: cardBackground("#0b5666,#ffbf4d") }}>
+        <div className="project-badges">
+          <span className={`status ${project.status}`}>{messages.projects[project.status]}</span>
+          <span>{messages.projects[project.visibility]}</span>
+        </div>
+        <strong>{project.templateFamily}</strong>
+      </div>
+      <div className="project-card-body">
+        <h2>{project.title}</h2>
+        <p>{project.idea}</p>
+        <div className="project-meta">
+          <span>{project.updatedAt}</span>
+          <span>{formatCount(project.plays)} / {project.likes}</span>
+        </div>
+        <div className="project-actions">
+          <button className="edit-action" onClick={onEdit}>
+            <Pencil size={14} />
+            {messages.projects.edit}
+          </button>
+          <button title={messages.projects.duplicate} onClick={onDuplicate}>
+            <Copy size={14} />
+          </button>
+          <button title={messages.projects.run} onClick={onRun}>
+            <Gamepad2 size={14} />
+          </button>
+          <button title={messages.projects.delete} onClick={onDelete}>
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    </article>
   );
 }
 
