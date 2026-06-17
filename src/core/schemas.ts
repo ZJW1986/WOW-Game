@@ -73,6 +73,16 @@ export const assetRequirementSchema = z.object({
 
 export const assetRequirementsSchema = z.array(assetRequirementSchema);
 
+export const assetStyleGuideSchema = z.object({
+  visualStyle: z.string(),
+  palette: z.array(z.string()).min(4),
+  shapeLanguage: z.string(),
+  characterBrief: z.string(),
+  environmentBrief: z.string(),
+  audioStyle: z.string(),
+  assetPrompts: z.record(z.string())
+});
+
 export const assetPackSchema = z.object({
   versionId: z.string(),
   assets: assetRequirementsSchema
@@ -136,6 +146,7 @@ export const artifactSchemas = {
   classification: classificationSchema,
   gdd: gddSchema,
   "asset-requirements": assetRequirementsSchema,
+  "asset-style-guide": assetStyleGuideSchema,
   "asset-pack": assetPackSchema,
   "game-config": gameConfigSchema,
   "qa-report": qaReportSchema,

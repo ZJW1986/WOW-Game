@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import type { AssetPack, GameConfig } from "../core/types";
+import { selectPreviewRuntimeAssets } from "./previewAssets";
 
 export function PhaserPreview({
   config,
@@ -17,28 +18,41 @@ export function PhaserPreview({
   useEffect(() => {
     let disposed = false;
     const audio = createDemoAudio();
+    const runtimeAssets = selectPreviewRuntimeAssets(assetPack);
 
     async function mountGame() {
       const Phaser = await import("phaser");
       if (disposed) return;
 
       class DemoScene extends Phaser.Scene {
-        private player!: Phaser.GameObjects.Rectangle;
+        private player!: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
         private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
         private score = 0;
         private hasWon = false;
         private status!: Phaser.GameObjects.Text;
         private flash!: Phaser.GameObjects.Rectangle;
-        private collectibles: Phaser.GameObjects.Rectangle[] = [];
-        private hazards: Phaser.GameObjects.Rectangle[] = [];
+        private collectibles: Array<Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle> = [];
+        private hazards: Array<Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle> = [];
 
         constructor() {
           super("DemoScene");
         }
 
+        preload() {
+          loadImage(this, "generated-player", runtimeAssets.player);
+          loadImage(this, "generated-collectible", runtimeAssets.collectible);
+          loadImage(this, "generated-hazard", runtimeAssets.hazard);
+          loadImage(this, "generated-background", runtimeAssets.background);
+          loadImage(this, "generated-tile", runtimeAssets.tile);
+        }
+
         create() {
           this.cameras.main.setBackgroundColor("#15202b");
-          this.add.rectangle(0, 0, 960, 540, 0x17212f).setOrigin(0);
+          if (runtimeAssets.background && this.textures.exists("generated-background")) {
+            this.add.image(480, 270, "generated-background").setDisplaySize(960, 540).setAlpha(0.45);
+          } else {
+            this.add.rectangle(0, 0, 960, 540, 0x17212f).setOrigin(0);
+          }
           this.add.text(24, 20, config.title, {
             color: "#f6f8fb",
             fontFamily: "Arial",
@@ -61,7 +75,7 @@ export function PhaserPreview({
           });
 
           this.flash = this.add.rectangle(0, 0, 960, 540, 0xffffff, 0).setOrigin(0).setDepth(20);
-          this.player = this.add.rectangle(120, 300, 34, 34, 0x5eead4);
+          this.player = this.createRuntimeImage(120, 300, "generated-player", 44, 44, 0x5eead4);
           this.physics.add.existing(this.player);
           const body = this.player.body as Phaser.Physics.Arcade.Body;
           body.setCollideWorldBounds(true);
@@ -69,9 +83,9 @@ export function PhaserPreview({
           if (config.templateFamily === "platformer") {
             body.setGravityY(480);
             const platforms = this.physics.add.staticGroup();
-            platforms.add(this.add.rectangle(480, 510, 920, 28, 0x334155));
-            platforms.add(this.add.rectangle(360, 390, 180, 20, 0x334155));
-            platforms.add(this.add.rectangle(680, 290, 180, 20, 0x334155));
+            platforms.add(this.createRuntimeImage(480, 510, "generated-tile", 920, 28, 0x334155));
+            platforms.add(this.createRuntimeImage(360, 390, "generated-tile", 180, 20, 0x334155));
+            platforms.add(this.createRuntimeImage(680, 290, "generated-tile", 180, 20, 0x334155));
             this.physics.add.collider(this.player, platforms);
           }
 
@@ -114,7 +128,7 @@ export function PhaserPreview({
           }
         }
 
-        private collectItem(item: Phaser.GameObjects.Rectangle, Phaser: typeof import("phaser")) {
+        private collectItem(item: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle, Phaser: typeof import("phaser")) {
           item.destroy();
           this.score += 1;
           audio.playCollect();
@@ -123,7 +137,7 @@ export function PhaserPreview({
           if (this.score >= config.level.winScore && !this.hasWon) {
             this.hasWon = true;
             audio.playWin();
-            this.status.setText("Win! Built-in sfx.win + effect.win triggered.");
+            this.status.setText("Win! generated sfx.win + vfx.win triggered.");
             this.cameras.main.flash(360, 58, 255, 210);
             this.burst(this.player.x, this.player.y, 0x5eead4, Phaser, 28);
           }
@@ -133,7 +147,7 @@ export function PhaserPreview({
           if (this.hasWon) return;
           audio.playHit();
           audio.playLose();
-          this.status.setText("Hit! Built-in sfx.hit + effect.hit triggered.");
+          this.status.setText("Hit! generated sfx.hit + vfx.hit triggered.");
           this.cameras.main.shake(180, 0.012);
           this.flash.setFillStyle(0xff315a, 0.34);
           this.tweens.add({
@@ -151,7 +165,7 @@ export function PhaserPreview({
           for (let index = 0; index < config.level.collectibles; index += 1) {
             const x = 230 + index * 95;
             const y = config.templateFamily === "platformer" ? 330 - (index % 3) * 70 : 150 + (index % 3) * 90;
-            const star = this.add.rectangle(x, y, 20, 20, 0xfacc15);
+            const star = this.createRuntimeImage(x, y, "generated-collectible", 26, 26, 0xfacc15);
             this.collectibles.push(star);
             this.tweens.add({
               targets: star,
@@ -169,7 +183,7 @@ export function PhaserPreview({
           for (let index = 0; index < config.level.hazards; index += 1) {
             const x = 310 + index * 140;
             const y = config.templateFamily === "platformer" ? 480 : 250 + (index % 2) * 110;
-            const hazard = this.add.rectangle(x, y, 30, 30, 0xfb7185);
+            const hazard = this.createRuntimeImage(x, y, "generated-hazard", 34, 34, 0xfb7185);
             this.hazards.push(hazard);
             this.tweens.add({
               targets: hazard,
@@ -204,6 +218,20 @@ export function PhaserPreview({
               onComplete: () => particle.destroy()
             });
           }
+        }
+
+        private createRuntimeImage(
+          x: number,
+          y: number,
+          textureKey: string,
+          width: number,
+          height: number,
+          fallbackColor: number
+        ): Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle {
+          if (this.textures.exists(textureKey)) {
+            return this.add.image(x, y, textureKey).setDisplaySize(width, height);
+          }
+          return this.add.rectangle(x, y, width, height, fallbackColor);
         }
       }
 
@@ -241,6 +269,11 @@ function assetPackSummary(assetPack?: AssetPack): string {
   if (!assetPack) return "asset-pack: not attached";
   const ready = assetPack.assets.filter((asset) => asset.status !== "missing" && asset.status !== "failed").length;
   return `asset-pack ${assetPack.versionId}: ${ready}/${assetPack.assets.length} ready`;
+}
+
+function loadImage(scene: import("phaser").Scene, key: string, url?: string) {
+  if (!url || scene.textures.exists(key)) return;
+  scene.load.image(key, url);
 }
 
 function createDemoAudio() {

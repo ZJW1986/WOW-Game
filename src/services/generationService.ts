@@ -2,6 +2,7 @@ import { createConversationSession, createGuidedQuestions } from "../core/conver
 import {
   createArtifacts,
   createAssetRequirements,
+  createAssetStyleGuide,
   createPublishRecord,
   createQaReport,
   runMockPipeline,
@@ -151,16 +152,6 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       modelTasks.push(classificationTask);
       trackFallback(classificationTask, fallbacksUsed);
 
-      const assetRequirements = createAssetRequirements(classificationTask.output.templateFamily);
-      const generatedAssets = await Promise.all(
-        assetRequirements.map((requirement) =>
-          mediaGateway.generateProjectAsset(input.projectId, "v1", requirement)
-        )
-      );
-      const assetPack: AssetPack = {
-        versionId: "v1",
-        assets: generatedAssets
-      };
       const fallbackGdd = extractArtifactContent(mockProject, "gdd.json");
 
       const gddTask = await gateway.runModelTask({
@@ -178,6 +169,28 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       });
       modelTasks.push(gddTask);
       trackFallback(gddTask, fallbacksUsed);
+
+      const assetStyleGuide = createAssetStyleGuide({
+        title: mockProject.title,
+        templateFamily: classificationTask.output.templateFamily,
+        gdd: gddTask.output
+      });
+      const assetRequirements = createAssetRequirements(classificationTask.output.templateFamily).map(
+        (requirement) => ({
+          ...requirement,
+          style: `${assetStyleGuide.visualStyle}; ${requirement.style}`,
+          prompt: assetStyleGuide.assetPrompts[requirement.assetKey] ?? requirement.prompt
+        })
+      );
+      const generatedAssets = await Promise.all(
+        assetRequirements.map((requirement) =>
+          mediaGateway.generateProjectAsset(input.projectId, "v1", requirement)
+        )
+      );
+      const assetPack: AssetPack = {
+        versionId: "v1",
+        assets: generatedAssets
+      };
 
       const fallbackConfig = {
         ...mockProject.gameConfig,
@@ -213,6 +226,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         title: gameConfig.title,
         classification: classificationTask.output,
         assetRequirements,
+        assetStyleGuide,
         assetPack,
         gameConfig,
         qaReport,

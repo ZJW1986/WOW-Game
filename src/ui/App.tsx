@@ -16,6 +16,7 @@
   Search,
   Send,
   Share2,
+  Sparkles,
   Trash2,
   Upload,
   Wand2,
@@ -73,6 +74,13 @@ type CreationPhase = "thinking" | "proposal" | "revision" | "generating" | "comp
 type AppPage = "create" | "play" | "projects" | "studio";
 type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
 type GuidedQuestionStatus = "idle" | "loading" | "ready" | "fallback";
+type GenerationNoticeTone = "working" | "success" | "fallback" | "error";
+
+interface GenerationNotice {
+  tone: GenerationNoticeTone;
+  title: string;
+  detail: string;
+}
 
 interface ProjectRecord {
   id: string;
@@ -161,6 +169,36 @@ function readGuidedQuestionStatus(status: GuidedQuestionStatus): string {
   return "DeepSeek v4 flash";
 }
 
+function readGenerationError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function playGenerationSuccessTone() {
+  if (typeof window === "undefined") return;
+  const audioWindow = window as Window & {
+    AudioContext?: typeof AudioContext;
+    webkitAudioContext?: typeof AudioContext;
+  };
+  const AudioContextCtor = audioWindow.AudioContext || audioWindow.webkitAudioContext;
+  if (!AudioContextCtor) return;
+  const context = new AudioContextCtor();
+  const gain = context.createGain();
+  gain.gain.setValueAtTime(0.0001, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.45);
+  gain.connect(context.destination);
+
+  for (const [index, frequency] of [523.25, 659.25, 783.99].entries()) {
+    const oscillator = context.createOscillator();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, context.currentTime + index * 0.08);
+    oscillator.connect(gain);
+    oscillator.start(context.currentTime + index * 0.08);
+    oscillator.stop(context.currentTime + 0.5);
+  }
+  window.setTimeout(() => void context.close(), 650);
+}
+
 export function App() {
   const [locale, setLocale] = useState<Locale>("zh-CN");
   const t = getMessages(locale);
@@ -185,6 +223,7 @@ export function App() {
   const [generatedProject, setGeneratedProject] = useState<MockProject | null>(null);
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
   const [guidedQuestionStatus, setGuidedQuestionStatus] = useState<GuidedQuestionStatus>("idle");
+  const [generationNotice, setGenerationNotice] = useState<GenerationNotice | null>(null);
   const [uploadedPackageMessage, setUploadedPackageMessage] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -237,6 +276,12 @@ export function App() {
 
   const startResourceGeneration = async () => {
     setCreationPhase("generating");
+    setActiveTab("preview");
+    setGenerationNotice({
+      tone: "working",
+      title: "正在生成可试玩版本",
+      detail: "DeepSeek 正在生成分类、GDD 和 game-config，随后会装配 Phaser 预览。"
+    });
     const generationIdea = buildGenerationIdea(idea, followups);
     try {
       const result = (await requestPlayableGeneration({
@@ -251,7 +296,17 @@ export function App() {
       setGeneratedProject(result.project);
       setCreationPhase("complete");
       setActiveTab("preview");
-    } catch {
+      const fallbackTasks = result.fallbacksUsed ?? [];
+      setGenerationNotice({
+        tone: fallbackTasks.length > 0 ? "fallback" : "success",
+        title: fallbackTasks.length > 0 ? "生成完成，部分任务已回退" : "游戏已生成，可以试玩",
+        detail:
+          fallbackTasks.length > 0
+            ? `已回退任务：${fallbackTasks.join(", ")}。预览仍可操作，后续可继续优化模型输出。`
+            : `${result.project.gameConfig.title} 已发布为 ${result.publishRecord.publicUrl}`
+      });
+      playGenerationSuccessTone();
+    } catch (error) {
       const fallback = await createGenerationService().generatePlayableVersion({
         idea: generationIdea,
         answers: session.answers,
@@ -264,6 +319,12 @@ export function App() {
       setGeneratedProject(fallback.project);
       setCreationPhase("complete");
       setActiveTab("preview");
+      setGenerationNotice({
+        tone: "error",
+        title: "真实生成失败，已使用本地可玩版本兜底",
+        detail: `${readGenerationError(error)}。右侧预览仍可试玩，建议检查 DeepSeek 网络、余额或 JSON 输出。`
+      });
+      playGenerationSuccessTone();
     }
   };
 
@@ -303,6 +364,7 @@ export function App() {
     setGuidedQuestionStatus(nextProject ? "idle" : "loading");
     setGeneratedProject(nextProject ?? null);
     setGenerationResult(null);
+    setGenerationNotice(null);
     setRevisionText("");
     setFollowups([]);
     setCreationPhase(nextProject ? "complete" : "thinking");
@@ -504,6 +566,7 @@ export function App() {
             phase={creationPhase}
             project={project}
             messages={t}
+            notice={generationNotice}
             onApprove={startResourceGeneration}
             onRequestRevision={() => setCreationPhase("revision")}
           />
@@ -523,7 +586,12 @@ export function App() {
             messages={t}
             revisionText={revisionText}
             modelStatusLabel={readGuidedQuestionStatus(guidedQuestionStatus)}
-            canGenerate={hasAnsweredGuidedQuestions && (creationPhase === "proposal" || creationPhase === "complete")}
+            canGenerate={
+              hasAnsweredGuidedQuestions &&
+              creationPhase !== "thinking" &&
+              creationPhase !== "generating"
+            }
+            isGenerating={creationPhase === "generating"}
             onGenerate={startResourceGeneration}
             onIdeaChange={setRevisionText}
             onSubmitRevision={submitFollowup}
@@ -565,7 +633,9 @@ export function App() {
           </div>
 
           <div className="stage-content">
-            {activeTab === "preview" && <PreviewWorkspace project={project} messages={t} />}
+            {activeTab === "preview" && (
+              <PreviewWorkspace project={project} messages={t} notice={generationNotice} />
+            )}
             {activeTab === "assets" && (
               <AssetWorkspace key={`${project.id}-${project.version.id}`} project={project} messages={t} />
             )}
@@ -1345,12 +1415,14 @@ function ThinkingPipelinePanel({
   phase,
   project,
   messages,
+  notice,
   onApprove,
   onRequestRevision
 }: {
   phase: CreationPhase;
   project: MockProject;
   messages: ReturnType<typeof getMessages>;
+  notice: GenerationNotice | null;
   onApprove: () => void;
   onRequestRevision: () => void;
 }) {
@@ -1382,6 +1454,12 @@ function ThinkingPipelinePanel({
           {phase === "complete" && messages.thinking.statusComplete}
           {phase === "revision" && messages.thinking.statusRevision}
         </span>
+      </div>
+
+      <div className="thinking-activity" aria-hidden="true">
+        <span />
+        <span />
+        <span />
       </div>
 
       <div className="thinking-stream">
@@ -1429,6 +1507,22 @@ function ThinkingPipelinePanel({
           <div>
             <strong>{messages.thinking.completeTitle}</strong>
             <small>{messages.thinking.completeDetail}</small>
+          </div>
+        </div>
+      )}
+
+      {notice && (
+        <div className={`generation-notice ${notice.tone}`}>
+          {notice.tone === "success" || notice.tone === "fallback" ? (
+            <Sparkles size={18} />
+          ) : notice.tone === "working" ? (
+            <Cpu size={18} />
+          ) : (
+            <RefreshCcw size={18} />
+          )}
+          <div>
+            <strong>{notice.title}</strong>
+            <small>{notice.detail}</small>
           </div>
         </div>
       )}
@@ -1482,6 +1576,7 @@ function PromptDock({
   revisionText,
   modelStatusLabel,
   canGenerate,
+  isGenerating,
   onGenerate,
   onIdeaChange,
   onSubmitRevision
@@ -1490,6 +1585,7 @@ function PromptDock({
   revisionText: string;
   modelStatusLabel: string;
   canGenerate: boolean;
+  isGenerating: boolean;
   onGenerate: () => void;
   onIdeaChange: (idea: string) => void;
   onSubmitRevision: () => void;
@@ -1514,17 +1610,39 @@ function PromptDock({
         <button className="dock-action" onClick={onSubmitRevision} disabled={!revisionText.trim()}>
           {messages.prompt.sendFollowup}
         </button>
-        <button className="send-button" title={messages.prompt.generateNext} onClick={onGenerate} disabled={!canGenerate}>
-          <Send size={18} />
+        <button
+          className={isGenerating ? "send-button generating" : "send-button"}
+          title={messages.prompt.generateNext}
+          onClick={onGenerate}
+          disabled={!canGenerate}
+        >
+          {isGenerating ? <RefreshCcw size={18} /> : <Send size={18} />}
         </button>
       </div>
     </div>
   );
 }
 
-function PreviewWorkspace({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
+function PreviewWorkspace({
+  project,
+  messages,
+  notice
+}: {
+  project: MockProject;
+  messages: ReturnType<typeof getMessages>;
+  notice: GenerationNotice | null;
+}) {
   return (
     <div className="preview-workspace">
+      {notice && notice.tone !== "working" && (
+        <div className={`preview-result-banner ${notice.tone}`}>
+          <Sparkles size={18} />
+          <div>
+            <strong>{notice.title}</strong>
+            <span>{notice.detail}</span>
+          </div>
+        </div>
+      )}
       <div className="preview-canvas-shell">
         <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
       </div>

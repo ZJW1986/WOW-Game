@@ -1115,6 +1115,46 @@ button {
   animation: scan-pulse 1.8s linear infinite;
 }
 
+.thinking-activity {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  height: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(69, 246, 200, 0.12);
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgb(0 229 255 / 10%), transparent 32%, rgb(255 176 32 / 8%)),
+    #031017;
+}
+
+.thinking-activity::before {
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  content: "";
+  background: linear-gradient(90deg, transparent, rgb(69 246 200 / 35%), transparent);
+  animation: activity-scan 1.45s ease-in-out infinite;
+}
+
+.thinking-activity span {
+  align-self: center;
+  height: 4px;
+  margin: 0 10px;
+  border-radius: 999px;
+  background: rgb(69 246 200 / 22%);
+  animation: activity-bars 1.2s ease-in-out infinite;
+}
+
+.thinking-activity span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.thinking-activity span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
 .thinking-stream {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1304,6 +1344,66 @@ button {
 
 .resource-pulse.complete {
   color: #45f6c8;
+}
+
+.generation-notice {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid #1d6f82;
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgb(8 32 42 / 96%), rgb(3 10 16 / 96%)),
+    #041016;
+  box-shadow: 0 0 26px rgb(0 229 255 / 10%);
+}
+
+.generation-notice.success {
+  border-color: #45f6c8;
+  background:
+    radial-gradient(circle at 10% 10%, rgb(69 246 200 / 18%), transparent 26%),
+    linear-gradient(135deg, rgb(4 34 30 / 96%), rgb(3 14 16 / 96%));
+  animation: success-pop 0.55s ease-out both;
+}
+
+.generation-notice.fallback {
+  border-color: #ffb020;
+}
+
+.generation-notice.error {
+  border-color: #ff5d5d;
+}
+
+.generation-notice svg {
+  color: #45f6c8;
+}
+
+.generation-notice.fallback svg {
+  color: #ffb020;
+}
+
+.generation-notice.error svg {
+  color: #ff5d5d;
+}
+
+.generation-notice strong,
+.generation-notice small {
+  display: block;
+}
+
+.generation-notice strong {
+  color: #e8fbff;
+  font-size: 13px;
+}
+
+.generation-notice small {
+  margin-top: 4px;
+  color: #9cc8d0;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .log-card {
@@ -1547,6 +1647,47 @@ button {
   }
 }
 
+@keyframes activity-scan {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  100% {
+    transform: translateX(270%);
+  }
+}
+
+@keyframes activity-bars {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scaleX(0.72);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes success-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 .stage-panel {
   display: flex;
   min-width: 0;
@@ -1615,6 +1756,64 @@ button {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.preview-result-banner {
+  position: absolute;
+  z-index: 4;
+  top: 14px;
+  right: 14px;
+  left: 14px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid #45f6c8;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 8% 18%, rgb(69 246 200 / 22%), transparent 22%),
+    linear-gradient(135deg, rgb(4 25 31 / 94%), rgb(2 12 18 / 94%));
+  box-shadow: 0 18px 42px rgb(0 0 0 / 28%), 0 0 28px rgb(69 246 200 / 16%);
+  animation: success-pop 0.55s ease-out both;
+}
+
+.preview-result-banner.fallback {
+  border-color: #ffb020;
+}
+
+.preview-result-banner.error {
+  border-color: #ff5d5d;
+}
+
+.preview-result-banner svg {
+  color: #45f6c8;
+}
+
+.preview-result-banner.fallback svg {
+  color: #ffb020;
+}
+
+.preview-result-banner.error svg {
+  color: #ff5d5d;
+}
+
+.preview-result-banner strong,
+.preview-result-banner span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.preview-result-banner strong {
+  color: #e8fbff;
+  font-size: 13px;
+}
+
+.preview-result-banner span {
+  margin-top: 3px;
+  color: #a9d2da;
+  font-size: 12px;
+  line-height: 1.42;
 }
 
 .preview-workspace {
@@ -2382,6 +2581,14 @@ pre {
   gap: 10px;
   padding: 12px;
   overflow: visible;
+}
+
+.send-button:disabled svg {
+  opacity: 0.72;
+}
+
+.send-button.generating svg {
+  animation: spin 0.8s linear infinite;
 }
 
 .thinking-stream {

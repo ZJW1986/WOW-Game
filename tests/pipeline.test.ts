@@ -31,6 +31,8 @@ describe("standard artifact pipeline", () => {
       "classification.json",
       "gdd.json",
       "gdd.md",
+      "asset-style-guide.json",
+      "asset-style-guide.md",
       "asset-requirements.json",
       "asset-requirements.md",
       "asset-pack.json",
@@ -73,9 +75,10 @@ describe("standard artifact pipeline", () => {
         "sfx.win",
         "sfx.lose",
         "sfx.click",
-        "effect.hit",
-        "effect.win",
-        "effect.lose"
+        "vfx.collect",
+        "vfx.hit",
+        "vfx.win",
+        "vfx.lose"
       ])
     );
     expect(project.assetPack.assets.every((asset) => asset.status !== "missing")).toBe(true);

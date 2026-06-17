@@ -1,6 +1,7 @@
 import type {
   AssetPack,
   AssetRequirement,
+  AssetStyleGuide,
   AssetSource,
   AssetStatus,
   AssetType,
@@ -12,6 +13,7 @@ import type {
   QaReport,
   TemplateFamily
 } from "./types";
+import { createMediaGateway } from "../services/mediaGateway";
 
 const TEMPLATE_KEYWORDS: Record<TemplateFamily, string[]> = {
   platformer: ["跳", "跳跃", "jump", "gravity", "平台", "横版", "尖刺", "攀爬", "金币"],
@@ -54,9 +56,28 @@ export function runMockPipeline(idea: string): MockProject {
   const classification = classifyIdea(idea);
   const title = createTitle(idea, classification.templateFamily);
   const assetRequirements = createAssetRequirements(classification.templateFamily);
+  const assetStyleGuide = createAssetStyleGuide({
+    title,
+    templateFamily: classification.templateFamily,
+    gdd: {
+      concept: title,
+      loop: ["start", "move", "avoid", "collect", "win or retry"],
+      entities: ["player", "collectible", "hazard", "goal"],
+      level: { width: 960, height: 540, collectibles: 6, hazards: 4, winScore: 6 },
+      numbers: { winScore: 6, hazards: 4 },
+      implementationRoute: `Use ${classification.templateFamily} Phaser template with config-only generation.`
+    }
+  });
+  const mediaGateway = createMediaGateway();
   const assetPack: AssetPack = {
     versionId: "v1",
-    assets: assetRequirements
+    assets: assetRequirements.map((requirement) =>
+      mediaGateway.generateProceduralAsset("project-starlight-001", "v1", {
+        ...requirement,
+        style: `${assetStyleGuide.visualStyle}; ${requirement.style}`,
+        prompt: assetStyleGuide.assetPrompts[requirement.assetKey] ?? requirement.prompt
+      })
+    )
   };
   const gameConfig = createGameConfig(title, idea, classification.templateFamily, assetPack);
   const qaReport = createQaReport(gameConfig, assetPack);
@@ -66,6 +87,7 @@ export function runMockPipeline(idea: string): MockProject {
     title,
     classification,
     assetRequirements,
+    assetStyleGuide,
     assetPack,
     gameConfig,
     qaReport,
@@ -223,7 +245,16 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       spec: "under 0.5 seconds"
     }),
     projectAsset({
-      assetKey: "effect.hit",
+      assetKey: "vfx.collect",
+      type: "effect",
+      purpose: "collectible pickup burst",
+      style: "small reward particles",
+      generationMode: "preset",
+      copyrightStatus: "placeholder",
+      spec: "8-12 particle burst"
+    }),
+    projectAsset({
+      assetKey: "vfx.hit",
       type: "effect",
       purpose: "collision or damage feedback",
       style: "small burst particles",
@@ -232,7 +263,7 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       spec: "8-12 frame visual effect"
     }),
     projectAsset({
-      assetKey: "effect.win",
+      assetKey: "vfx.win",
       type: "effect",
       purpose: "victory celebration feedback",
       style: "small success particles",
@@ -241,7 +272,7 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       spec: "12-18 frame visual effect"
     }),
     projectAsset({
-      assetKey: "effect.lose",
+      assetKey: "vfx.lose",
       type: "effect",
       purpose: "failure state feedback",
       style: "subtle warning particles",
@@ -255,31 +286,65 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
     platformer: [
       mockImage("player.hero", "jumping hero sprite", "small readable platformer character"),
       mockImage("world.tiles", "ground and platform tiles", "forest platform tile sheet"),
+      mockImage("item.collectible", "collectible sprite", "bright coin or gem"),
       mockImage("hazard.spike", "hazard sprite", "clear triangular obstacle")
     ],
     top_down: [
       mockImage("player.ship", "player avatar", "small top-down ship or explorer"),
       mockImage("world.background", "scrolling arena background", "deep blue space or maze floor"),
+      mockImage("item.collectible", "collectible sprite", "energy core or star"),
       mockImage("hazard.enemy", "moving hazard", "asteroid or roaming enemy")
     ],
     grid_logic: [
       mockImage("player.cursor", "active grid marker", "high-contrast cursor"),
       mockImage("world.tiles", "grid tiles", "readable tile set"),
+      mockImage("item.collectible", "goal marker", "clear target tile"),
       mockImage("hazard.block", "blocked grid cell", "solid obstacle")
     ],
     tower_defense: [
       mockImage("player.tower", "defense tower", "compact cannon icon"),
       mockImage("world.path", "enemy route", "clear curved lane"),
+      mockImage("item.collectible", "reward token", "small upgrade gem"),
       mockImage("hazard.enemy", "wave enemy", "small marching enemy")
     ],
     ui_heavy: [
       mockImage("player.panel", "main operation panel", "dashboard-like play card"),
       mockImage("world.background", "menu background", "quiet studio scene"),
+      mockImage("item.collectible", "reward badge", "small progress badge"),
       mockImage("hazard.timer", "pressure indicator", "countdown badge")
     ]
   };
 
   return [...common, ...familyAssets[templateFamily]];
+}
+
+export function createAssetStyleGuide(input: {
+  title: string;
+  templateFamily: TemplateFamily;
+  gdd: {
+    concept: string;
+    loop: string[];
+    entities: string[];
+    level: GameConfig["level"];
+    numbers: Record<string, string | number>;
+    implementationRoute: string;
+  };
+}): AssetStyleGuide {
+  const palette = input.templateFamily === "platformer"
+    ? ["#1f7a4d", "#8bd450", "#f7d154", "#ef476f"]
+    : ["#13213f", "#22d3ee", "#facc15", "#fb7185"];
+  const visualStyle = `${input.templateFamily} clean arcade, readable silhouettes, cohesive generated asset pack`;
+  const basePrompt = `${input.title}: ${input.gdd.concept}. ${visualStyle}. Palette ${palette.join(", ")}.`;
+  const assetKeys = createAssetRequirements(input.templateFamily).map((asset) => asset.assetKey);
+  return {
+    visualStyle,
+    palette,
+    shapeLanguage: input.templateFamily === "platformer" ? "rounded hero shapes with sharp hazard triangles" : "bold geometric icons with glowing edges",
+    characterBrief: `Player character should be instantly readable for ${input.templateFamily} controls.`,
+    environmentBrief: `Environment supports ${input.gdd.loop.join(" -> ")} without visual clutter.`,
+    audioStyle: "short arcade tones, light loop BGM, clear event feedback",
+    assetPrompts: Object.fromEntries(assetKeys.map((assetKey) => [assetKey, `${basePrompt} Generate ${assetKey}.`]))
+  };
 }
 
 function mockImage(assetKey: string, purpose: string, spec: string): AssetRequirement {
@@ -425,6 +490,7 @@ export function createArtifacts(input: {
   title: string;
   classification: Classification;
   assetRequirements: AssetRequirement[];
+  assetStyleGuide: AssetStyleGuide;
   assetPack: AssetPack;
   gameConfig: GameConfig;
   qaReport: QaReport;
@@ -459,6 +525,8 @@ export function createArtifacts(input: {
     jsonArtifact("classification", "classification.json", "Physics Classification", input.classification),
     jsonArtifact("gdd", "gdd.json", "Technical GDD", gdd),
     mdArtifact("gdd", "gdd.md", "Technical GDD", gdd),
+    jsonArtifact("asset-style-guide", "asset-style-guide.json", "Asset Style Guide", input.assetStyleGuide),
+    mdArtifact("asset-style-guide", "asset-style-guide.md", "Asset Style Guide", input.assetStyleGuide),
     jsonArtifact("asset-requirements", "asset-requirements.json", "Asset Requirements", input.assetRequirements),
     mdArtifact("asset-requirements", "asset-requirements.md", "Asset Requirements", input.assetRequirements),
     jsonArtifact("asset-pack", "asset-pack.json", "Asset Pack", input.assetPack),

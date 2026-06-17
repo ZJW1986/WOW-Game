@@ -11,6 +11,7 @@ export type PipelineStage =
   | "classification"
   | "gdd"
   | "asset-requirements"
+  | "asset-style-guide"
   | "asset-pack"
   | "game-config"
   | "qa-report"
@@ -20,6 +21,16 @@ export type PipelineStage =
 export type AssetType = "image" | "sfx" | "bgm" | "effect" | "ui" | "build";
 export type AssetStatus = "missing" | "mock" | "uploaded" | "generated" | "failed";
 export type AssetSource = "mock" | "preset" | "uploaded" | "generated";
+
+export interface AssetStyleGuide {
+  visualStyle: string;
+  palette: string[];
+  shapeLanguage: string;
+  characterBrief: string;
+  environmentBrief: string;
+  audioStyle: string;
+  assetPrompts: Record<string, string>;
+}
 
 export interface Classification {
   templateFamily: TemplateFamily;
