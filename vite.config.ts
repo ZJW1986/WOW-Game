@@ -3,6 +3,11 @@ import react from "@vitejs/plugin-react";
 import { createGenerationApiHandler } from "./src/services/generationApi";
 
 export default defineConfig({
+  server: {
+    allowedHosts: [
+      "generators-correct-min-powerpoint.trycloudflare.com"
+    ]
+  },
   plugins: [
     react(),
     {
