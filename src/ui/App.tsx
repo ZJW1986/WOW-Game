@@ -56,7 +56,8 @@ import { createMediaGateway } from "../services/mediaGateway";
 import {
   requestPlayableGeneration,
   requestPlayableProject,
-  submitPlayableFeedback
+  submitPlayableFeedback,
+  uploadPlayablePackage
 } from "../services/generationClient";
 import { createGenerationService } from "../services/generationService";
 
@@ -75,6 +76,10 @@ interface ProjectRecord {
   id: string;
   title: string;
   idea: string;
+  contentType: "ai_project" | "uploaded_package";
+  editable: boolean;
+  shareable: boolean;
+  sourceLabel: string;
   status: "published" | "draft" | "private";
   visibility: "public" | "unlisted" | "private";
   updatedAt: string;
@@ -90,6 +95,10 @@ function createProjectRecord(idea: string, index: number): ProjectRecord {
     id: `${project.id}-${index}`,
     title: project.title,
     idea,
+    contentType: project.contentType,
+    editable: project.editable,
+    shareable: project.shareable,
+    sourceLabel: project.sourceLabel,
     status: index % 3 === 0 ? "draft" : "published",
     visibility: index % 4 === 0 ? "private" : index % 2 === 0 ? "unlisted" : "public",
     updatedAt: `2026-06-${String(17 - index).padStart(2, "0")}`,
@@ -166,6 +175,7 @@ export function App() {
   const [followups, setFollowups] = useState<StudioFollowup[]>([]);
   const [generatedProject, setGeneratedProject] = useState<MockProject | null>(null);
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
+  const [uploadedPackageMessage, setUploadedPackageMessage] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
@@ -245,6 +255,35 @@ export function App() {
     setPage("studio");
   };
 
+  const openProjectPlay = (record: ProjectRecord) => {
+    if (typeof window !== "undefined") {
+      window.history.pushState({}, "", record.project.playUrl);
+    }
+    setPage("studio");
+  };
+
+  const addUploadedPackage = (project: MockProject) => {
+    setProjects((current) => [
+      {
+        id: `${project.id}-${Date.now()}`,
+        title: project.title,
+        idea: project.gameConfig.pitch,
+        contentType: project.contentType,
+        editable: project.editable,
+        shareable: project.shareable,
+        sourceLabel: project.sourceLabel,
+        status: "published",
+        visibility: "public",
+        updatedAt: "2026-06-17",
+        plays: 0,
+        likes: 0,
+        templateFamily: project.classification.templateFamily,
+        project
+      },
+      ...current
+    ]);
+  };
+
   if (playRoute) {
     return (
       <PlayableDetailPage
@@ -261,9 +300,11 @@ export function App() {
   if (page === "play") {
     return (
       <PlayPage
+        projects={projects}
         onCreate={() => setPage("create")}
         onProjects={() => setPage("projects")}
         onPlayGame={() => openStudio(idea)}
+        onPlayProject={openProjectPlay}
       />
     );
   }
@@ -278,8 +319,13 @@ export function App() {
         onCreate={() => setPage("create")}
         onPlay={() => setPage("play")}
         onEdit={(record) => openStudio(record.idea, record.templateFamily, record.project)}
-        onRun={(record) => openStudio(record.idea, record.templateFamily, record.project)}
-        onDuplicate={(record) =>
+        onRun={(record) =>
+          record.editable
+            ? openStudio(record.idea, record.templateFamily, record.project)
+            : openProjectPlay(record)
+        }
+        onDuplicate={(record) => {
+          if (!record.editable) return;
           setProjects((current) => [
             {
               ...record,
@@ -291,8 +337,8 @@ export function App() {
               project: runMockPipeline(record.idea)
             },
             ...current
-          ])
-        }
+          ]);
+        }}
         onDelete={(record) => setProjects((current) => current.filter((item) => item.id !== record.id))}
       />
     );
@@ -307,9 +353,21 @@ export function App() {
         onDraftChange={setStartDraft}
         onPlay={() => setPage("play")}
         onProjects={() => setPage("projects")}
+        uploadMessage={uploadedPackageMessage}
         onCreate={() => {
           const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
           openStudio(nextIdea, startDraft.templateFamily);
+        }}
+        onUploadPackage={async (file) => {
+          const payload = await uploadPlayablePackage({
+            packageName: file.name.replace(/\.zip$/i, ""),
+            packageFileName: file.name,
+            packageEntry: "index.html",
+            description: `上传包：${file.name}`
+          });
+          addUploadedPackage(payload.project as MockProject);
+          setUploadedPackageMessage(`${file.name} 已加入游戏商城，可试玩和分享。`);
+          setPage("projects");
         }}
       />
     );
@@ -474,7 +532,9 @@ function StartPage({
   onDraftChange,
   onPlay,
   onProjects,
-  onCreate
+  onCreate,
+  onUploadPackage,
+  uploadMessage
 }: {
   draft: StartGameDraft;
   locale: Locale;
@@ -483,6 +543,8 @@ function StartPage({
   onPlay: () => void;
   onProjects: () => void;
   onCreate: () => void;
+  onUploadPackage: (file: File) => Promise<void>;
+  uploadMessage: string;
 }) {
   const canCreate = draft.idea.trim().length > 0;
   const t = getMessages(locale);
@@ -558,24 +620,53 @@ function StartPage({
           </div>
 
           <div className="create-dialog-footer">
-            <label className="upload-button">
-              <Upload size={16} />
-              {t.start.upload}
-              <input
-                multiple
-                type="file"
-                onChange={(event) =>
-                  updateDraft({
-                    uploadedFileNames: Array.from(event.target.files ?? []).map((file) => file.name)
-                  })
-                }
-              />
-            </label>
-            <div className="uploaded-files">
-              {draft.uploadedFileNames.slice(0, 2).map((fileName) => (
-                <span key={fileName}>{fileName}</span>
-              ))}
+            <div className="upload-choice-group" aria-label={t.start.uploadOptionsAria}>
+              <label className="upload-button material-upload">
+                <ImageIcon size={16} />
+                <span>
+                  {t.start.uploadMaterials}
+                  <small>{t.start.uploadMaterialsHint}</small>
+                </span>
+                <input
+                  multiple
+                  type="file"
+                  accept="image/*,audio/*,.png,.jpg,.jpeg,.webp,.gif,.mp3,.wav,.ogg,.m4a"
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    updateDraft({
+                      uploadedFileNames: files.map((file) => file.name)
+                    });
+                  }}
+                />
+              </label>
+              <label className="upload-button package-upload">
+                <Upload size={16} />
+                <span>
+                  {t.start.uploadPackage}
+                  <small>{t.start.uploadPackageHint}</small>
+                </span>
+                <input
+                  type="file"
+                  accept=".zip,application/zip"
+                  onChange={async (event) => {
+                    const file = Array.from(event.target.files ?? []).find((item) =>
+                      item.name.toLowerCase().endsWith(".zip")
+                    );
+                    if (file) {
+                      await onUploadPackage(file);
+                    }
+                  }}
+                />
+              </label>
             </div>
+            {draft.uploadedFileNames.length > 0 ? (
+              <div className="uploaded-files">
+                {draft.uploadedFileNames.slice(0, 3).map((fileName) => (
+                  <span key={fileName}>{fileName}</span>
+                ))}
+              </div>
+            ) : null}
+            {uploadMessage ? <p className="upload-message">{uploadMessage}</p> : null}
             <button className="create-button" disabled={!canCreate} onClick={onCreate}>
               {t.start.create}
               <Send size={17} />
@@ -745,16 +836,21 @@ function SharePanel({
 }
 
 function PlayPage({
+  projects,
   onCreate,
   onProjects,
-  onPlayGame
+  onPlayGame,
+  onPlayProject
 }: {
+  projects: ProjectRecord[];
   onCreate: () => void;
   onProjects: () => void;
   onPlayGame: (game: PlayGame) => void;
+  onPlayProject: (project: ProjectRecord) => void;
 }) {
   const [activeCategory, setActiveCategory] = useState<PlayCategory>("All");
   const games = activeCategory === "All" ? getFeaturedGames() : getGamesByCategory(activeCategory).slice(0, 12);
+  const uploadedProjects = projects.filter((project) => project.contentType === "uploaded_package").slice(0, 6);
   const t = getMessages("zh-CN");
 
   return (
@@ -802,6 +898,26 @@ function PlayPage({
       </nav>
 
       <section className="play-scroll">
+        {uploadedProjects.length > 0 ? (
+          <section className="game-section">
+            <div className="section-row">
+              <h2>{t.play.uploaded}</h2>
+            </div>
+            <div className="project-grid compact-project-grid">
+              {uploadedProjects.map((project) => (
+                <ProjectCard
+                  key={project.id}
+                  project={project}
+                  messages={t}
+                  onEdit={() => undefined}
+                  onRun={() => onPlayProject(project)}
+                  onDuplicate={() => undefined}
+                  onDelete={() => undefined}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
         <GameSection
           title={activeCategory === "All" ? t.play.featured : `${activeCategory} games`}
           games={games}
@@ -1003,8 +1119,9 @@ function ProjectCard({
         <div className="project-badges">
           <span className={`status ${project.status}`}>{messages.projects[project.status]}</span>
           <span>{messages.projects[project.visibility]}</span>
+          {!project.editable ? <span>{messages.projects.readOnly}</span> : null}
         </div>
-        <strong>{project.templateFamily}</strong>
+        <strong>{project.sourceLabel}</strong>
       </div>
       <div className="project-card-body">
         <h2>{project.title}</h2>
@@ -1014,13 +1131,22 @@ function ProjectCard({
           <span>{formatCount(project.plays)} / {project.likes}</span>
         </div>
         <div className="project-actions">
-          <button className="edit-action" onClick={onEdit}>
-            <Pencil size={14} />
-            {messages.projects.edit}
-          </button>
-          <button title={messages.projects.duplicate} onClick={onDuplicate}>
-            <Copy size={14} />
-          </button>
+          {project.editable ? (
+            <>
+              <button className="edit-action" onClick={onEdit}>
+                <Pencil size={14} />
+                {messages.projects.edit}
+              </button>
+              <button title={messages.projects.duplicate} onClick={onDuplicate}>
+                <Copy size={14} />
+              </button>
+            </>
+          ) : (
+            <button className="edit-action" onClick={onRun}>
+              <Gamepad2 size={14} />
+              {messages.projects.experience}
+            </button>
+          )}
           <button title={messages.projects.run} onClick={onRun}>
             <Gamepad2 size={14} />
           </button>
@@ -1189,6 +1315,13 @@ function ThinkingPipelinePanel({
           <p className="thought-line">{messages.thinking.eyebrow}</p>
           <h3>{messages.thinking.title}</h3>
         </div>
+        <span className={`thinking-phase-pill ${phase}`}>
+          {phase === "thinking" && messages.thinking.statusThinking}
+          {phase === "proposal" && messages.thinking.statusProposal}
+          {phase === "generating" && messages.thinking.statusGenerating}
+          {phase === "complete" && messages.thinking.statusComplete}
+          {phase === "revision" && messages.thinking.statusRevision}
+        </span>
       </div>
 
       <div className="thinking-stream">
@@ -1256,6 +1389,10 @@ function ProposalSummary({
 }) {
   return (
     <div className="proposal-summary">
+      <div className="proposal-headline">
+        <strong>{project.gameConfig.title}</strong>
+        <span>{project.classification.templateFamily}</span>
+      </div>
       <div className="proposal-grid">
         <span>{messages.thinking.template}</span>
         <strong>{project.classification.templateFamily}</strong>

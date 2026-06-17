@@ -1,5 +1,6 @@
 import type { TemplateFamily, UserAnswer } from "../core/types";
 import type { StartModelId } from "../core/start";
+import { createPublishRecord, runMockPipeline } from "../core/pipeline";
 import { createGenerationService, type GenerationServiceOptions } from "./generationService";
 import { createPlayableStore, type PlayableStoreOptions } from "./playableStore";
 
@@ -51,6 +52,58 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       } catch (error) {
         return {
           status: 404,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/upload-package") {
+      try {
+        const packageName = requireString(request.body.packageName, "packageName");
+        const packageFileName = requireString(request.body.packageFileName, "packageFileName");
+        const packageEntry = requireString(request.body.packageEntry, "packageEntry");
+        if (packageEntry !== "index.html") {
+          throw new Error("Uploaded package must provide index.html as the entry file");
+        }
+        if (!packageFileName.toLowerCase().endsWith(".zip")) {
+          throw new Error("Uploaded package must be a .zip file");
+        }
+
+        const projectId = `package-${Date.now()}`;
+        const project = runMockPipeline(optionalString(request.body.description) ?? packageName);
+        project.id = projectId;
+        project.title = packageName;
+        project.contentType = "uploaded_package";
+        project.editable = false;
+        project.shareable = true;
+        project.sourceLabel = "ZIP Package";
+
+        const publishRecord = createPublishRecord(project.id, project.version.id, project.title, {
+          visibility: "public",
+          baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173"
+        });
+        project.playUrl = publishRecord.playUrl;
+
+        await store.savePlayable({
+          project,
+          publishRecord,
+          feedback: []
+        });
+
+        return {
+          status: 201,
+          body: {
+            project,
+            publishRecord,
+            packageMeta: {
+              packageFileName,
+              packageEntry
+            }
+          }
+        };
+      } catch (error) {
+        return {
+          status: 400,
           body: { error: error instanceof Error ? error.message : String(error) }
         };
       }

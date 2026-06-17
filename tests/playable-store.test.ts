@@ -23,6 +23,9 @@ describe("playable json store", () => {
     await store.savePlayable({ project, publishRecord, feedback: [] });
     const loaded = await store.readPlayable(project.id, project.version.id);
 
+    expect(loaded?.project.contentType).toBe("ai_project");
+    expect(loaded?.project.editable).toBe(true);
+    expect(loaded?.project.shareable).toBe(true);
     expect(loaded?.project.gameConfig.title).toBe(project.gameConfig.title);
     expect(loaded?.publishRecord.publicUrl).toBe("https://wow-game.example/play/project-store-1/v1");
     expect([...writes.keys()][0].replace(/\\/g, "/")).toContain(
@@ -69,6 +72,36 @@ describe("playable json store", () => {
     expect(feedback.iterationSuggestion).toContain("下一版");
     expect(loaded?.feedback).toHaveLength(1);
     expect(loaded?.feedback[0].comment).toBe("可以分享给朋友试玩");
+  });
+
+  it("stores uploaded packages as read-only playable records", async () => {
+    const writes = new Map<string, string>();
+    const store = createPlayableStore({
+      dataDir: "data-test",
+      writeText: async (path, content) => {
+        writes.set(path, content);
+      },
+      readText: async (path) => writes.get(path) ?? null,
+      ensureDir: async () => undefined
+    });
+    const project = runMockPipeline("上传一个现成的小游戏用于商城试玩");
+    project.id = "package-store-1";
+    project.contentType = "uploaded_package";
+    project.editable = false;
+    project.shareable = true;
+    project.sourceLabel = "ZIP Package";
+    const publishRecord = createPublishRecord(project.id, project.version.id, project.title, {
+      baseUrl: "https://wow-game.example",
+      visibility: "public"
+    });
+
+    await store.savePlayable({ project, publishRecord, feedback: [] });
+    const loaded = await store.readPlayable(project.id, project.version.id);
+
+    expect(loaded?.project.contentType).toBe("uploaded_package");
+    expect(loaded?.project.editable).toBe(false);
+    expect(loaded?.project.shareable).toBe(true);
+    expect(loaded?.project.sourceLabel).toBe("ZIP Package");
   });
 });
 

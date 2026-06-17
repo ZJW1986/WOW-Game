@@ -22,14 +22,19 @@ export const messages = {
     },
     start: {
       create: "创建",
-      play: "试玩",
-      title: "从创意开始生成",
+      play: "PLAY",
+      title: "从创意开始生成游戏",
       subtitlePrefix: "描述你的游戏，或",
       subtitleAction: "选择一个模板",
       dialogAria: "创建新游戏",
       modeAria: "创建或试玩",
       engine: "引擎",
       upload: "上传文件",
+      uploadOptionsAria: "上传素材或游戏包",
+      uploadMaterials: "上传素材",
+      uploadMaterialsHint: "图片 / 音效 / BGM",
+      uploadPackage: "上传 ZIP 游戏包",
+      uploadPackageHint: "index.html 入口，只读上架",
       myProjects: "我的项目"
     },
     play: {
@@ -38,17 +43,18 @@ export const messages = {
       popular: "热门游戏",
       casual: "休闲游戏",
       advanced: "进阶游戏",
+      uploaded: "上传试玩",
       viewMore: "查看更多",
       plays: "游玩",
       likes: "喜欢"
     },
     projects: {
       title: "我的项目",
-      subtitle: "管理你生成过的游戏，随时重新编辑、复制副本或进入试玩。",
+      subtitle: "管理 AI 生成项目和上传试玩包，随时进入体验或继续迭代。",
       welcomeLabel: "欢迎语",
       shareProfile: "分享主页",
       tipsTitle: "开启 Tips",
-      tipsDescription: "允许喜欢你游戏的玩家打赏；第一阶段展示为站内模拟能力。",
+      tipsDescription: "允许喜欢你游戏的玩家支持你，当前为站内 MVP 模拟。",
       enableTips: "开启 Tips",
       filter: "筛选",
       sort: "排序",
@@ -67,14 +73,15 @@ export const messages = {
       edit: "编辑",
       duplicate: "复制副本",
       run: "运行",
-      delete: "删除"
+      delete: "删除",
+      readOnly: "只读",
+      experience: "体验"
     },
     agent: {
       pipelineLabel: "生成工作台",
       thinking: "AI 正在推演体验方案",
       readySuffix: "试玩方案",
-      intro:
-        "输入你的游戏想法后，我会先生成可执行方案。确认后进入本地生成流程，试玩展示在右侧，图片、音效、BGM 和特效统一进入资源库。",
+      intro: "输入你的游戏想法后，我会先生成可执行方案。确认后进入本地生成流程，试玩展示在右侧，图片、音效、BGM 和特效统一进入资源库。",
       actionHazards: "识别玩法边界",
       actionCheckpoints: "生成方案摘要",
       actionPickupCue: "准备资源任务",
@@ -111,14 +118,18 @@ export const messages = {
       addRequirement: "补充需求",
       approve: "生成体验",
       revisionTitle: "补充你的需求",
-      revisionPlaceholder:
-        "例如：敌人节奏更快、画面偏银白色、失败后给玩家一次护盾机会...",
+      revisionPlaceholder: "例如：敌人节奏更快、画面偏银白色、失败后给玩家一次护盾机会...",
       clear: "清空",
       resimulate: "重新推演",
       generatingTitle: "正在生成体验",
       generatingDetail: "试玩结果显示在右侧，资源细节进入资源库。",
       completeTitle: "体验已生成",
-      completeDetail: "请在右侧预览试玩，也可以切到资源库查看素材。"
+      completeDetail: "请在右侧预览试玩，也可以切到资源库查看素材。",
+      statusThinking: "推演中",
+      statusProposal: "待确认",
+      statusGenerating: "生成中",
+      statusComplete: "已生成",
+      statusRevision: "补充中"
     },
     prompt: {
       defaultIdea: "做一个霓虹飞船躲避陨石并收集星星的小游戏。",
@@ -142,7 +153,7 @@ export const messages = {
       description: "描述",
       mode: "生成方式",
       copyright: "版权状态",
-      folder: "Asset Hub",
+      folder: "资源库",
       upload: "上传",
       create: "生成",
       regenerate: "重新生成",
@@ -179,7 +190,7 @@ export const messages = {
     },
     start: {
       create: "Create",
-      play: "Play",
+      play: "PLAY",
       title: "Create from Scratch",
       subtitlePrefix: "Describe your game below, or",
       subtitleAction: "pick a template",
@@ -187,7 +198,12 @@ export const messages = {
       modeAria: "Create or play",
       engine: "Engine",
       upload: "Upload file",
-      myProjects: "My projects"
+      uploadOptionsAria: "Upload materials or game package",
+      uploadMaterials: "Upload assets",
+      uploadMaterialsHint: "Images / SFX / BGM",
+      uploadPackage: "Upload ZIP game",
+      uploadPackageHint: "index.html entry, read-only",
+      myProjects: "My Projects"
     },
     play: {
       search: "Search",
@@ -195,13 +211,14 @@ export const messages = {
       popular: "Popular games",
       casual: "Casual Games",
       advanced: "Advanced Games",
+      uploaded: "Uploaded playables",
       viewMore: "View more",
       plays: "plays",
       likes: "likes"
     },
     projects: {
       title: "My Projects",
-      subtitle: "Manage generated games, edit them again, duplicate builds, or run a playable version.",
+      subtitle: "Manage AI-generated projects and uploaded playable packs in one place.",
       welcomeLabel: "Welcome message",
       shareProfile: "Share profile",
       tipsTitle: "Enable Tips",
@@ -224,14 +241,15 @@ export const messages = {
       edit: "Edit",
       duplicate: "Duplicate",
       run: "Run",
-      delete: "Delete"
+      delete: "Delete",
+      readOnly: "Read only",
+      experience: "Play"
     },
     agent: {
       pipelineLabel: "generation workspace",
       thinking: "AI is shaping the play experience",
       readySuffix: "playable plan",
-      intro:
-        "Describe a game idea and I will turn it into an executable plan first. After approval, the local generation flow creates a playable preview on the right and keeps image, audio, BGM, and VFX assets in the hub.",
+      intro: "Describe a game idea and I will turn it into an executable plan first. After approval, the local generation flow creates a playable preview on the right and keeps image, audio, BGM, and VFX assets in the hub.",
       actionHazards: "Map gameplay boundaries",
       actionCheckpoints: "Create plan summary",
       actionPickupCue: "Prepare resource tasks",
@@ -274,11 +292,15 @@ export const messages = {
       generatingTitle: "Generating experience",
       generatingDetail: "The playable preview appears on the right and resources go to the hub.",
       completeTitle: "Experience generated",
-      completeDetail: "Play the preview on the right or inspect materials in the Asset Hub."
+      completeDetail: "Play the preview on the right or inspect materials in the Asset Hub.",
+      statusThinking: "Thinking",
+      statusProposal: "Awaiting approval",
+      statusGenerating: "Generating",
+      statusComplete: "Generated",
+      statusRevision: "Revising"
     },
     prompt: {
-      defaultIdea:
-        "Create a neon spaceship dodge game where the player avoids asteroids and collects stars.",
+      defaultIdea: "Create a neon spaceship dodge game where the player avoids asteroids and collects stars.",
       aria: "Add requirements for WOW Game Agent",
       placeholder: "Tell WOW Game what game you want to make...",
       followupPlaceholder: "Add requirements or edits. The AI will rerun the plan...",

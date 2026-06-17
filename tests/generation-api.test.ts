@@ -26,14 +26,14 @@ describe("generation api handler", () => {
         const content = prompt.includes("llm.classification")
           ? {
               templateFamily: "top_down",
-              reasons: ["视角和自由移动决定为俯视角玩法"],
+              reasons: ["top-down movement and collision are the dominant mechanics"],
               risks: [],
               unsupportedRequests: []
             }
           : prompt.includes("llm.gdd")
             ? {
                 concept: "星尘航线",
-                loop: ["开始", "移动", "躲避", "收集", "胜利"],
+                loop: ["开始", "移动", "闪避", "收集", "胜利"],
                 entities: ["飞船", "星星", "陨石"],
                 level: { width: 960, height: 540, collectibles: 6, hazards: 4, winScore: 6 },
                 numbers: { playerSpeed: 260 },
@@ -42,7 +42,7 @@ describe("generation api handler", () => {
             : {
                 templateFamily: "top_down",
                 title: "星尘航线",
-                pitch: "飞船躲避陨石并收集星星。",
+                pitch: "飞船闪避陨石并收集星星",
                 playerGoal: "收集 6 颗星星",
                 controls: ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"],
                 difficulty: "normal",
@@ -67,6 +67,9 @@ describe("generation api handler", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.project.gameConfig.title).toBe("星尘航线");
+    expect(response.body.project.contentType).toBe("ai_project");
+    expect(response.body.project.editable).toBe(true);
+    expect(response.body.project.shareable).toBe(true);
     expect(response.body.modelTasks.every((task: { status: string }) => task.status === "success")).toBe(true);
     expect(response.body.fallbacksUsed).toEqual([]);
   });
@@ -120,6 +123,9 @@ describe("generation api handler", () => {
     expect(generateResponse.status).toBe(200);
     expect(playResponse.status).toBe(200);
     expect(playResponse.body.project.id).toBe("project-api-persisted");
+    expect(playResponse.body.project.contentType).toBe("ai_project");
+    expect(playResponse.body.project.editable).toBe(true);
+    expect(playResponse.body.project.shareable).toBe(true);
     expect(playResponse.body.publishRecord.publicUrl).toBe(
       "https://wow-game.example/play/project-api-persisted/v1"
     );
@@ -161,5 +167,33 @@ describe("generation api handler", () => {
     expect(feedbackResponse.status).toBe(201);
     expect(feedbackResponse.body.feedback.iterationSuggestion).toContain("下一版");
     expect(playResponse.body.feedback).toHaveLength(1);
+  });
+
+  it("accepts uploaded package records as read-only playables", async () => {
+    const storeIO = memoryStore();
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        PUBLIC_BASE_URL: "https://wow-game.example"
+      },
+      storeIO
+    });
+
+    const uploadResponse = await handler({
+      method: "POST",
+      path: "/api/upload-package",
+      body: {
+        packageName: "Neon Drift",
+        packageFileName: "neon-drift.zip",
+        packageEntry: "index.html",
+        description: "上传一个只读小游戏用于商城试玩"
+      }
+    });
+
+    expect(uploadResponse.status).toBe(201);
+    expect(uploadResponse.body.project.contentType).toBe("uploaded_package");
+    expect(uploadResponse.body.project.editable).toBe(false);
+    expect(uploadResponse.body.project.shareable).toBe(true);
+    expect(uploadResponse.body.project.sourceLabel).toBe("ZIP Package");
   });
 });

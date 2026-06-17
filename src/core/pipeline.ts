@@ -75,6 +75,10 @@ export function runMockPipeline(idea: string): MockProject {
   return {
     id: "project-starlight-001",
     title,
+    contentType: "ai_project",
+    editable: true,
+    shareable: true,
+    sourceLabel: "AI Generated",
     version: {
       id: "v1",
       label: "v1 Mock playable",

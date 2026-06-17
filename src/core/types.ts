@@ -97,6 +97,10 @@ export interface GameVersion {
 export interface MockProject {
   id: string;
   title: string;
+  contentType: "ai_project" | "uploaded_package";
+  editable: boolean;
+  shareable: boolean;
+  sourceLabel: string;
   version: GameVersion;
   classification: Classification;
   artifacts: PipelineArtifact[];

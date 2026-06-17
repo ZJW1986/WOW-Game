@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   requestPlayableGeneration,
   requestPlayableProject,
-  submitPlayableFeedback
+  submitPlayableFeedback,
+  uploadPlayablePackage
 } from "../src/services/generationClient";
 
 describe("browser generation client", () => {
@@ -46,16 +47,23 @@ describe("browser generation client", () => {
   });
 
   it("loads persisted playable projects by project and version id", async () => {
-    const result = await requestPlayableProject(
-      "project-client-play",
-      "v1",
-      async (url) => {
-        expect(url).toBe("/api/play/project-client-play/v1");
-        return new Response(JSON.stringify({ project: { id: "project-client-play" } }), { status: 200 });
-      }
-    );
+    const result = await requestPlayableProject("project-client-play", "v1", async (url) => {
+      expect(url).toBe("/api/play/project-client-play/v1");
+      return new Response(
+        JSON.stringify({
+          project: {
+            id: "project-client-play",
+            contentType: "ai_project",
+            editable: true,
+            shareable: true
+          }
+        }),
+        { status: 200 }
+      );
+    });
 
     expect(result.project.id).toBe("project-client-play");
+    expect(result.project.contentType).toBe("ai_project");
   });
 
   it("submits playable feedback", async () => {
@@ -71,5 +79,39 @@ describe("browser generation client", () => {
     );
 
     expect(result.feedback.comment).toBe("好玩");
+  });
+
+  it("uploads a zip package for read-only play and share", async () => {
+    let requestBody = "";
+    const result = await uploadPlayablePackage(
+      {
+        packageName: "Neon Drift",
+        packageFileName: "neon-drift.zip",
+        packageEntry: "index.html",
+        description: "上传一个只读小游戏用于商城试玩"
+      },
+      async (url, init) => {
+        expect(url).toBe("/api/upload-package");
+        expect(init?.method).toBe("POST");
+        requestBody = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({
+            project: {
+              id: "package-client-1",
+              contentType: "uploaded_package",
+              editable: false,
+              shareable: true,
+              sourceLabel: "ZIP Package"
+            }
+          }),
+          { status: 201 }
+        );
+      }
+    );
+
+    expect(requestBody).toContain("neon-drift.zip");
+    expect(result.project.contentType).toBe("uploaded_package");
+    expect(result.project.editable).toBe(false);
+    expect(result.project.shareable).toBe(true);
   });
 });

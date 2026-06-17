@@ -10,6 +10,13 @@ export interface PlayableGenerationRequest {
   model: StartModelId;
 }
 
+export interface UploadPlayablePackageRequest {
+  packageName: string;
+  packageFileName: string;
+  packageEntry: string;
+  description?: string;
+}
+
 type BrowserFetcher = typeof fetch;
 
 export async function requestPlayableGeneration(
@@ -69,6 +76,24 @@ export async function submitPlayableFeedback(
   const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(`Feedback request failed: ${readError(payload, response)}`);
+  }
+  return payload;
+}
+
+export async function uploadPlayablePackage(
+  input: UploadPlayablePackageRequest,
+  fetcher: BrowserFetcher = fetch
+) {
+  const response = await fetcher("/api/upload-package", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Upload request failed: ${readError(payload, response)}`);
   }
   return payload;
 }
