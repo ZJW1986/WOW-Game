@@ -665,6 +665,25 @@ button {
   gap: 12px;
 }
 
+.project-switcher {
+  position: relative;
+}
+
+.brand-home-button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: transparent;
+}
+
+.brand-home-button:hover .brand-mark {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+
 .brand-mark {
   display: grid;
   width: 32px;
@@ -692,6 +711,63 @@ button {
   justify-content: space-between;
   padding: 0 12px;
   border: 1px solid #1d6f82;
+}
+
+.project-info-popover {
+  position: absolute;
+  top: 48px;
+  left: 46px;
+  z-index: 20;
+  width: min(360px, calc(100vw - 40px));
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  color: var(--text);
+  background:
+    linear-gradient(180deg, rgb(12 24 35 / 96%), rgb(4 9 14 / 98%)),
+    radial-gradient(circle at 18% 0%, rgb(51 217 255 / 16%), transparent 34%);
+  box-shadow: 0 22px 60px rgb(0 0 0 / 42%), 0 0 34px rgb(51 217 255 / 16%);
+}
+
+.project-info-popover div {
+  display: grid;
+  gap: 4px;
+}
+
+.project-info-popover span,
+.project-info-popover dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.project-info-popover strong {
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-info-popover p {
+  margin: 10px 0;
+  color: #c9dce2;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.project-info-popover dl {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 7px 10px;
+  margin: 0;
+}
+
+.project-info-popover dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #e8fbff;
+  font-size: 12px;
 }
 
 .ghost-button,
@@ -877,6 +953,58 @@ button {
   background: #ffb020;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.studio-chat-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.studio-chat-message {
+  display: grid;
+  gap: 6px;
+  width: fit-content;
+  max-width: 82%;
+  padding: 11px 13px;
+  border: 1px solid #167083;
+  border-radius: 8px;
+  background: rgb(10 32 42 / 88%);
+  box-shadow: 0 0 18px rgb(0 229 255 / 8%);
+}
+
+.studio-chat-message span {
+  color: #8fb6bf;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.studio-chat-message p {
+  margin: 0;
+  color: #e8fbff;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.studio-chat-message.user {
+  align-self: flex-end;
+  border-color: #ffb020;
+  color: #071018;
+  background: #ffb020;
+}
+
+.studio-chat-message.user span,
+.studio-chat-message.user p {
+  color: #071018;
+}
+
+.studio-chat-message.system {
+  align-self: center;
+  max-width: 92%;
+  border-style: dashed;
+  background: rgb(5 22 31 / 82%);
 }
 
 .thinking-card {

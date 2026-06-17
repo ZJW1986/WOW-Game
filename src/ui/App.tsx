@@ -46,6 +46,12 @@ import type {
 } from "../core/types";
 import { getMessages, type Locale } from "./i18n";
 import { PhaserPreview } from "./PhaserPreview";
+import {
+  buildGenerationIdea,
+  buildStudioChatMessages,
+  type StudioChatMessage,
+  type StudioFollowup
+} from "./studioChat";
 import { createMediaGateway } from "../services/mediaGateway";
 import {
   requestPlayableGeneration,
@@ -124,6 +130,19 @@ function getBrowserBaseUrl(): string {
   return window.location.origin;
 }
 
+function addFollowup(current: StudioFollowup[], content: string): StudioFollowup[] {
+  const trimmed = content.trim();
+  if (!trimmed) return current;
+  return [
+    ...current,
+    {
+      id: `followup-${Date.now()}-${current.length + 1}`,
+      content: trimmed,
+      createdAt: new Date().toISOString()
+    }
+  ];
+}
+
 export function App() {
   const [locale, setLocale] = useState<Locale>("zh-CN");
   const t = getMessages(locale);
@@ -144,13 +163,27 @@ export function App() {
   );
   const [creationPhase, setCreationPhase] = useState<CreationPhase>("thinking");
   const [revisionText, setRevisionText] = useState("");
+  const [followups, setFollowups] = useState<StudioFollowup[]>([]);
   const [generatedProject, setGeneratedProject] = useState<MockProject | null>(null);
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const fallbackProject = useMemo(() => runMockPipeline(idea), [idea]);
   const project = generatedProject ?? fallbackProject;
   const playRoute = getPlayRoute();
+
+  const submitFollowup = () => {
+    if (!revisionText.trim()) return;
+    const nextFollowups = addFollowup(followups, revisionText);
+    setFollowups(nextFollowups);
+    setSession(createConversationSession(buildGenerationIdea(idea, nextFollowups), {
+      preferredTemplate: activeDraft.templateFamily
+    }));
+    setRevisionText("");
+    setGeneratedProject(null);
+    setCreationPhase("thinking");
+  };
 
   useEffect(() => {
     if (page !== "studio" || creationPhase !== "thinking") return;
@@ -160,9 +193,10 @@ export function App() {
 
   const startResourceGeneration = async () => {
     setCreationPhase("generating");
+    const generationIdea = buildGenerationIdea(idea, followups);
     try {
       const result = (await requestPlayableGeneration({
-        idea,
+        idea: generationIdea,
         answers: session.answers,
         templateFamily: activeDraft.templateFamily,
         projectId: `project-${Date.now()}`,
@@ -175,7 +209,7 @@ export function App() {
       setActiveTab("preview");
     } catch {
       const fallback = await createGenerationService().generatePlayableVersion({
-        idea,
+        idea: generationIdea,
         answers: session.answers,
         templateFamily: activeDraft.templateFamily,
         projectId: "project-local-fallback",
@@ -198,6 +232,7 @@ export function App() {
     setGeneratedProject(nextProject ?? null);
     setGenerationResult(null);
     setRevisionText("");
+    setFollowups([]);
     setCreationPhase(nextProject ? "complete" : "thinking");
     setActiveTab("preview");
     setPage("studio");
@@ -277,13 +312,50 @@ export function App() {
     <main className="app-shell">
       <header className="chrome-bar">
         <div className="project-switcher">
-          <div className="brand-mark">W</div>
-          <button className="project-menu" title={t.brand.projectTitle}>
+          <button className="brand-home-button" onClick={() => setPage("create")} title={t.start.create}>
+            <span className="brand-mark">W</span>
+          </button>
+          <button
+            className="project-menu"
+            title={t.brand.projectTitle}
+            onClick={() => setProjectMenuOpen((value) => !value)}
+          >
             <span>{project.title}</span>
             <ChevronDown size={16} />
           </button>
+          {projectMenuOpen && (
+            <div className="project-info-popover">
+              <div>
+                <span>{t.brand.projectTitle}</span>
+                <strong>{project.title}</strong>
+              </div>
+              <p>{project.gameConfig.pitch}</p>
+              <dl>
+                <dt>{t.thinking.template}</dt>
+                <dd>{project.classification.templateFamily}</dd>
+                <dt>{t.thinking.goal}</dt>
+                <dd>{project.gameConfig.playerGoal}</dd>
+                <dt>{t.thinking.assets}</dt>
+                <dd>{project.assetPack.assets.length}</dd>
+                <dt>{t.preview.verification}</dt>
+                <dd>{project.qaReport.scores.buildHealth}%</dd>
+              </dl>
+            </div>
+          )}
         </div>
         <div className="chrome-actions">
+          <button className="ghost-button" onClick={() => setPage("create")}>
+            <Plus size={15} />
+            {t.start.create}
+          </button>
+          <button className="ghost-button" onClick={() => setPage("play")}>
+            <Gamepad2 size={15} />
+            {t.start.play}
+          </button>
+          <button className="ghost-button" onClick={() => setPage("projects")}>
+            <Wand2 size={15} />
+            {t.start.myProjects}
+          </button>
           <button
             className="locale-button"
             onClick={() => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN")}
@@ -306,8 +378,15 @@ export function App() {
         <aside className="agent-panel">
           <AgentHeader project={project} messages={t} />
           <div className="agent-scroll">
-            <AgentIntro project={project} messages={t} />
-            <UserPrompt text={idea} />
+            <StudioChatFlow
+              messages={buildStudioChatMessages({
+                idea,
+                followups,
+                project,
+                messages: t,
+                phase: creationPhase
+              })}
+            />
             <ThinkingPipelinePanel
               phase={creationPhase}
               project={project}
@@ -316,16 +395,7 @@ export function App() {
               onApprove={startResourceGeneration}
               onRequestRevision={() => setCreationPhase("revision")}
               onRevisionChange={setRevisionText}
-              onApplyRevision={() => {
-                const nextIdea = revisionText.trim() ? `${idea}\n补充需求：${revisionText.trim()}` : idea;
-                setIdea(nextIdea);
-                setSession(createConversationSession(nextIdea, {
-                  preferredTemplate: activeDraft.templateFamily
-                }));
-                setRevisionText("");
-                setGeneratedProject(null);
-                setCreationPhase("thinking");
-              }}
+              onApplyRevision={submitFollowup}
             />
           </div>
           <PromptDock
@@ -334,17 +404,7 @@ export function App() {
             canGenerate={creationPhase === "proposal" || creationPhase === "complete"}
             onGenerate={startResourceGeneration}
             onIdeaChange={setRevisionText}
-            onSubmitRevision={() => {
-              if (!revisionText.trim()) return;
-              const nextIdea = `${idea}\n补充需求：${revisionText.trim()}`;
-              setIdea(nextIdea);
-              setSession(createConversationSession(nextIdea, {
-                preferredTemplate: activeDraft.templateFamily
-              }));
-              setRevisionText("");
-              setGeneratedProject(null);
-              setCreationPhase("thinking");
-            }}
+            onSubmitRevision={submitFollowup}
           />
         </aside>
 
@@ -1076,6 +1136,19 @@ function AgentIntro({ project, messages }: { project: MockProject; messages: Ret
 
 function UserPrompt({ text }: { text: string }) {
   return <div className="user-prompt">{text}</div>;
+}
+
+function StudioChatFlow({ messages }: { messages: StudioChatMessage[] }) {
+  return (
+    <div className="studio-chat-flow" aria-label="AI 创作对话">
+      {messages.map((message) => (
+        <article key={message.id} className={`studio-chat-message ${message.role}`}>
+          <span>{message.meta}</span>
+          <p>{message.content}</p>
+        </article>
+      ))}
+    </div>
+  );
 }
 
 function ThinkingPipelinePanel({
