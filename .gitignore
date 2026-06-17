@@ -6,5 +6,6 @@ dev-server.err
 .env
 .env.local
 data/
+cloudflared*.exe
 Godot_v4.6.3-stable_win64.exe/
 UI参考图/

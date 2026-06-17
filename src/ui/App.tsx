@@ -22,7 +22,7 @@
   Zap
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createConversationSession } from "../core/conversation";
+import { answerDesignQuestion, createConversationSession } from "../core/conversation";
 import {
   getFeaturedGames,
   getGamesByCategory,
@@ -183,9 +183,24 @@ export function App() {
   const fallbackProject = useMemo(() => runMockPipeline(idea), [idea]);
   const project = generatedProject ?? fallbackProject;
   const playRoute = getPlayRoute();
+  const hasAnsweredGuidedQuestions = session.answers.length >= session.questions.length;
 
   const submitFollowup = () => {
     if (!revisionText.trim()) return;
+    const nextQuestion = session.questions.find(
+      (question) => !session.answers.some((answer) => answer.questionId === question.id)
+    );
+    if (nextQuestion) {
+      setSession(answerDesignQuestion(session, nextQuestion.id, revisionText.trim()));
+      setRevisionText("");
+      window.requestAnimationFrame(() => {
+        chatScrollRef.current?.scrollTo({
+          top: chatScrollRef.current.scrollHeight,
+          behavior: "smooth"
+        });
+      });
+      return;
+    }
     const nextFollowups = addFollowup(followups, revisionText);
     setFollowups(nextFollowups);
     setSession(createConversationSession(buildGenerationIdea(idea, nextFollowups), {
@@ -456,14 +471,15 @@ export function App() {
                 followups,
                 project,
                 messages: t,
-                phase: creationPhase
+                phase: creationPhase,
+                session
               })}
             />
           </div>
           <PromptDock
             messages={t}
             revisionText={revisionText}
-            canGenerate={creationPhase === "proposal" || creationPhase === "complete"}
+            canGenerate={hasAnsweredGuidedQuestions && (creationPhase === "proposal" || creationPhase === "complete")}
             onGenerate={startResourceGeneration}
             onIdeaChange={setRevisionText}
             onSubmitRevision={submitFollowup}

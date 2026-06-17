@@ -1,4 +1,4 @@
-import type { MockProject } from "../core/types";
+import type { ConversationSession, MockProject } from "../core/types";
 import type { getMessages } from "./i18n";
 
 export type StudioChatPhase = "thinking" | "proposal" | "revision" | "generating" | "complete";
@@ -39,13 +39,15 @@ export function buildStudioChatMessages({
   followups,
   project,
   messages,
-  phase
+  phase,
+  session
 }: {
   idea: string;
   followups: StudioFollowup[];
   project: MockProject;
   messages: ReturnType<typeof getMessages>;
   phase: StudioChatPhase;
+  session?: ConversationSession;
 }): StudioChatMessage[] {
   const splitIdea = splitIdeaTurns(idea);
   const normalizedFollowups =
@@ -71,6 +73,25 @@ export function buildStudioChatMessages({
       content: splitIdea.idea
     }
   ];
+
+  if (session) {
+    for (const question of session.questions) {
+      result.push({
+        id: `question-${question.id}`,
+        role: "assistant",
+        meta: question.label,
+        content: question.prompt
+      });
+      const answer = session.answers.find((item) => item.questionId === question.id);
+      if (!answer) break;
+      result.push({
+        id: `answer-${question.id}`,
+        role: "user",
+        meta: "回答",
+        content: answer.value
+      });
+    }
+  }
 
   for (const followup of normalizedFollowups) {
     result.push({

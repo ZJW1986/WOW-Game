@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runMockPipeline } from "../src/core/pipeline";
 import { getMessages } from "../src/ui/i18n";
+import { createConversationSession, answerDesignQuestion } from "../src/core/conversation";
 import { buildStudioChatMessages } from "../src/ui/studioChat";
 
 describe("studio chat message layout", () => {
@@ -64,5 +65,30 @@ describe("studio chat message layout", () => {
 
     expect(messages.map((message) => message.role)).toContain("user");
     expect(messages.some((message) => message.content.includes("让失败后能马上重开"))).toBe(true);
+  });
+
+  it("shows the current guided question and then the user's answer as chat turns", () => {
+    const project = runMockPipeline("做一个飞船躲避陨石并收集星星的小游戏");
+    const session = createConversationSession("做一个飞船躲避陨石并收集星星的小游戏");
+    const firstQuestion = session.questions[0];
+    const answered = answerDesignQuestion(session, firstQuestion.id, "收集 8 颗星星并到达传送门");
+    const messages = buildStudioChatMessages({
+      idea: session.idea,
+      project,
+      messages: getMessages("zh-CN"),
+      phase: "thinking",
+      followups: [],
+      session: answered
+    });
+
+    expect(messages.some((message) => message.role === "assistant" && message.content === firstQuestion.prompt)).toBe(
+      true
+    );
+    expect(messages.some((message) => message.role === "user" && message.content.includes("收集 8 颗星星"))).toBe(
+      true
+    );
+    expect(messages.some((message) => message.role === "assistant" && message.content === session.questions[1].prompt)).toBe(
+      true
+    );
   });
 });
