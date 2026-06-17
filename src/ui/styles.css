@@ -1515,10 +1515,9 @@ pre {
 
 @media (max-width: 1080px) {
   body {
-    overflow: auto;
+    overflow: hidden;
   }
 
-  .creator-shell,
   .preview-workspace,
   .asset-preview,
   .code-workspace,
@@ -1527,16 +1526,60 @@ pre {
   }
 
   .creator-shell {
-    height: auto;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 68px);
+    min-height: 0;
+    overflow: hidden;
   }
 
   .agent-panel {
-    min-height: 680px;
+    flex: 0 0 min(54vh, 560px);
+    min-height: 320px;
+    border-right: 0;
+    border-bottom: 1px solid #126174;
+  }
+
+  .agent-header {
+    min-height: 58px;
+    padding: 10px 14px;
+  }
+
+  .agent-scroll {
+    padding: 8px 10px 10px;
+  }
+
+  .prompt-dock {
+    padding: 8px 10px 10px;
+  }
+
+  .prompt-dock textarea {
+    height: 40px;
+  }
+
+  .stage-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .preview-workspace {
+    height: 100%;
+    padding: 12px;
+    overflow: auto;
+  }
+
+  .game-frame {
+    height: min(360px, calc(46vh - 110px));
+    min-height: 220px;
+  }
+
+  .verification-rail {
+    display: none;
   }
 
   .floating-status {
     position: static;
     width: fit-content;
-    margin: 0 46px 30px;
+    margin: 0;
   }
 }
