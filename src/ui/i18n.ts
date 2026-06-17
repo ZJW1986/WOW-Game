@@ -155,7 +155,59 @@ export const messages = {
       cookingEyebrow: "生成中",
       cookingTitle: "正在生成你的游戏",
       cookingSubtitle: "We're cooking...",
-      cookingDetail: "正在生成玩法配置、资源清单和可试玩预览。"
+      cookingDetail: "正在生成玩法配置、资源清单和可试玩预览。",
+      waitingEyebrow: "等待生成",
+      waitingTitle: "生成后才会出现可玩的游戏",
+      waitingDetail: "先完成左侧一问一答，然后点击生成游戏。这里会切换为开始界面、可操作角色、胜利/失败和重新开始流程。"
+    },
+    ideaDialog: {
+      eyebrow: "创意启动",
+      title: "完善你的游戏创意",
+      aria: "完善你的游戏创意",
+      close: "关闭对话",
+      optionHint: "选择后进入下一步设定",
+      readyPlaceholder: "信息已补齐，点击生成来构建可试玩预览...",
+      replyPlaceholder: "输入回答，或选择上方推荐选项...",
+      pickForMe: "帮我选择",
+      send: "发送",
+      generate: "生成游戏",
+      statusLoading: "AI 正在生成追问",
+      statusReady: "AI 追问已就绪",
+      statusFallback: "本地追问已就绪",
+      statusIdle: "DeepSeek v4 flash"
+    },
+    notices: {
+      fallbackTitle: "生成完成，部分任务已回退",
+      successTitle: "游戏已生成，可以试玩",
+      fallbackDetailPrefix: "已回退任务：",
+      fallbackDetailSuffix: "。预览仍可操作，后续可继续优化模型输出。",
+      publishedSuffix: " 已发布为 ",
+      errorTitle: "真实生成失败，已使用本地可玩版本兜底",
+      errorDetailSuffix: "。右侧预览仍可试玩，建议检查 DeepSeek 网络、余额或 JSON 输出。",
+      uploadedPackageSuffix: " 已加入游戏商城，可试玩和分享。"
+    },
+    playDetail: {
+      notFoundTitle: "游戏未找到",
+      notFoundDetail: "这个 Play 链接可能已经失效，或者当前服务没有对应版本。",
+      createNew: "创建一个新游戏",
+      loadingTitle: "正在加载游戏...",
+      loadingDetail: "正在读取本地发布版本。",
+      createYourGame: "创建你的游戏",
+      goal: "玩法目标",
+      controls: "操作方式",
+      shareLink: "分享链接",
+      rating: "评分",
+      feedback: "反馈",
+      defaultFeedback: "好玩",
+      submitFeedback: "提交反馈"
+    },
+    sharePanel: {
+      close: "关闭",
+      title: "分享试玩链接",
+      copied: "已复制",
+      copy: "复制链接",
+      native: "系统分享",
+      qrPayload: "二维码内容"
     },
     assets: {
       generatedAsset: "生成资源",
@@ -333,7 +385,59 @@ export const messages = {
       cookingEyebrow: "Generating",
       cookingTitle: "Generating your game",
       cookingSubtitle: "We're cooking...",
-      cookingDetail: "Creating gameplay config, asset manifest, and playable preview."
+      cookingDetail: "Creating gameplay config, asset manifest, and playable preview.",
+      waitingEyebrow: "Waiting for generation",
+      waitingTitle: "A playable game appears after generation",
+      waitingDetail: "Finish the guided Q&A, then click Generate game. This area will switch to a start screen, controllable character, win/lose states, and restart flow."
+    },
+    ideaDialog: {
+      eyebrow: "CREATIVE KICKOFF",
+      title: "Shape your game idea",
+      aria: "Shape your game idea",
+      close: "Close dialog",
+      optionHint: "Choose this to continue to the next setup step",
+      readyPlaceholder: "All set. Click generate to build your playable preview...",
+      replyPlaceholder: "Type a reply or choose an option above...",
+      pickForMe: "Pick for me",
+      send: "Send",
+      generate: "Generate game",
+      statusLoading: "AI is generating questions",
+      statusReady: "AI questions ready",
+      statusFallback: "Local questions ready",
+      statusIdle: "DeepSeek v4 flash"
+    },
+    notices: {
+      fallbackTitle: "Generated with some fallback tasks",
+      successTitle: "Game generated and ready to play",
+      fallbackDetailPrefix: "Fallback tasks: ",
+      fallbackDetailSuffix: ". The preview is still playable, and model output can be improved later.",
+      publishedSuffix: " published at ",
+      errorTitle: "Live generation failed, local playable fallback used",
+      errorDetailSuffix: ". The preview is still playable. Check DeepSeek network, balance, or JSON output.",
+      uploadedPackageSuffix: " was added to the game catalog for play and sharing."
+    },
+    playDetail: {
+      notFoundTitle: "Game not found",
+      notFoundDetail: "This Play link may be expired, or the current service does not have this version.",
+      createNew: "Create a new game",
+      loadingTitle: "Loading game...",
+      loadingDetail: "Reading the local published version.",
+      createYourGame: "Create your game",
+      goal: "Goal",
+      controls: "Controls",
+      shareLink: "Share link",
+      rating: "Rating",
+      feedback: "Feedback",
+      defaultFeedback: "Fun",
+      submitFeedback: "Submit feedback"
+    },
+    sharePanel: {
+      close: "Close",
+      title: "Share playable link",
+      copied: "Copied",
+      copy: "Copy link",
+      native: "System share",
+      qrPayload: "QR payload"
     },
     assets: {
       generatedAsset: "Generated asset",

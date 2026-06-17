@@ -163,11 +163,14 @@ function addFollowup(current: StudioFollowup[], content: string): StudioFollowup
   ];
 }
 
-function readGuidedQuestionStatus(status: GuidedQuestionStatus): string {
-  if (status === "loading") return "AI 正在生成追问";
-  if (status === "ready") return "AI 追问已就绪";
-  if (status === "fallback") return "本地追问已就绪";
-  return "DeepSeek v4 flash";
+function readGuidedQuestionStatus(
+  status: GuidedQuestionStatus,
+  text: ReturnType<typeof getMessages>["ideaDialog"]
+): string {
+  if (status === "loading") return text.statusLoading;
+  if (status === "ready") return text.statusReady;
+  if (status === "fallback") return text.statusFallback;
+  return text.statusIdle;
 }
 
 function readGenerationError(error: unknown): string {
@@ -322,11 +325,11 @@ export function App() {
       const fallbackTasks = result.fallbacksUsed ?? [];
       setGenerationNotice({
         tone: fallbackTasks.length > 0 ? "fallback" : "success",
-        title: fallbackTasks.length > 0 ? "生成完成，部分任务已回退" : "游戏已生成，可以试玩",
+        title: fallbackTasks.length > 0 ? t.notices.fallbackTitle : t.notices.successTitle,
         detail:
           fallbackTasks.length > 0
-            ? `已回退任务：${fallbackTasks.join(", ")}。预览仍可操作，后续可继续优化模型输出。`
-            : `${result.project.gameConfig.title} 已发布为 ${result.publishRecord.publicUrl}`
+            ? `${t.notices.fallbackDetailPrefix}${fallbackTasks.join(", ")}${t.notices.fallbackDetailSuffix}`
+            : `${result.project.gameConfig.title}${t.notices.publishedSuffix}${result.publishRecord.publicUrl}`
       });
       window.setTimeout(() => setGenerationNotice(null), 4200);
       playGenerationSuccessTone();
@@ -345,8 +348,8 @@ export function App() {
       setActiveTab("preview");
       setGenerationNotice({
         tone: "error",
-        title: "真实生成失败，已使用本地可玩版本兜底",
-        detail: `${readGenerationError(error)}。右侧预览仍可试玩，建议检查 DeepSeek 网络、余额或 JSON 输出。`
+        title: t.notices.errorTitle,
+        detail: `${readGenerationError(error)}${t.notices.errorDetailSuffix}`
       });
       window.setTimeout(() => setGenerationNotice(null), 5200);
       playGenerationSuccessTone();
@@ -461,6 +464,7 @@ export function App() {
       <PlayableDetailPage
         projectId={playRoute.projectId}
         versionId={playRoute.versionId}
+        messages={t}
         onCreate={() => {
           window.history.pushState({}, "", "/");
           setPage("create");
@@ -472,6 +476,7 @@ export function App() {
   if (page === "play") {
     return (
       <PlayPage
+        locale={locale}
         projects={projects}
         onCreate={() => setPage("create")}
         onProjects={() => setPage("projects")}
@@ -538,7 +543,7 @@ export function App() {
             description: `上传包：${file.name}`
           });
           addUploadedPackage(payload.project as MockProject);
-          setUploadedPackageMessage(`${file.name} 已加入游戏商城，可试玩和分享。`);
+          setUploadedPackageMessage(`${file.name}${t.notices.uploadedPackageSuffix}`);
           setPage("projects");
         }}
       />
@@ -549,7 +554,8 @@ export function App() {
     return (
       <IdeaDialogPage
         session={session}
-        statusLabel={readGuidedQuestionStatus(guidedQuestionStatus)}
+        statusLabel={readGuidedQuestionStatus(guidedQuestionStatus, t.ideaDialog)}
+        messages={t}
         draft={activeDraft}
         revisionText={revisionText}
         canGenerate={canGeneratePlayable}
@@ -646,7 +652,7 @@ export function App() {
           <PromptDock
             messages={t}
             revisionText={revisionText}
-            modelStatusLabel={readGuidedQuestionStatus(guidedQuestionStatus)}
+            modelStatusLabel={readGuidedQuestionStatus(guidedQuestionStatus, t.ideaDialog)}
             canGenerate={canGeneratePlayable}
             isGenerating={creationPhase === "cooking"}
             onGenerate={startResourceGeneration}
@@ -705,6 +711,7 @@ export function App() {
           project={project}
           publicUrl={generationResult?.publishRecord.publicUrl ?? `${getBrowserBaseUrl()}${project.playUrl}`}
           qrPayload={generationResult?.share.qrPayload ?? `WOW Game Share URL: ${getBrowserBaseUrl()}${project.playUrl}`}
+          messages={t}
           onClose={() => setShareOpen(false)}
         />
       )}
@@ -868,6 +875,7 @@ function StartPage({
 function IdeaDialogPage({
   session,
   statusLabel,
+  messages,
   draft,
   revisionText,
   canGenerate,
@@ -879,6 +887,7 @@ function IdeaDialogPage({
 }: {
   session: ConversationSession;
   statusLabel: string;
+  messages: ReturnType<typeof getMessages>;
   draft: StartGameDraft;
   revisionText: string;
   canGenerate: boolean;
@@ -901,13 +910,13 @@ function IdeaDialogPage({
 
   return (
     <main className="idea-dialog-shell">
-      <section className="idea-dialog-window" aria-label="Shape your game idea">
+      <section className="idea-dialog-window" aria-label={messages.ideaDialog.aria}>
         <header className="idea-dialog-header">
           <div>
-            <span>CREATIVE KICKOFF</span>
-            <h1>Shape your game idea</h1>
+            <span>{messages.ideaDialog.eyebrow}</span>
+            <h1>{messages.ideaDialog.title}</h1>
           </div>
-          <button className="idea-dialog-close" onClick={onClose} aria-label="Close dialog">
+          <button className="idea-dialog-close" onClick={onClose} aria-label={messages.ideaDialog.close}>
             <X size={24} />
           </button>
         </header>
@@ -942,7 +951,7 @@ function IdeaDialogPage({
                           >
                             <span>{index + 1}</span>
                             <strong>{option}</strong>
-                            <small>选择后进入下一步设定</small>
+                            <small>{messages.ideaDialog.optionHint}</small>
                           </button>
                         ))}
                       </div>
@@ -966,8 +975,8 @@ function IdeaDialogPage({
               }}
               placeholder={
                 canGenerate
-                  ? "All set. Click generate to build your playable preview..."
-                  : "Type a reply or choose an option above..."
+                  ? messages.ideaDialog.readyPlaceholder
+                  : messages.ideaDialog.replyPlaceholder
               }
             />
             <div className="idea-dialog-actions">
@@ -980,7 +989,7 @@ function IdeaDialogPage({
                   onRevisionTextChange("");
                 }}
               >
-                Pick for me
+                {messages.ideaDialog.pickForMe}
               </button>
               <button
                 className={canGenerate ? "idea-send-button generate" : "idea-send-button"}
@@ -988,7 +997,7 @@ function IdeaDialogPage({
                 onClick={canGenerate ? onGenerate : submitAnswer}
               >
                 {isGenerating ? <RefreshCcw size={18} /> : canGenerate ? <Wand2 size={18} /> : <Send size={18} />}
-                <span>{canGenerate ? "生成游戏" : "发送"}</span>
+                <span>{canGenerate ? messages.ideaDialog.generate : messages.ideaDialog.send}</span>
               </button>
             </div>
           </footer>
@@ -1001,10 +1010,12 @@ function IdeaDialogPage({
 function PlayableDetailPage({
   projectId,
   versionId,
+  messages,
   onCreate
 }: {
   projectId: string;
   versionId: string;
+  messages: ReturnType<typeof getMessages>;
   onCreate: () => void;
 }) {
   const [record, setRecord] = useState<{ project: MockProject; publishRecord: { publicUrl: string } } | null>(null);
@@ -1031,9 +1042,9 @@ function PlayableDetailPage({
     return (
       <main className="play-detail-shell">
         <section className="play-detail-empty">
-          <h1>游戏未找到</h1>
-          <p>这个 Play 链接可能已经失效，或者当前服务没有对应版本。</p>
-          <button onClick={onCreate}>创建一个新游戏</button>
+          <h1>{messages.playDetail.notFoundTitle}</h1>
+          <p>{messages.playDetail.notFoundDetail}</p>
+          <button onClick={onCreate}>{messages.playDetail.createNew}</button>
         </section>
       </main>
     );
@@ -1043,8 +1054,8 @@ function PlayableDetailPage({
     return (
       <main className="play-detail-shell">
         <section className="play-detail-empty">
-          <h1>正在加载游戏...</h1>
-          <p>正在读取本地发布版本。</p>
+          <h1>{messages.playDetail.loadingTitle}</h1>
+          <p>{messages.playDetail.loadingDetail}</p>
         </section>
       </main>
     );
@@ -1059,25 +1070,25 @@ function PlayableDetailPage({
           <h1>{project.title}</h1>
           <p>{project.gameConfig.pitch}</p>
         </div>
-        <button onClick={onCreate}>Create your game</button>
+        <button onClick={onCreate}>{messages.playDetail.createYourGame}</button>
       </header>
       <section className="play-detail-layout">
         <div className="play-detail-game">
           <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
         </div>
         <aside className="play-detail-side">
-          <h2>玩法目标</h2>
+          <h2>{messages.playDetail.goal}</h2>
           <p>{project.gameConfig.playerGoal}</p>
-          <h2>操作方式</h2>
+          <h2>{messages.playDetail.controls}</h2>
           <p>{project.gameConfig.controls.join(" / ")}</p>
-          <h2>分享链接</h2>
+          <h2>{messages.playDetail.shareLink}</h2>
           <code>{record.publishRecord.publicUrl}</code>
           <form
             onSubmit={(event) => {
               event.preventDefault();
               submitPlayableFeedback(projectId, versionId, {
                 rating,
-                comment: comment.trim() || "好玩",
+                comment: comment.trim() || messages.playDetail.defaultFeedback,
                 playerName: "guest"
               }).then((payload) => {
                 setFeedbackMessage(payload.feedback.iterationSuggestion);
@@ -1086,7 +1097,7 @@ function PlayableDetailPage({
             }}
           >
             <label>
-              评分
+              {messages.playDetail.rating}
               <input
                 type="number"
                 min={1}
@@ -1096,10 +1107,10 @@ function PlayableDetailPage({
               />
             </label>
             <label>
-              反馈
+              {messages.playDetail.feedback}
               <textarea value={comment} onChange={(event) => setComment(event.target.value)} />
             </label>
-            <button type="submit">提交反馈</button>
+            <button type="submit">{messages.playDetail.submitFeedback}</button>
           </form>
           {feedbackMessage && <p className="feedback-message">{feedbackMessage}</p>}
         </aside>
@@ -1112,11 +1123,13 @@ function SharePanel({
   project,
   publicUrl,
   qrPayload,
+  messages,
   onClose
 }: {
   project: MockProject;
   publicUrl: string;
   qrPayload: string;
+  messages: ReturnType<typeof getMessages>;
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -1138,16 +1151,16 @@ function SharePanel({
   return (
     <div className="share-overlay">
       <section className="share-panel">
-        <button className="share-close" onClick={onClose}>Close</button>
-        <h2>分享试玩链接</h2>
+        <button className="share-close" onClick={onClose}>{messages.sharePanel.close}</button>
+        <h2>{messages.sharePanel.title}</h2>
         <p>{project.title}</p>
         <input readOnly value={publicUrl} />
         <div className="share-actions">
-          <button onClick={copyLink}>{copied ? "已复制" : "复制链接"}</button>
-          <button onClick={shareNative}>系统分享</button>
+          <button onClick={copyLink}>{copied ? messages.sharePanel.copied : messages.sharePanel.copy}</button>
+          <button onClick={shareNative}>{messages.sharePanel.native}</button>
         </div>
         <div className="qr-box">
-          <span>QR Payload</span>
+          <span>{messages.sharePanel.qrPayload}</span>
           <code>{qrPayload}</code>
         </div>
       </section>
@@ -1156,12 +1169,14 @@ function SharePanel({
 }
 
 function PlayPage({
+  locale,
   projects,
   onCreate,
   onProjects,
   onPlayGame,
   onPlayProject
 }: {
+  locale: Locale;
   projects: ProjectRecord[];
   onCreate: () => void;
   onProjects: () => void;
@@ -1171,7 +1186,7 @@ function PlayPage({
   const [activeCategory, setActiveCategory] = useState<PlayCategory>("All");
   const games = activeCategory === "All" ? getFeaturedGames() : getGamesByCategory(activeCategory).slice(0, 12);
   const uploadedProjects = projects.filter((project) => project.contentType === "uploaded_package").slice(0, 6);
-  const t = getMessages("zh-CN");
+  const t = getMessages(locale);
 
   return (
     <main className="play-shell">
@@ -1239,14 +1254,15 @@ function PlayPage({
           </section>
         ) : null}
         <GameSection
-          title={activeCategory === "All" ? t.play.featured : `${activeCategory} games`}
+          title={activeCategory === "All" ? t.play.featured : activeCategory}
           games={games}
+          messages={t}
           onPlayGame={onPlayGame}
           compact
         />
-        <GameMosaic title={t.play.popular} games={getPopularGames()} onPlayGame={onPlayGame} />
-        <GameSection title={t.play.casual} games={getGamesByCategory("Casual").slice(0, 8)} onPlayGame={onPlayGame} />
-        <GameSection title={t.play.advanced} games={getGamesByCategory("Advanced").slice(0, 8)} onPlayGame={onPlayGame} />
+        <GameMosaic title={t.play.popular} games={getPopularGames()} messages={t} onPlayGame={onPlayGame} />
+        <GameSection title={t.play.casual} games={getGamesByCategory("Casual").slice(0, 8)} messages={t} onPlayGame={onPlayGame} />
+        <GameSection title={t.play.advanced} games={getGamesByCategory("Advanced").slice(0, 8)} messages={t} onPlayGame={onPlayGame} />
       </section>
     </main>
   );
@@ -1482,11 +1498,13 @@ function ProjectCard({
 function GameSection({
   title,
   games,
+  messages,
   compact = false,
   onPlayGame
 }: {
   title: string;
   games: PlayGame[];
+  messages: ReturnType<typeof getMessages>;
   compact?: boolean;
   onPlayGame: (game: PlayGame) => void;
 }) {
@@ -1494,11 +1512,11 @@ function GameSection({
     <section className="game-section">
       <div className="section-row">
         <h2>{title}</h2>
-        {!compact && <button>查看更多</button>}
+        {!compact && <button>{messages.play.viewMore}</button>}
       </div>
       <div className={compact ? "game-row compact" : "game-row"}>
         {games.map((game) => (
-          <GameCard key={game.id} game={game} onClick={() => onPlayGame(game)} />
+          <GameCard key={game.id} game={game} messages={messages} onClick={() => onPlayGame(game)} />
         ))}
       </div>
     </section>
@@ -1508,10 +1526,12 @@ function GameSection({
 function GameMosaic({
   title,
   games,
+  messages,
   onPlayGame
 }: {
   title: string;
   games: PlayGame[];
+  messages: ReturnType<typeof getMessages>;
   onPlayGame: (game: PlayGame) => void;
 }) {
   return (
@@ -1521,14 +1541,22 @@ function GameMosaic({
       </div>
       <div className="game-mosaic">
         {games.map((game) => (
-          <GameCard key={game.id} game={game} onClick={() => onPlayGame(game)} />
+          <GameCard key={game.id} game={game} messages={messages} onClick={() => onPlayGame(game)} />
         ))}
       </div>
     </section>
   );
 }
 
-function GameCard({ game, onClick }: { game: PlayGame; onClick: () => void }) {
+function GameCard({
+  game,
+  messages,
+  onClick
+}: {
+  game: PlayGame;
+  messages: ReturnType<typeof getMessages>;
+  onClick: () => void;
+}) {
   return (
     <button className={`game-card ${game.size ?? "normal"}`} onClick={onClick}>
       <div className="game-art" style={{ background: cardBackground(game.palette) }}>
@@ -1537,7 +1565,7 @@ function GameCard({ game, onClick }: { game: PlayGame; onClick: () => void }) {
       </div>
       <div className="game-card-overlay">
         <strong>{game.title}</strong>
-        <span>{formatCount(game.plays)} 游玩 / {game.likes} 喜欢</span>
+        <span>{formatCount(game.plays)} {messages.play.plays} / {game.likes} {messages.play.likes}</span>
       </div>
     </button>
   );
@@ -1694,9 +1722,9 @@ function PreviewWorkspace({
           <div className="preview-empty-icon">
             <Gamepad2 size={30} />
           </div>
-          <p>WAITING FOR GENERATION</p>
-          <h2>生成后才会出现可玩的游戏</h2>
-          <span>先完成左侧一问一答，然后点击生成游戏。这里会切换为开始界面、可操作角色、胜利/失败和重新开始流程。</span>
+          <p>{messages.preview.waitingEyebrow}</p>
+          <h2>{messages.preview.waitingTitle}</h2>
+          <span>{messages.preview.waitingDetail}</span>
         </div>
       )}
       {!isCooking && isPlayableReady && (
