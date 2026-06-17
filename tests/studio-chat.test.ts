@@ -45,4 +45,24 @@ describe("studio chat message layout", () => {
     expect(messages[1].content).toBe("做一个飞船躲避陨石并收集星星的小游戏");
     expect(messages[2].content).toBe("增加一个限时模式");
   });
+
+  it("keeps the follow-up as a visible user turn even before regeneration", () => {
+    const project = runMockPipeline("做一个飞船躲避陨石并收集星星的小游戏");
+    const messages = buildStudioChatMessages({
+      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      project,
+      messages: getMessages("zh-CN"),
+      phase: "revision",
+      followups: [
+        {
+          id: "followup-visible",
+          content: "让失败后能马上重开",
+          createdAt: "2026-06-17T00:00:00.000Z"
+        }
+      ]
+    });
+
+    expect(messages.map((message) => message.role)).toContain("user");
+    expect(messages.some((message) => message.content.includes("让失败后能马上重开"))).toBe(true);
+  });
 });

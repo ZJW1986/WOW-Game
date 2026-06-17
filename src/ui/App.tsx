@@ -1,4 +1,4 @@
-import {
+﻿import {
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -21,7 +21,7 @@ import {
   Wand2,
   Zap
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createConversationSession } from "../core/conversation";
 import {
   getFeaturedGames,
@@ -169,6 +169,7 @@ export function App() {
   const [shareOpen, setShareOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const fallbackProject = useMemo(() => runMockPipeline(idea), [idea]);
   const project = generatedProject ?? fallbackProject;
   const playRoute = getPlayRoute();
@@ -183,6 +184,12 @@ export function App() {
     setRevisionText("");
     setGeneratedProject(null);
     setCreationPhase("thinking");
+    window.requestAnimationFrame(() => {
+      chatScrollRef.current?.scrollTo({
+        top: chatScrollRef.current.scrollHeight,
+        behavior: "smooth"
+      });
+    });
   };
 
   useEffect(() => {
@@ -377,7 +384,14 @@ export function App() {
       <section className="creator-shell">
         <aside className="agent-panel">
           <AgentHeader project={project} messages={t} />
-          <div className="agent-scroll">
+          <ThinkingPipelinePanel
+            phase={creationPhase}
+            project={project}
+            messages={t}
+            onApprove={startResourceGeneration}
+            onRequestRevision={() => setCreationPhase("revision")}
+          />
+          <div className="agent-scroll" ref={chatScrollRef}>
             <StudioChatFlow
               messages={buildStudioChatMessages({
                 idea,
@@ -386,16 +400,6 @@ export function App() {
                 messages: t,
                 phase: creationPhase
               })}
-            />
-            <ThinkingPipelinePanel
-              phase={creationPhase}
-              project={project}
-              revisionText={revisionText}
-              messages={t}
-              onApprove={startResourceGeneration}
-              onRequestRevision={() => setCreationPhase("revision")}
-              onRevisionChange={setRevisionText}
-              onApplyRevision={submitFollowup}
             />
           </div>
           <PromptDock
@@ -1154,21 +1158,15 @@ function StudioChatFlow({ messages }: { messages: StudioChatMessage[] }) {
 function ThinkingPipelinePanel({
   phase,
   project,
-  revisionText,
   messages,
   onApprove,
-  onRequestRevision,
-  onRevisionChange,
-  onApplyRevision
+  onRequestRevision
 }: {
   phase: CreationPhase;
   project: MockProject;
-  revisionText: string;
   messages: ReturnType<typeof getMessages>;
   onApprove: () => void;
   onRequestRevision: () => void;
-  onRevisionChange: (value: string) => void;
-  onApplyRevision: () => void;
 }) {
   const steps = [
     { label: messages.thinking.steps.idea, detail: messages.thinking.details.idea },
@@ -1222,27 +1220,6 @@ function ThinkingPipelinePanel({
           onRequestRevision={onRequestRevision}
         />
       )}
-
-      {phase === "revision" && (
-        <div className="revision-box">
-          <strong>{messages.thinking.revisionTitle}</strong>
-          <textarea
-            value={revisionText}
-            onChange={(event) => onRevisionChange(event.target.value)}
-            placeholder={messages.thinking.revisionPlaceholder}
-          />
-          <div className="proposal-actions">
-            <button className="secondary-action" onClick={() => onRevisionChange("")}>
-              {messages.thinking.clear}
-            </button>
-            <button className="primary-action" onClick={onApplyRevision}>
-              {messages.thinking.resimulate}
-              <Send size={15} />
-            </button>
-          </div>
-        </div>
-      )}
-
       {phase === "generating" && (
         <div className="resource-pulse">
           <span />

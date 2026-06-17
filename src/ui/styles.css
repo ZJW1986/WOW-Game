@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   color: #edf8fb;
   background: #05080d;
   --bg-0: #05080d;
@@ -881,6 +881,7 @@ button {
   min-height: 0;
   max-height: 100%;
   padding: 10px 12px 14px;
+  scroll-behavior: smooth;
 }
 
 .agent-scroll::-webkit-scrollbar {
@@ -959,6 +960,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1;
   min-height: 0;
 }
 
@@ -1008,9 +1010,13 @@ button {
 }
 
 .thinking-card {
+  z-index: 1;
   display: grid;
-  gap: 14px;
-  padding: 14px;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin: 10px 12px 0;
+  padding: 10px;
+  overflow: visible;
 }
 
 .thinking-card-header {
@@ -1050,8 +1056,10 @@ button {
 }
 
 .thinking-stream {
-  display: grid;
-  gap: 9px;
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  overflow-y: visible;
   padding: 10px;
   border: 1px solid #143944;
   border-radius: 8px;
@@ -1062,9 +1070,10 @@ button {
 
 .thinking-step {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: 14px minmax(86px, 1fr);
+  gap: 7px;
   align-items: start;
+  flex: 1 0 118px;
   min-height: 36px;
   color: #6d8f98;
 }
@@ -2288,16 +2297,21 @@ pre {
 .thinking-card {
   gap: 10px;
   padding: 12px;
+  overflow: visible;
 }
 
 .thinking-stream {
+  display: flex;
   gap: 7px;
   padding: 9px;
+  overflow-x: auto;
+  overflow-y: visible;
   border-color: rgb(51 217 255 / 18%);
   background: rgb(3 11 17 / 72%);
 }
 
 .thinking-step {
+  flex: 1 0 112px;
   min-height: 31px;
 }
 
@@ -3023,7 +3037,7 @@ pre,
   }
 
   .agent-scroll {
-    overflow: hidden;
+    overflow-y: auto;
   }
 
   .agent-card {
@@ -3031,8 +3045,9 @@ pre,
   }
 
   .thinking-stream {
-    max-height: 126px;
-    overflow: hidden;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: visible;
   }
 
   .thinking-card {
