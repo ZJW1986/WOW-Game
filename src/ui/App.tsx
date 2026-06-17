@@ -4,7 +4,6 @@
   ChevronDown,
   Code2,
   Copy,
-  Cpu,
   Database,
   FileCode2,
   Gamepad2,
@@ -70,7 +69,7 @@ const rightTabs = [
 ] as const;
 
 type RightTab = (typeof rightTabs)[number]["id"];
-type CreationPhase = "thinking" | "proposal" | "revision" | "generating" | "complete";
+type CreationPhase = "chatting" | "ready_to_generate" | "revision" | "cooking" | "ready" | "failed";
 type AppPage = "create" | "play" | "projects" | "studio";
 type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
 type GuidedQuestionStatus = "idle" | "loading" | "ready" | "fallback";
@@ -163,9 +162,9 @@ function addFollowup(current: StudioFollowup[], content: string): StudioFollowup
 }
 
 function readGuidedQuestionStatus(status: GuidedQuestionStatus): string {
-  if (status === "loading") return "DeepSeek 正在生成追问";
-  if (status === "ready") return "DeepSeek 追问已就绪";
-  if (status === "fallback") return "已使用本地追问兜底";
+  if (status === "loading") return "AI 正在生成追问";
+  if (status === "ready") return "AI 追问已就绪";
+  if (status === "fallback") return "本地追问已就绪";
   return "DeepSeek v4 flash";
 }
 
@@ -217,7 +216,7 @@ export function App() {
   const [activeDraft, setActiveDraft] = useState<StartGameDraft>(() =>
     createStartGameDraft({ idea: t.prompt.defaultIdea })
   );
-  const [creationPhase, setCreationPhase] = useState<CreationPhase>("thinking");
+  const [creationPhase, setCreationPhase] = useState<CreationPhase>("chatting");
   const [revisionText, setRevisionText] = useState("");
   const [followups, setFollowups] = useState<StudioFollowup[]>([]);
   const [generatedProject, setGeneratedProject] = useState<MockProject | null>(null);
@@ -233,6 +232,9 @@ export function App() {
   const project = generatedProject ?? fallbackProject;
   const playRoute = getPlayRoute();
   const hasAnsweredGuidedQuestions = session.answers.length >= session.questions.length;
+  const canGeneratePlayable =
+    hasAnsweredGuidedQuestions &&
+    (creationPhase === "ready_to_generate" || creationPhase === "revision" || creationPhase === "ready");
 
   const submitFollowup = () => {
     if (!revisionText.trim()) return;
@@ -253,13 +255,26 @@ export function App() {
     const nextFollowups = addFollowup(followups, revisionText);
     setFollowups(nextFollowups);
     const nextIdea = buildGenerationIdea(idea, nextFollowups);
-    setSession(createConversationSession(nextIdea, {
-      preferredTemplate: activeDraft.templateFamily
+    setIdea(nextIdea);
+    setSession((current) => ({
+      ...current,
+      idea: nextIdea,
+      turns: [
+        ...current.turns,
+        {
+          id: `user-followup-${Date.now()}`,
+          role: "user",
+          stage: current.stage,
+          content: revisionText.trim(),
+          createdAt: new Date().toISOString()
+        }
+      ]
     }));
-    loadGuidedQuestions(nextIdea, activeDraft.templateFamily, activeDraft.model);
     setRevisionText("");
     setGeneratedProject(null);
-    setCreationPhase("thinking");
+    setGenerationResult(null);
+    setGenerationNotice(null);
+    setCreationPhase("revision");
     window.requestAnimationFrame(() => {
       chatScrollRef.current?.scrollTo({
         top: chatScrollRef.current.scrollHeight,
@@ -269,18 +284,17 @@ export function App() {
   };
 
   useEffect(() => {
-    if (page !== "studio" || creationPhase !== "thinking") return;
-    const timer = window.setTimeout(() => setCreationPhase("proposal"), 2600);
-    return () => window.clearTimeout(timer);
-  }, [creationPhase, page, idea]);
+    if (page !== "studio" || creationPhase !== "chatting" || !hasAnsweredGuidedQuestions) return;
+    setCreationPhase("ready_to_generate");
+  }, [creationPhase, hasAnsweredGuidedQuestions, page]);
 
   const startResourceGeneration = async () => {
-    setCreationPhase("generating");
+    setCreationPhase("cooking");
     setActiveTab("preview");
     setGenerationNotice({
       tone: "working",
-      title: "正在生成可试玩版本",
-      detail: "DeepSeek 正在生成分类、GDD 和 game-config，随后会装配 Phaser 预览。"
+      title: t.preview.cookingTitle,
+      detail: t.preview.cookingDetail
     });
     const generationIdea = buildGenerationIdea(idea, followups);
     try {
@@ -294,7 +308,7 @@ export function App() {
       })) as GenerationResult;
       setGenerationResult(result);
       setGeneratedProject(result.project);
-      setCreationPhase("complete");
+      setCreationPhase("ready");
       setActiveTab("preview");
       const fallbackTasks = result.fallbacksUsed ?? [];
       setGenerationNotice({
@@ -305,6 +319,7 @@ export function App() {
             ? `已回退任务：${fallbackTasks.join(", ")}。预览仍可操作，后续可继续优化模型输出。`
             : `${result.project.gameConfig.title} 已发布为 ${result.publishRecord.publicUrl}`
       });
+      window.setTimeout(() => setGenerationNotice(null), 4200);
       playGenerationSuccessTone();
     } catch (error) {
       const fallback = await createGenerationService().generatePlayableVersion({
@@ -317,13 +332,14 @@ export function App() {
       });
       setGenerationResult(fallback);
       setGeneratedProject(fallback.project);
-      setCreationPhase("complete");
+      setCreationPhase("ready");
       setActiveTab("preview");
       setGenerationNotice({
         tone: "error",
         title: "真实生成失败，已使用本地可玩版本兜底",
         detail: `${readGenerationError(error)}。右侧预览仍可试玩，建议检查 DeepSeek 网络、余额或 JSON 输出。`
       });
+      window.setTimeout(() => setGenerationNotice(null), 5200);
       playGenerationSuccessTone();
     }
   };
@@ -367,7 +383,7 @@ export function App() {
     setGenerationNotice(null);
     setRevisionText("");
     setFollowups([]);
-    setCreationPhase(nextProject ? "complete" : "thinking");
+    setCreationPhase(nextProject ? "ready" : "chatting");
     setActiveTab("preview");
     setPage("studio");
     if (!nextProject) {
@@ -562,14 +578,6 @@ export function App() {
       <section className="creator-shell">
         <aside className="agent-panel">
           <AgentHeader project={project} messages={t} />
-          <ThinkingPipelinePanel
-            phase={creationPhase}
-            project={project}
-            messages={t}
-            notice={generationNotice}
-            onApprove={startResourceGeneration}
-            onRequestRevision={() => setCreationPhase("revision")}
-          />
           <div className="agent-scroll" ref={chatScrollRef}>
             <StudioChatFlow
               messages={buildStudioChatMessages({
@@ -586,12 +594,8 @@ export function App() {
             messages={t}
             revisionText={revisionText}
             modelStatusLabel={readGuidedQuestionStatus(guidedQuestionStatus)}
-            canGenerate={
-              hasAnsweredGuidedQuestions &&
-              creationPhase !== "thinking" &&
-              creationPhase !== "generating"
-            }
-            isGenerating={creationPhase === "generating"}
+            canGenerate={canGeneratePlayable}
+            isGenerating={creationPhase === "cooking"}
             onGenerate={startResourceGeneration}
             onIdeaChange={setRevisionText}
             onSubmitRevision={submitFollowup}
@@ -634,7 +638,7 @@ export function App() {
 
           <div className="stage-content">
             {activeTab === "preview" && (
-              <PreviewWorkspace project={project} messages={t} notice={generationNotice} />
+              <PreviewWorkspace project={project} messages={t} phase={creationPhase} notice={generationNotice} />
             )}
             {activeTab === "assets" && (
               <AssetWorkspace key={`${project.id}-${project.version.id}`} project={project} messages={t} />
@@ -1411,166 +1415,6 @@ function StudioChatFlow({ messages }: { messages: StudioChatMessage[] }) {
   );
 }
 
-function ThinkingPipelinePanel({
-  phase,
-  project,
-  messages,
-  notice,
-  onApprove,
-  onRequestRevision
-}: {
-  phase: CreationPhase;
-  project: MockProject;
-  messages: ReturnType<typeof getMessages>;
-  notice: GenerationNotice | null;
-  onApprove: () => void;
-  onRequestRevision: () => void;
-}) {
-  const steps = [
-    { label: messages.thinking.steps.idea, detail: messages.thinking.details.idea },
-    { label: messages.thinking.steps.physics, detail: project.classification.templateFamily },
-    { label: messages.thinking.steps.gdd, detail: messages.thinking.details.gdd },
-    { label: messages.thinking.steps.assets, detail: messages.thinking.details.assets },
-    { label: messages.thinking.steps.ready, detail: messages.thinking.details.ready }
-  ];
-  const activeIndex =
-    phase === "thinking" ? 3 : phase === "proposal" || phase === "revision" ? 5 : 6;
-
-  return (
-    <article className={`chat-card thinking-card ${phase}`}>
-      <div className="thinking-card-header">
-        <div className="thinking-core">
-          <Cpu size={18} />
-          <span />
-        </div>
-        <div>
-          <p className="thought-line">{messages.thinking.eyebrow}</p>
-          <h3>{messages.thinking.title}</h3>
-        </div>
-        <span className={`thinking-phase-pill ${phase}`}>
-          {phase === "thinking" && messages.thinking.statusThinking}
-          {phase === "proposal" && messages.thinking.statusProposal}
-          {phase === "generating" && messages.thinking.statusGenerating}
-          {phase === "complete" && messages.thinking.statusComplete}
-          {phase === "revision" && messages.thinking.statusRevision}
-        </span>
-      </div>
-
-      <div className="thinking-activity" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
-
-      <div className="thinking-stream">
-        {steps.map((step, index) => (
-          <div
-            key={step.label}
-            className={
-              index < activeIndex
-                ? "thinking-step complete"
-                : index === activeIndex
-                  ? "thinking-step active"
-                  : "thinking-step"
-            }
-          >
-            <span className="step-node" />
-            <div>
-              <strong>{step.label}</strong>
-              <small>{step.detail}</small>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {phase === "proposal" && (
-        <ProposalSummary
-          project={project}
-          messages={messages}
-          onApprove={onApprove}
-          onRequestRevision={onRequestRevision}
-        />
-      )}
-      {phase === "generating" && (
-        <div className="resource-pulse">
-          <span />
-          <div>
-            <strong>{messages.thinking.generatingTitle}</strong>
-            <small>{messages.thinking.generatingDetail}</small>
-          </div>
-        </div>
-      )}
-
-      {phase === "complete" && (
-        <div className="resource-pulse complete">
-          <CheckCircle2 size={18} />
-          <div>
-            <strong>{messages.thinking.completeTitle}</strong>
-            <small>{messages.thinking.completeDetail}</small>
-          </div>
-        </div>
-      )}
-
-      {notice && (
-        <div className={`generation-notice ${notice.tone}`}>
-          {notice.tone === "success" || notice.tone === "fallback" ? (
-            <Sparkles size={18} />
-          ) : notice.tone === "working" ? (
-            <Cpu size={18} />
-          ) : (
-            <RefreshCcw size={18} />
-          )}
-          <div>
-            <strong>{notice.title}</strong>
-            <small>{notice.detail}</small>
-          </div>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function ProposalSummary({
-  project,
-  messages,
-  onApprove,
-  onRequestRevision
-}: {
-  project: MockProject;
-  messages: ReturnType<typeof getMessages>;
-  onApprove: () => void;
-  onRequestRevision: () => void;
-}) {
-  return (
-    <div className="proposal-summary">
-      <div className="proposal-headline">
-        <strong>{project.gameConfig.title}</strong>
-        <span>{project.classification.templateFamily}</span>
-      </div>
-      <div className="proposal-grid">
-        <span>{messages.thinking.template}</span>
-        <strong>{project.classification.templateFamily}</strong>
-        <span>{messages.thinking.goal}</span>
-        <strong>{project.gameConfig.playerGoal}</strong>
-        <span>{messages.thinking.controls}</span>
-        <strong>{project.gameConfig.controls.join(" / ")}</strong>
-        <span>{messages.thinking.assets}</span>
-        <strong>{project.assetPack.assets.length} items</strong>
-      </div>
-      <p>{project.gameConfig.pitch}</p>
-      <div className="proposal-actions">
-        <button className="secondary-action" onClick={onRequestRevision}>
-          {messages.thinking.addRequirement}
-        </button>
-        <button className="primary-action" onClick={onApprove}>
-          {messages.thinking.approve}
-          <Send size={15} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function PromptDock({
   messages,
   revisionText,
@@ -1626,15 +1470,30 @@ function PromptDock({
 function PreviewWorkspace({
   project,
   messages,
+  phase,
   notice
 }: {
   project: MockProject;
   messages: ReturnType<typeof getMessages>;
+  phase: CreationPhase;
   notice: GenerationNotice | null;
 }) {
+  const isCooking = phase === "cooking";
   return (
     <div className="preview-workspace">
-      {notice && notice.tone !== "working" && (
+      {isCooking ? (
+        <div className="cooking-state" role="status" aria-live="polite">
+          <div className="cooking-orbit">
+            <span />
+            <span />
+            <span />
+          </div>
+          <p>{messages.preview.cookingEyebrow}</p>
+          <h2>{messages.preview.cookingTitle}</h2>
+          <strong>{messages.preview.cookingSubtitle}</strong>
+          <small>{messages.preview.cookingDetail}</small>
+        </div>
+      ) : notice && notice.tone !== "working" && (
         <div className={`preview-result-banner ${notice.tone}`}>
           <Sparkles size={18} />
           <div>
@@ -1643,14 +1502,20 @@ function PreviewWorkspace({
           </div>
         </div>
       )}
-      <div className="preview-canvas-shell">
-        <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
-      </div>
-      <div className="floating-status">
-        <CheckCircle2 size={16} />
-        <span>{messages.preview.generated}</span>
-      </div>
-      <VerificationRail project={project} messages={messages} />
+      {!isCooking && (
+        <>
+          <div className="preview-canvas-shell">
+            <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
+          </div>
+          {phase !== "ready" && (
+            <div className="floating-status">
+              <CheckCircle2 size={16} />
+              <span>{messages.preview.generated}</span>
+            </div>
+          )}
+          <VerificationRail project={project} messages={messages} />
+        </>
+      )}
     </div>
   );
 }

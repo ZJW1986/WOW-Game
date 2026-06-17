@@ -9,6 +9,11 @@ describe("ui i18n messages", () => {
     expect(getMessages("zh-CN").projects.title).toBe("我的项目");
   });
 
+  it("includes cooking copy for the preview generation state", () => {
+    expect(getMessages("zh-CN").preview.cookingTitle).toBe("正在生成你的游戏");
+    expect(getMessages("zh-CN").preview.cookingSubtitle).toBe("We're cooking...");
+  });
+
   it("keeps an English locale available for future language switching", () => {
     expect(supportedLocales).toEqual(["zh-CN", "en-US"]);
     expect(getMessages("en-US").tabs.assets).toBe("Asset Hub");

@@ -1,7 +1,7 @@
 import type { ConversationSession, MockProject } from "../core/types";
 import type { getMessages } from "./i18n";
 
-export type StudioChatPhase = "thinking" | "proposal" | "revision" | "generating" | "complete";
+export type StudioChatPhase = "chatting" | "ready_to_generate" | "revision" | "cooking" | "ready" | "failed";
 
 export interface StudioFollowup {
   id: string;
@@ -102,11 +102,23 @@ export function buildStudioChatMessages({
     });
   }
 
-  if (phase !== "thinking") {
+  if (phase === "ready_to_generate") {
+    result.push({
+      id: "assistant-ready-to-generate",
+      role: "assistant",
+      meta: messages.chat.readyMeta,
+      content: [
+        "我已经可以开始生成首版游戏。",
+        `${messages.thinking.goal}: ${project.gameConfig.playerGoal}`,
+        `${messages.thinking.controls}: ${project.gameConfig.controls.join(" / ")}`,
+        `${messages.thinking.assets}: ${project.assetPack.assets.length} items`
+      ].join("\n")
+    });
+  } else if (phase !== "chatting") {
     result.push({
       id: `assistant-${phase}`,
       role: "assistant",
-      meta: phase === "complete" ? messages.thinking.completeTitle : messages.thinking.title,
+      meta: phase === "ready" ? messages.thinking.completeTitle : messages.thinking.title,
       content: [
         `${project.title} ${messages.agent.readySuffix}`,
         `${messages.thinking.goal}: ${project.gameConfig.playerGoal}`,

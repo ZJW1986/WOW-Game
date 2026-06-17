@@ -78,10 +78,10 @@ export const messages = {
       experience: "体验"
     },
     agent: {
-      pipelineLabel: "生成工作台",
-      thinking: "AI 正在推演体验方案",
-      readySuffix: "试玩方案",
-      intro: "输入你的游戏想法后，我会先生成可执行方案。确认后进入本地生成流程，试玩展示在右侧，图片、音效、BGM 和特效统一进入资源库。",
+      pipelineLabel: "AI 对话",
+      thinking: "AI 正在确认玩法方向",
+      readySuffix: "首版方案",
+      intro: "我会先和你确认玩法、目标、操作方式和失败条件。信息足够后，生成游戏按钮会亮起。",
       actionHazards: "识别玩法边界",
       actionCheckpoints: "生成方案摘要",
       actionPickupCue: "准备资源任务",
@@ -94,9 +94,15 @@ export const messages = {
       suggestion: "发布试玩后，可根据玩家反馈生成下一版优化建议。",
       continue: "继续"
     },
+    chat: {
+      readyMeta: "可以生成",
+      userIdeaMeta: "创意需求",
+      answerMeta: "你的回答",
+      followupMeta: "补充需求"
+    },
     thinking: {
-      eyebrow: "深度思考",
-      title: "把创意转成可试玩方案",
+      eyebrow: "对话确认",
+      title: "确认首版游戏方向",
       steps: {
         idea: "理解创意",
         physics: "玩法分类",
@@ -116,28 +122,28 @@ export const messages = {
       controls: "操作",
       assets: "资源",
       addRequirement: "补充需求",
-      approve: "生成体验",
+      approve: "生成游戏",
       revisionTitle: "补充你的需求",
       revisionPlaceholder: "例如：敌人节奏更快、画面偏银白色、失败后给玩家一次护盾机会...",
       clear: "清空",
       resimulate: "重新推演",
-      generatingTitle: "正在生成体验",
-      generatingDetail: "试玩结果显示在右侧，资源细节进入资源库。",
-      completeTitle: "体验已生成",
-      completeDetail: "请在右侧预览试玩，也可以切到资源库查看素材。",
-      statusThinking: "推演中",
-      statusProposal: "待确认",
+      generatingTitle: "正在生成游戏",
+      generatingDetail: "生成完成后会在右侧出现可操作的首版游戏。",
+      completeTitle: "首版游戏已生成",
+      completeDetail: "请在右侧预览试玩，也可以继续补充需求迭代。",
+      statusThinking: "确认中",
+      statusProposal: "可生成",
       statusGenerating: "生成中",
-      statusComplete: "已生成",
+      statusComplete: "可试玩",
       statusRevision: "补充中"
     },
     prompt: {
       defaultIdea: "做一个霓虹飞船躲避陨石并收集星星的小游戏。",
       aria: "给 WOW Game 智能体补充需求",
       placeholder: "告诉 WOW Game 你想做什么游戏...",
-      followupPlaceholder: "补充需求或修改意见，发送后 AI 会重新推演方案...",
-      sendFollowup: "发送补充",
-      generateNext: "生成体验",
+      followupPlaceholder: "输入回答或补充新需求...",
+      sendFollowup: "提交",
+      generateNext: "生成游戏",
       localEngine: "本地体验引擎"
     },
     preview: {
@@ -145,7 +151,11 @@ export const messages = {
       verification: "体验状态",
       build: "构建",
       visual: "视觉",
-      intent: "意图"
+      intent: "意图",
+      cookingEyebrow: "生成中",
+      cookingTitle: "正在生成你的游戏",
+      cookingSubtitle: "We're cooking...",
+      cookingDetail: "正在生成玩法配置、资源清单和可试玩预览。"
     },
     assets: {
       generatedAsset: "生成资源",
@@ -246,10 +256,10 @@ export const messages = {
       experience: "Play"
     },
     agent: {
-      pipelineLabel: "generation workspace",
-      thinking: "AI is shaping the play experience",
-      readySuffix: "playable plan",
-      intro: "Describe a game idea and I will turn it into an executable plan first. After approval, the local generation flow creates a playable preview on the right and keeps image, audio, BGM, and VFX assets in the hub.",
+      pipelineLabel: "AI chat",
+      thinking: "AI is confirming gameplay direction",
+      readySuffix: "first playable plan",
+      intro: "I will confirm gameplay, goals, controls, and failure rules with you first. When enough details are ready, the generate button lights up.",
       actionHazards: "Map gameplay boundaries",
       actionCheckpoints: "Create plan summary",
       actionPickupCue: "Prepare resource tasks",
@@ -262,9 +272,15 @@ export const messages = {
       suggestion: "After publishing, use player feedback to produce the next optimization pass.",
       continue: "Continue"
     },
+    chat: {
+      readyMeta: "Ready",
+      userIdeaMeta: "Game brief",
+      answerMeta: "Your answer",
+      followupMeta: "Follow-up"
+    },
     thinking: {
-      eyebrow: "Deep reasoning",
-      title: "Turn an idea into a playable plan",
+      eyebrow: "Conversation",
+      title: "Confirm first playable direction",
       steps: {
         idea: "Understand intent",
         physics: "Classify play",
@@ -284,28 +300,28 @@ export const messages = {
       controls: "Controls",
       assets: "Assets",
       addRequirement: "Add requirement",
-      approve: "Generate experience",
+      approve: "Generate game",
       revisionTitle: "Add your requirement",
       revisionPlaceholder: "Example: faster enemies, silver-white art direction, one shield after failure...",
       clear: "Clear",
       resimulate: "Rerun reasoning",
-      generatingTitle: "Generating experience",
-      generatingDetail: "The playable preview appears on the right and resources go to the hub.",
-      completeTitle: "Experience generated",
-      completeDetail: "Play the preview on the right or inspect materials in the Asset Hub.",
-      statusThinking: "Thinking",
-      statusProposal: "Awaiting approval",
-      statusGenerating: "Generating",
-      statusComplete: "Generated",
+      generatingTitle: "Generating game",
+      generatingDetail: "A playable first version will appear on the right when ready.",
+      completeTitle: "First playable generated",
+      completeDetail: "Play the preview on the right or add more requirements to iterate.",
+      statusThinking: "Chatting",
+      statusProposal: "Ready",
+      statusGenerating: "Cooking",
+      statusComplete: "Playable",
       statusRevision: "Revising"
     },
     prompt: {
       defaultIdea: "Create a neon spaceship dodge game where the player avoids asteroids and collects stars.",
       aria: "Add requirements for WOW Game Agent",
       placeholder: "Tell WOW Game what game you want to make...",
-      followupPlaceholder: "Add requirements or edits. The AI will rerun the plan...",
-      sendFollowup: "Send",
-      generateNext: "Generate experience",
+      followupPlaceholder: "Type an answer or add a new requirement...",
+      sendFollowup: "Submit",
+      generateNext: "Generate game",
       localEngine: "Local Experience Engine"
     },
     preview: {
@@ -313,7 +329,11 @@ export const messages = {
       verification: "Experience status",
       build: "Build",
       visual: "Visual",
-      intent: "Intent"
+      intent: "Intent",
+      cookingEyebrow: "Generating",
+      cookingTitle: "Generating your game",
+      cookingSubtitle: "We're cooking...",
+      cookingDetail: "Creating gameplay config, asset manifest, and playable preview."
     },
     assets: {
       generatedAsset: "Generated asset",

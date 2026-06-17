@@ -11,7 +11,7 @@ describe("studio chat message layout", () => {
       idea: "做一个飞船躲避陨石并收集星星的小游戏",
       project,
       messages: getMessages("zh-CN"),
-      phase: "proposal",
+      phase: "ready_to_generate",
       followups: [
         {
           id: "followup-1",
@@ -39,7 +39,7 @@ describe("studio chat message layout", () => {
       idea: "做一个飞船躲避陨石并收集星星的小游戏\n补充需求：增加一个限时模式",
       project,
       messages: getMessages("zh-CN"),
-      phase: "proposal",
+      phase: "ready_to_generate",
       followups: []
     });
 
@@ -76,7 +76,7 @@ describe("studio chat message layout", () => {
       idea: session.idea,
       project,
       messages: getMessages("zh-CN"),
-      phase: "thinking",
+      phase: "chatting",
       followups: [],
       session: answered
     });
@@ -90,5 +90,25 @@ describe("studio chat message layout", () => {
     expect(messages.some((message) => message.role === "assistant" && message.content === session.questions[1].prompt)).toBe(
       true
     );
+  });
+
+  it("announces readiness when all guided questions are answered", () => {
+    const project = runMockPipeline("生成一个飞机小游戏");
+    const session = createConversationSession("生成一个飞机小游戏");
+    const answered = session.questions.reduce(
+      (current, question) => answerDesignQuestion(current, question.id, question.defaultAnswer),
+      session
+    );
+    const messages = buildStudioChatMessages({
+      idea: session.idea,
+      project,
+      messages: getMessages("zh-CN"),
+      phase: "ready_to_generate",
+      followups: [],
+      session: answered
+    });
+
+    expect(messages.at(-1)?.content).toContain("可以开始生成首版游戏");
+    expect(messages.at(-1)?.content).toContain(project.gameConfig.playerGoal);
   });
 });
