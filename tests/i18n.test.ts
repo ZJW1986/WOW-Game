@@ -21,7 +21,7 @@ describe("ui i18n messages", () => {
 
   it("includes cooking copy for the preview generation state", () => {
     expect(getMessages("zh-CN").preview.cookingTitle).toBe("正在生成你的游戏");
-    expect(getMessages("zh-CN").preview.cookingSubtitle).toBe("We're cooking...");
+    expect(getMessages("zh-CN").preview.cookingSubtitle).toBe("正在烹制中...");
   });
 
   it("keeps all visible locale copy free from mojibake", () => {

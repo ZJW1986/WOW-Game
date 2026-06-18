@@ -154,7 +154,7 @@ export const messages = {
       intent: "意图",
       cookingEyebrow: "生成中",
       cookingTitle: "正在生成你的游戏",
-      cookingSubtitle: "We're cooking...",
+      cookingSubtitle: "正在烹制中...",
       cookingDetail: "正在生成玩法配置、资源清单和可试玩预览。",
       waitingEyebrow: "等待生成",
       waitingTitle: "生成后才会出现可玩的游戏",

@@ -55,7 +55,7 @@ export function buildIdeaDialogModel(session: ConversationSession): IdeaDialogMo
   turns.push({
     id: "ready",
     role: "assistant",
-    content: "信息已经补齐。点击生成后，我会进入游戏生成预览界面。"
+    content: "信息已经补齐，可以开始生成首版游戏。"
   });
 
   return {

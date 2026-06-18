@@ -43,6 +43,7 @@ import type {
   ConversationSession,
   MockProject,
   PipelineArtifact,
+  ReferencePackageSummary,
   TemplateFamily
 } from "../core/types";
 import { getMessages, type Locale } from "./i18n";
@@ -230,6 +231,7 @@ export function App() {
   const [guidedQuestionStatus, setGuidedQuestionStatus] = useState<GuidedQuestionStatus>("idle");
   const [generationNotice, setGenerationNotice] = useState<GenerationNotice | null>(null);
   const [uploadedPackageMessage, setUploadedPackageMessage] = useState("");
+  const [referencePackage, setReferencePackage] = useState<ReferencePackageSummary | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
@@ -317,7 +319,9 @@ export function App() {
         templateFamily: activeDraft.templateFamily,
         projectId: `project-${Date.now()}`,
         baseUrl: getBrowserBaseUrl(),
-        model: "deepseek-v4-flash"
+        model: "deepseek-v4-flash",
+        referencePackageId: referencePackage?.projectId,
+        referenceVersionId: referencePackage?.versionId
       })) as GenerationResult;
       setGenerationResult(result);
       setGeneratedProject(result.project);
@@ -496,14 +500,20 @@ export function App() {
         onWelcomeNameChange={setWelcomeName}
         onCreate={() => setPage("create")}
         onPlay={() => setPage("play")}
-        onEdit={(record) => openStudio(record.idea, record.templateFamily, record.project)}
+        onEdit={(record) =>
+          record.contentType === "uploaded_package"
+            ? openProjectPlay(record)
+            : openStudio(record.idea, record.templateFamily, record.project)
+        }
         onRun={(record) =>
-          record.editable
+          record.contentType === "uploaded_package"
+            ? openProjectPlay(record)
+            : record.editable
             ? openStudio(record.idea, record.templateFamily, record.project)
             : openProjectPlay(record)
         }
         onDuplicate={(record) => {
-          if (!record.editable) return;
+          if (!record.editable || record.contentType === "uploaded_package") return;
           setProjects((current) => [
             {
               ...record,
@@ -532,21 +542,30 @@ export function App() {
         onPlay={() => setPage("play")}
         onProjects={() => setPage("projects")}
         uploadMessage={uploadedPackageMessage}
+        referencePackage={referencePackage}
+        onRemoveReferencePackage={() => {
+          setReferencePackage(null);
+          setUploadedPackageMessage("");
+        }}
         onCreate={() => {
           const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
           openIdeaDialog(nextIdea, startDraft.templateFamily);
         }}
         onUploadPackage={async (file) => {
-          const payload = await uploadPlayablePackage({
-            packageName: file.name.replace(/\.zip$/i, ""),
-            packageFileName: file.name,
-            packageBase64: await readFileAsBase64(file),
-            baseUrl: getBrowserBaseUrl(),
-            description: `上传包：${file.name}`
-          });
-          addUploadedPackage(payload.project as MockProject);
-          setUploadedPackageMessage(`${file.name}${t.notices.uploadedPackageSuffix}`);
-          setPage("projects");
+          setUploadedPackageMessage(`正在解析 ${file.name}...`);
+          try {
+            const payload = await uploadPlayablePackage({
+              packageName: file.name.replace(/\.zip$/i, ""),
+              packageFileName: file.name,
+              packageBase64: await readFileAsBase64(file),
+              baseUrl: getBrowserBaseUrl(),
+              description: `上传包：${file.name}`
+            });
+            setReferencePackage(createReferencePackageSummary(payload));
+            setUploadedPackageMessage(`${file.name} 已解析为参考案例，可输入你的创意生成新游戏。`);
+          } catch (error) {
+            setUploadedPackageMessage(`上传失败：${readGenerationError(error)}`);
+          }
         }}
       />
     );
@@ -741,6 +760,32 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
+function createReferencePackageSummary(payload: Record<string, any>): ReferencePackageSummary {
+  const packageManifest = payload.packageManifest ?? {};
+  const assetIndex = payload.assetIndex ?? {};
+  const runtimeEntry = payload.runtimeEntry ?? {};
+  const healthReport = payload.healthReport ?? {};
+  const aiEditPlan = payload.aiEditPlan ?? {};
+  return {
+    projectId: payload.project?.id ?? packageManifest.projectId,
+    versionId: payload.project?.version?.id ?? packageManifest.versionId ?? "v1",
+    packageName: packageManifest.packageName ?? payload.project?.title ?? "参考游戏",
+    packageFileName: packageManifest.packageFileName ?? "",
+    fileCount: packageManifest.fileCount ?? 0,
+    totalSize: packageManifest.totalSize ?? 0,
+    healthStatus: healthReport.status ?? "warning",
+    entry: runtimeEntry.entry ?? "index.html",
+    scripts: runtimeEntry.scripts ?? [],
+    styles: runtimeEntry.styles ?? [],
+    images: assetIndex.images ?? [],
+    audio: assetIndex.audio ?? [],
+    fonts: assetIndex.fonts ?? [],
+    data: assetIndex.data ?? [],
+    suggestedEdits: aiEditPlan.suggestedEdits ?? [],
+    risks: [...(healthReport.errors ?? []), ...(healthReport.warnings ?? [])]
+  };
+}
+
 function StartPage({
   draft,
   locale,
@@ -750,6 +795,8 @@ function StartPage({
   onProjects,
   onCreate,
   onUploadPackage,
+  referencePackage,
+  onRemoveReferencePackage,
   uploadMessage
 }: {
   draft: StartGameDraft;
@@ -760,6 +807,8 @@ function StartPage({
   onProjects: () => void;
   onCreate: () => void;
   onUploadPackage: (file: File) => Promise<void>;
+  referencePackage: ReferencePackageSummary | null;
+  onRemoveReferencePackage: () => void;
   uploadMessage: string;
 }) {
   const canCreate = draft.idea.trim().length > 0;
@@ -880,6 +929,19 @@ function StartPage({
                 {draft.uploadedFileNames.slice(0, 3).map((fileName) => (
                   <span key={fileName}>{fileName}</span>
                 ))}
+              </div>
+            ) : null}
+            {referencePackage ? (
+              <div className="reference-package-card">
+                <div>
+                  <strong>{referencePackage.packageName}</strong>
+                  <span>
+                    {referencePackage.fileCount} files / 图片 {referencePackage.images.length} / 音频 {referencePackage.audio.length} / {referencePackage.healthStatus}
+                  </span>
+                </div>
+                <button type="button" onClick={onRemoveReferencePackage}>
+                  移除参考
+                </button>
               </div>
             ) : null}
             {uploadMessage ? <p className="upload-message">{uploadMessage}</p> : null}
@@ -1219,7 +1281,8 @@ function UploadedPackagePreview({
       className="uploaded-package-frame"
       title={`${title} uploaded playable`}
       src={packageRecord.runtimeEntry.entryUrl}
-      sandbox="allow-scripts allow-same-origin allow-pointer-lock"
+      sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-forms allow-modals allow-popups"
+      allow="autoplay; fullscreen; gamepad"
     />
   );
 }
@@ -1877,12 +1940,23 @@ function AssetWorkspace({
   const [query, setQuery] = useState("");
   const [selectedKey, setSelectedKey] = useState(project.assetPack.assets[0]?.assetKey ?? "");
   const mediaGateway = useMemo(() => createMediaGateway(), []);
+  useEffect(() => {
+    setAssets(project.assetPack.assets);
+    setSelectedKey(project.assetPack.assets[0]?.assetKey ?? "");
+    setQuery("");
+  }, [project.id, project.version.id, project.assetPack.assets]);
   const readyCount = assets.filter((asset) => asset.status !== "missing" && asset.status !== "failed").length;
   const selectedAsset = assets.find((asset) => asset.assetKey === selectedKey) ?? assets[0];
-  const visibleAssets = assets.filter((asset) => {
-    const text = `${asset.assetKey} ${asset.type} ${asset.purpose} ${asset.status}`.toLowerCase();
-    return text.includes(query.toLowerCase());
-  });
+  const visibleAssets = prioritizeAssets(
+    assets.filter((asset) => {
+      const text = `${asset.assetKey} ${asset.type} ${asset.purpose} ${asset.status} ${asset.source} ${asset.provider}`.toLowerCase();
+      return text.includes(query.toLowerCase());
+    })
+  );
+  const primaryAssets = assets.filter((asset) => isPrimaryAssetKey(asset.assetKey));
+  const agnesImageCount = assets.filter((asset) => asset.type === "image" && asset.provider === "agnes").length;
+  const imageAssetCount = assets.filter((asset) => asset.type === "image").length;
+  const referencePackage = readReferencePackageArtifact(project);
 
   const updateAsset = (nextAsset: AssetRequirement) => {
     setAssets((current) => {
@@ -1980,6 +2054,18 @@ function AssetWorkspace({
         <strong>{readyCount}/{assets.length} {messages.assets.ready}</strong>
         <span>asset-pack.json / project {project.id} / version {project.version.id}</span>
       </div>
+      <div className="asset-primary-strip">
+        <span>Primary assets</span>
+        {primaryAssets.map((asset) => (
+          <button key={asset.assetKey} onClick={() => setSelectedKey(asset.assetKey)}>
+            <strong>{asset.assetKey}</strong>
+            <em>{asset.provider}</em>
+          </button>
+        ))}
+        {imageAssetCount > 0 && agnesImageCount === 0 && (
+          <small>Images are using the built-in library fallback, not Agnes.</small>
+        )}
+      </div>
 
       <div className="asset-browser-layout">
         <div className="asset-grid-board">
@@ -1998,7 +2084,42 @@ function AssetWorkspace({
         </div>
         {selectedAsset && <AssetInspector asset={selectedAsset} messages={messages} />}
       </div>
+      {referencePackage ? <ReferenceAssetPanel referencePackage={referencePackage} /> : null}
     </div>
+  );
+}
+
+function readReferencePackageArtifact(project: MockProject): ReferencePackageSummary | null {
+  const artifact = project.artifacts.find((item) => item.fileName === "reference-package.json");
+  return artifact?.content ? (artifact.content as ReferencePackageSummary) : null;
+}
+
+function ReferenceAssetPanel({ referencePackage }: { referencePackage: ReferencePackageSummary }) {
+  const files = [
+    ...referencePackage.images.map((file) => ({ ...file, group: "图片" })),
+    ...referencePackage.audio.map((file) => ({ ...file, group: "音频" })),
+    ...referencePackage.fonts.map((file) => ({ ...file, group: "字体" })),
+    ...referencePackage.data.map((file) => ({ ...file, group: "数据" }))
+  ];
+  return (
+    <section className="reference-asset-panel">
+      <div>
+        <span>参考案例资源</span>
+        <strong>{referencePackage.packageName}</strong>
+        <small>
+          {referencePackage.fileCount} files / {referencePackage.healthStatus}
+        </small>
+      </div>
+      <div className="reference-asset-list">
+        {files.slice(0, 24).map((file) => (
+          <div className="reference-asset-row" key={`${file.group}-${file.path}`}>
+            <span>{file.group}</span>
+            <strong>{file.path}</strong>
+            <em>{Math.ceil(file.size / 1024)} KB</em>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -2037,6 +2158,34 @@ function AssetInspector({ asset, messages }: { asset: AssetRequirement; messages
       </div>
       {asset.error && <p className="asset-error">{asset.error}</p>}
     </aside>
+  );
+}
+
+function prioritizeAssets(assets: AssetRequirement[]): AssetRequirement[] {
+  return [...assets].sort((left, right) => {
+    const leftRank = assetPriority(left.assetKey);
+    const rightRank = assetPriority(right.assetKey);
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.assetKey.localeCompare(right.assetKey);
+  });
+}
+
+function assetPriority(assetKey: string): number {
+  if (assetKey === "player.ship" || assetKey.startsWith("player.")) return 0;
+  if (assetKey === "world.background" || assetKey.startsWith("world.")) return 1;
+  if (assetKey === "cover.main") return 2;
+  if (assetKey.startsWith("item.")) return 3;
+  if (assetKey.startsWith("hazard.")) return 4;
+  return 10;
+}
+
+function isPrimaryAssetKey(assetKey: string): boolean {
+  return (
+    assetKey === "player.ship" ||
+    assetKey === "world.background" ||
+    assetKey === "cover.main" ||
+    assetKey === "item.collectible" ||
+    assetKey.startsWith("hazard.")
   );
 }
 
@@ -2090,6 +2239,10 @@ function AssetTile({
       </div>
       <strong>{asset.assetKey}</strong>
       <span>{asset.type} / {asset.status}</span>
+      <div className="asset-source-row">
+        <small>{asset.source}</small>
+        <small>{asset.provider}</small>
+      </div>
       <div className="asset-tile-actions">
         <button
           onClick={(event) => {

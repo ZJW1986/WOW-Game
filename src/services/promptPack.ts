@@ -61,6 +61,8 @@ export function createPromptForTask(
     "Return strict JSON only. Do not wrap the response in markdown fences.",
     "Do not generate Phaser lifecycle code, scene registration code, asset loader code, or engine setup.",
     "Only produce the requested standard artifact for the configured template pipeline.",
+    "If referencePackageSummary is present, use it only as gameplay, pacing, and asset-style reference.",
+    "Do not modify uploaded ZIP files, do not copy source code, and do not invent asset keys from the reference package.",
     "",
     taskInstruction[taskType],
     "",
