@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { getMessages, supportedLocales } from "../src/ui/i18n";
+import { getMessages, messages, supportedLocales } from "../src/ui/i18n";
+import { containsMojibake } from "./mojibake";
+
+function flatten(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(flatten);
+  if (value && typeof value === "object") {
+    return Object.values(value).flatMap(flatten);
+  }
+  return [];
+}
 
 describe("ui i18n messages", () => {
   it("uses Chinese as the default product language", () => {
@@ -12,6 +22,12 @@ describe("ui i18n messages", () => {
   it("includes cooking copy for the preview generation state", () => {
     expect(getMessages("zh-CN").preview.cookingTitle).toBe("正在生成你的游戏");
     expect(getMessages("zh-CN").preview.cookingSubtitle).toBe("We're cooking...");
+  });
+
+  it("keeps all visible locale copy free from mojibake", () => {
+    const visibleText = flatten(messages).join("\n");
+
+    expect(containsMojibake(visibleText)).toBe(false);
   });
 
   it("keeps an English locale available for future language switching", () => {

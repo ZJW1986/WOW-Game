@@ -4,6 +4,7 @@ import { runMockPipeline } from "../src/core/pipeline";
 import { createStartGameDraft } from "../src/core/start";
 import { createDeepSeekExecutor } from "../src/services/deepSeekExecutor";
 import { createGenerationService } from "../src/services/generationService";
+import { containsMojibake } from "./mojibake";
 
 describe("fast playable generation experience", () => {
   it("starts a guided session from the create draft without skipping questions", () => {
@@ -33,7 +34,7 @@ describe("fast playable generation experience", () => {
               message: {
                 content: JSON.stringify({
                   templateFamily: "top_down",
-                  reasons: ["飞船躲避陨石是俯视角移动与碰撞"],
+                  reasons: ["飞船躲避陨石是俯视角移动与碰撞玩法"],
                   risks: [],
                   unsupportedRequests: []
                 })
@@ -69,7 +70,7 @@ describe("fast playable generation experience", () => {
           };
         } else if (prompt.includes("llm.gdd")) {
           content = {
-            concept: "跳动森林",
+            concept: "跃动森林",
             loop: ["开始", "移动", "跳跃", "收集", "抵达终点"],
             entities: ["玩家", "金币", "尖刺", "终点旗"],
             level: { width: 960, height: 540, collectibles: 6, hazards: 3, winScore: 6 },
@@ -79,7 +80,7 @@ describe("fast playable generation experience", () => {
         } else {
           content = {
             templateFamily: "platformer",
-            title: "跳动森林",
+            title: "跃动森林",
             pitch: "横版跳跃收集金币",
             playerGoal: "收集 6 枚金币并抵达终点",
             controls: ["ArrowLeft", "ArrowRight", "Space"],
@@ -102,7 +103,7 @@ describe("fast playable generation experience", () => {
     });
 
     expect(result.project.classification.templateFamily).toBe("platformer");
-    expect(result.project.gameConfig.title).toBe("跳动森林");
+    expect(result.project.gameConfig.title).toBe("跃动森林");
     expect(result.modelTasks.map((task) => task.taskType)).toEqual([
       "llm.classification",
       "llm.gdd",
@@ -226,11 +227,7 @@ describe("fast playable generation experience", () => {
             ? {
                 concept: "星尘航线",
                 loop: "开始, 移动, 躲避, 收集, 胜利",
-                entities: [
-                  { name: "飞船" },
-                  { name: "星星" },
-                  { name: "陨石" }
-                ],
+                entities: [{ name: "飞船" }, { name: "星星" }, { name: "陨石" }],
                 level: "960x540, 6 collectibles, 4 hazards",
                 numbers: { speed: 260 },
                 implementationRoute: "使用 top_down 模板和配置驱动关卡。"
@@ -298,6 +295,6 @@ describe("fast playable generation experience", () => {
       ...project.artifacts.map((artifact) => String(artifact.content))
     ].join(" ");
 
-    expect(visibleText).not.toMatch(/[涓鍋绋鏄鐢棰璧浠骞妯淇鈻鈾乺乽乴乪乶乮]/);
+    expect(containsMojibake(visibleText)).toBe(false);
   });
 });

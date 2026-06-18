@@ -153,7 +153,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       trackFallback(classificationTask, fallbacksUsed);
 
       const fallbackGdd = extractArtifactContent(mockProject, "gdd.json");
-
+      const parsedFallbackGdd = gddSchema.parse(fallbackGdd);
       const gddTask = await gateway.runModelTask({
         taskType: "llm.gdd",
         provider,
@@ -164,8 +164,8 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           classification: classificationTask.output
         }),
         schema: gddSchema,
-        preprocess: (raw) => normalizeGdd(raw, gddSchema.parse(fallbackGdd)),
-        fallback: gddSchema.parse(fallbackGdd)
+        preprocess: (raw) => normalizeGdd(raw, parsedFallbackGdd),
+        fallback: parsedFallbackGdd
       });
       modelTasks.push(gddTask);
       trackFallback(gddTask, fallbacksUsed);
@@ -411,7 +411,7 @@ function normalizeDifficulty(value: unknown, fallback: GameConfig["difficulty"])
   const text = normalizeString(value, "").toLowerCase();
   if (text.includes("简单") || text.includes("easy")) return "easy";
   if (text.includes("困难") || text.includes("hard")) return "hard";
-  if (text.includes("中") || text.includes("normal") || text.includes("medium")) return "normal";
+  if (text.includes("中等") || text.includes("normal") || text.includes("medium")) return "normal";
   return fallback;
 }
 

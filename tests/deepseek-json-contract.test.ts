@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDeepSeekExecutor } from "../src/services/deepSeekExecutor";
 import { createPromptForTask } from "../src/services/promptPack";
+import { containsMojibake } from "./mojibake";
 
 describe("DeepSeek JSON contract", () => {
   it("uses readable strict JSON prompts for core LLM artifacts", () => {
@@ -24,7 +25,7 @@ describe("DeepSeek JSON contract", () => {
     expect(gddPrompt).toContain('"implementationRoute"');
     expect(configPrompt).toContain('"referencedAssetKeys"');
     expect(configPrompt).toContain("asset-pack");
-    expect(`${classificationPrompt}\n${gddPrompt}\n${configPrompt}`).not.toMatch(/[浣犳槸鏍囩敓]/);
+    expect(containsMojibake(`${classificationPrompt}\n${gddPrompt}\n${configPrompt}`)).toBe(false);
   });
 
   it("accepts fenced JSON content returned by the chat model", async () => {

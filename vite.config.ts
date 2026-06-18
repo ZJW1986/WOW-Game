@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { createGenerationApiHandler } from "./src/services/generationApi";
+import { createDemoServerConfig } from "./src/services/demoServerConfig";
 
 export default defineConfig(({ mode }) => {
   const nodeProcess = globalThis as {
@@ -18,11 +19,7 @@ export default defineConfig(({ mode }) => {
   };
 
   return {
-    server: {
-      allowedHosts: [
-        "generators-correct-min-powerpoint.trycloudflare.com"
-      ]
-    },
+    server: createDemoServerConfig(),
     plugins: [
       react(),
       {

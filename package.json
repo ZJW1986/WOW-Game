@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "dev:auto": "vite --host 0.0.0.0",
+    "dev:demo": "vite --host 0.0.0.0 --port 5175 --strictPort",
     "dev:fixed": "vite --host 0.0.0.0 --port 5173 --strictPort",
     "build": "tsc && vite build",
     "test": "vitest run",

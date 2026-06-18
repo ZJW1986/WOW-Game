@@ -33,7 +33,7 @@ describe("generation api handler", () => {
           : prompt.includes("llm.gdd")
             ? {
                 concept: "星尘航线",
-                loop: ["开始", "移动", "闪避", "收集", "胜利"],
+                loop: ["开始", "移动", "躲避", "收集", "胜利"],
                 entities: ["飞船", "星星", "陨石"],
                 level: { width: 960, height: 540, collectibles: 6, hazards: 4, winScore: 6 },
                 numbers: { playerSpeed: 260 },
@@ -42,7 +42,7 @@ describe("generation api handler", () => {
             : {
                 templateFamily: "top_down",
                 title: "星尘航线",
-                pitch: "飞船闪避陨石并收集星星",
+                pitch: "飞船躲避陨石并收集星星",
                 playerGoal: "收集 6 颗星星",
                 controls: ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"],
                 difficulty: "normal",

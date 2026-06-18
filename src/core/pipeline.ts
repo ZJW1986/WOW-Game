@@ -330,16 +330,20 @@ export function createAssetStyleGuide(input: {
     implementationRoute: string;
   };
 }): AssetStyleGuide {
-  const palette = input.templateFamily === "platformer"
-    ? ["#1f7a4d", "#8bd450", "#f7d154", "#ef476f"]
-    : ["#13213f", "#22d3ee", "#facc15", "#fb7185"];
+  const palette =
+    input.templateFamily === "platformer"
+      ? ["#1f7a4d", "#8bd450", "#f7d154", "#ef476f"]
+      : ["#13213f", "#22d3ee", "#facc15", "#fb7185"];
   const visualStyle = `${input.templateFamily} clean arcade, readable silhouettes, cohesive generated asset pack`;
   const basePrompt = `${input.title}: ${input.gdd.concept}. ${visualStyle}. Palette ${palette.join(", ")}.`;
   const assetKeys = createAssetRequirements(input.templateFamily).map((asset) => asset.assetKey);
   return {
     visualStyle,
     palette,
-    shapeLanguage: input.templateFamily === "platformer" ? "rounded hero shapes with sharp hazard triangles" : "bold geometric icons with glowing edges",
+    shapeLanguage:
+      input.templateFamily === "platformer"
+        ? "rounded hero shapes with sharp hazard triangles"
+        : "bold geometric icons with glowing edges",
     characterBrief: `Player character should be instantly readable for ${input.templateFamily} controls.`,
     environmentBrief: `Environment supports ${input.gdd.loop.join(" -> ")} without visual clutter.`,
     audioStyle: "short arcade tones, light loop BGM, clear event feedback",
