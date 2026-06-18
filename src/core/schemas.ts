@@ -110,6 +110,19 @@ export const gameConfigSchema = z.object({
   controls: z.array(z.string()),
   difficulty: z.enum(["easy", "normal", "hard"]),
   referencedAssetKeys: z.array(z.string()),
+  gameplay: z.object({
+    primaryAction: z.enum([
+      "dodge_collect",
+      "jump_reach_goal",
+      "solve_grid",
+      "defend_route",
+      "manage_choices"
+    ]),
+    enemyBehavior: z.enum(["static", "patrol", "chase", "wave", "timer"]),
+    objectiveMode: z.enum(["collect_score", "reach_exit", "survive_timer", "defend_base", "solve_state"]),
+    playerAbility: z.enum(["dash", "jump", "push", "build", "choose"]),
+    spawnPattern: z.enum(["fixed", "staggered", "lanes", "grid", "waves"])
+  }),
   level: z.object({
     width: z.number(),
     height: z.number(),

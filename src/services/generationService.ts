@@ -16,6 +16,7 @@ import type {
   MockProject,
   PlayFeedback,
   PublishRecord,
+  ReferencePackageSummary,
   TemplateFamily,
   UserAnswer
 } from "../core/types";
@@ -24,6 +25,7 @@ import { createDeepSeekExecutor, type DeepSeekExecutorOptions } from "./deepSeek
 import { createMediaGateway, type MediaGatewayOptions } from "./mediaGateway";
 import { createModelGateway, type GatewayResult } from "./modelGateway";
 import { createPromptForTask } from "./promptPack";
+import { createAgnesImageProvider } from "./agnesImageProvider";
 
 export interface GeneratePlayableInput {
   idea: string;
@@ -32,6 +34,7 @@ export interface GeneratePlayableInput {
   projectId: string;
   baseUrl: string;
   model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
+  referencePackageSummary?: ReferencePackageSummary;
 }
 
 export interface GenerateGuidedQuestionsInput {
@@ -85,7 +88,10 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       return result.rawJson;
     }
   });
-  const mediaGateway = createMediaGateway(options.mediaGateway);
+  const mediaGateway = createMediaGateway({
+    ...createMediaGatewayOptionsFromEnv(env),
+    ...options.mediaGateway
+  });
 
   return {
     async generateGuidedQuestions(input: GenerateGuidedQuestionsInput) {
@@ -108,7 +114,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           ]
         }),
         schema: guidedQuestionsSchema,
-        preprocess: (raw) => normalizeGuidedQuestions(raw, fallbackQuestions),
+        preprocess: (raw) => normalizeGuidedQuestions(raw, fallbackQuestions, input.idea),
         fallback: { questions: fallbackQuestions }
       });
 
@@ -140,7 +146,8 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         prompt: createPromptForTask("llm.classification", {
           idea: input.idea,
           answers: input.answers,
-          preferredTemplate: input.templateFamily
+          preferredTemplate: input.templateFamily,
+          referencePackageSummary: input.referencePackageSummary
         }),
         schema: classificationSchema,
         preprocess: (raw) => normalizeClassification(raw, input.templateFamily),
@@ -161,7 +168,8 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         prompt: createPromptForTask("llm.gdd", {
           idea: input.idea,
           answers: input.answers,
-          classification: classificationTask.output
+          classification: classificationTask.output,
+          referencePackageSummary: input.referencePackageSummary
         }),
         schema: gddSchema,
         preprocess: (raw) => normalizeGdd(raw, parsedFallbackGdd),
@@ -205,7 +213,8 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           answers: input.answers,
           classification: classificationTask.output,
           gdd: gddTask.output,
-          assetPack
+          assetPack,
+          referencePackageSummary: input.referencePackageSummary
         }),
         schema: gameConfigSchema,
         preprocess: (raw) => normalizeGameConfig(raw, fallbackConfig),
@@ -231,16 +240,30 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         gameConfig,
         qaReport,
         publishRecord
-      }).map((artifact) =>
-        artifact.fileName === "gdd.json"
-          ? { ...artifact, content: gddTask.output }
-          : artifact.fileName === "gdd.md"
-            ? {
-                ...artifact,
-                content: `# Technical GDD\n\n\`\`\`json\n${JSON.stringify(gddTask.output, null, 2)}\n\`\`\``
-              }
-            : artifact
-      );
+      })
+        .map((artifact) =>
+          artifact.fileName === "gdd.json"
+            ? { ...artifact, content: gddTask.output }
+            : artifact.fileName === "gdd.md"
+              ? {
+                  ...artifact,
+                  content: `# Technical GDD\n\n\`\`\`json\n${JSON.stringify(gddTask.output, null, 2)}\n\`\`\``
+                }
+              : artifact
+        )
+        .concat(
+          input.referencePackageSummary
+            ? [
+                {
+                  stage: "asset-review" as const,
+                  fileName: "reference-package.json",
+                  title: "Reference Package",
+                  content: input.referencePackageSummary,
+                  format: "json" as const
+                }
+              ]
+            : []
+        );
 
       const project: MockProject = {
         ...mockProject,
@@ -286,7 +309,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
   };
 }
 
-function normalizeGuidedQuestions(raw: unknown, fallbackQuestions: DesignQuestion[]) {
+function normalizeGuidedQuestions(raw: unknown, fallbackQuestions: DesignQuestion[], idea = "") {
   const value = asRecord(raw);
   const rawQuestions = Array.isArray(value.questions) ? value.questions : Array.isArray(raw) ? raw : [];
   if (rawQuestions.length < 3) {
@@ -297,6 +320,9 @@ function normalizeGuidedQuestions(raw: unknown, fallbackQuestions: DesignQuestio
     .filter((item): item is DesignQuestion => Boolean(item));
   if (questions.length < 3) {
     throw new Error("Guided questions artifact must include at least 3 usable questions");
+  }
+  if (containsChinese(idea) && questions.some(questionLooksEnglish)) {
+    return { questions: fallbackQuestions };
   }
   return {
     questions: questions.slice(0, 5)
@@ -383,8 +409,54 @@ function normalizeGameConfig(raw: unknown, fallback: GameConfig): GameConfig {
     controls: normalizeStringArray(value.controls, fallback.controls),
     difficulty: normalizeDifficulty(value.difficulty, fallback.difficulty),
     referencedAssetKeys: normalizeStringArray(value.referencedAssetKeys, fallback.referencedAssetKeys),
+    gameplay: normalizeGameplay(value.gameplay, fallback.gameplay),
     level: normalizeLevel(value.level, fallback.level)
   };
+}
+
+function normalizeGameplay(value: unknown, fallback: GameConfig["gameplay"]): GameConfig["gameplay"] {
+  const record = asRecord(value);
+  return {
+    primaryAction: normalizeEnum(record.primaryAction, fallback.primaryAction, [
+      "dodge_collect",
+      "jump_reach_goal",
+      "solve_grid",
+      "defend_route",
+      "manage_choices"
+    ]),
+    enemyBehavior: normalizeEnum(record.enemyBehavior, fallback.enemyBehavior, [
+      "static",
+      "patrol",
+      "chase",
+      "wave",
+      "timer"
+    ]),
+    objectiveMode: normalizeEnum(record.objectiveMode, fallback.objectiveMode, [
+      "collect_score",
+      "reach_exit",
+      "survive_timer",
+      "defend_base",
+      "solve_state"
+    ]),
+    playerAbility: normalizeEnum(record.playerAbility, fallback.playerAbility, [
+      "dash",
+      "jump",
+      "push",
+      "build",
+      "choose"
+    ]),
+    spawnPattern: normalizeEnum(record.spawnPattern, fallback.spawnPattern, [
+      "fixed",
+      "staggered",
+      "lanes",
+      "grid",
+      "waves"
+    ])
+  };
+}
+
+function normalizeEnum<T extends string>(value: unknown, fallback: T, allowed: readonly T[]): T {
+  return allowed.includes(value as T) ? (value as T) : fallback;
 }
 
 function normalizeTemplateFamily(value: unknown, fallback: TemplateFamily): TemplateFamily {
@@ -463,6 +535,20 @@ function normalizeStringArray(value: unknown, fallback: string[] = []): string[]
   return fallback;
 }
 
+function containsChinese(text: string): boolean {
+  return /[\u3400-\u9fff]/.test(text);
+}
+
+function questionLooksEnglish(question: DesignQuestion): boolean {
+  const visibleText = [
+    question.label,
+    question.prompt,
+    question.defaultAnswer,
+    ...(question.options ?? [])
+  ].join(" ");
+  return /[A-Za-z]{4,}/.test(visibleText) && !containsChinese(visibleText);
+}
+
 function asRecord(value: unknown): Record<string, any> {
   return typeof value === "object" && value !== null ? (value as Record<string, any>) : {};
 }
@@ -516,4 +602,25 @@ function readRuntimeEnv(): Record<string, string | undefined> {
     process?: { env?: Record<string, string | undefined> };
   };
   return maybeProcess.process?.env ?? {};
+}
+
+function createMediaGatewayOptionsFromEnv(env: Record<string, string | undefined>): MediaGatewayOptions {
+  if (env.IMAGE_PROVIDER !== "agnes") return {};
+  return {
+    imageProvider: createAgnesImageProvider({
+      apiKey: env.IMAGE_API_KEY,
+      baseUrl: env.IMAGE_BASE_URL,
+      endpoint: env.IMAGE_ENDPOINT,
+      model: env.IMAGE_MODEL,
+      authHeader: env.IMAGE_AUTH_HEADER,
+      responseImagePath: env.IMAGE_RESPONSE_PATH,
+      timeoutMs: parseOptionalNumber(env.IMAGE_TIMEOUT_MS)
+    })
+  };
+}
+
+function parseOptionalNumber(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }

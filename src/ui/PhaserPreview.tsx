@@ -96,6 +96,7 @@ export function PhaserPreview({
           });
 
           for (const hazard of this.hazards) {
+            this.updateHazardBehavior(hazard);
             if (Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), hazard.getBounds())) {
               this.hitHazard(Phaser);
               break;
@@ -193,7 +194,7 @@ export function PhaserPreview({
           if (this.runtimeState.phase === "won") {
             audio.playWin();
             this.stopPlayer();
-            this.status.setText("Victory! All goals complete.");
+            this.status.setText("胜利！目标已完成。");
             this.cameras.main.flash(360, 58, 255, 210);
             this.burst(this.player.x, this.player.y, 0x5eead4, Phaser, 28);
             this.showEndScreen("won");
@@ -206,7 +207,7 @@ export function PhaserPreview({
           audio.playHit();
           audio.playLose();
           this.stopPlayer();
-          this.status.setText("Failed! You hit a hazard.");
+          this.status.setText("失败！碰到了危险物。");
           this.cameras.main.shake(180, 0.012);
           this.flash.setFillStyle(0xff315a, 0.34);
           this.tweens.add({
@@ -240,21 +241,62 @@ export function PhaserPreview({
 
         private createHazards(Phaser: typeof import("phaser")) {
           for (let index = 0; index < config.level.hazards; index += 1) {
-            const x = 310 + index * 140;
-            const y = config.templateFamily === "platformer" ? 480 : 250 + (index % 2) * 110;
+            const x =
+              config.gameplay.spawnPattern === "waves"
+                ? 960 + index * 70
+                : config.gameplay.spawnPattern === "grid"
+                  ? 250 + (index % 4) * 110
+                  : 310 + index * 140;
+            const y =
+              config.gameplay.spawnPattern === "lanes" || config.gameplay.spawnPattern === "waves"
+                ? 150 + (index % 3) * 95
+                : config.templateFamily === "platformer"
+                  ? 480
+                  : 250 + (index % 2) * 110;
             const hazard = this.createRuntimeImage(x, y, "generated-hazard", 34, 34, 0xfb7185);
             this.hazards.push(hazard);
             this.addWorldObject(hazard);
-            this.tweens.add({
-              targets: hazard,
-              y: y - 28,
-              angle: 12,
-              duration: 900 + index * 140,
-              yoyo: true,
-              repeat: -1,
-              ease: Phaser.Math.Easing.Sine.InOut
-            });
+            if (config.gameplay.enemyBehavior === "patrol") {
+              this.tweens.add({
+                targets: hazard,
+                x: x + (index % 2 === 0 ? 58 : -58),
+                angle: 12,
+                duration: 900 + index * 140,
+                yoyo: true,
+                repeat: -1,
+                ease: Phaser.Math.Easing.Sine.InOut
+              });
+            } else if (config.gameplay.enemyBehavior === "wave") {
+              this.tweens.add({
+                targets: hazard,
+                x: -40,
+                duration: 4200 + index * 260,
+                repeat: -1,
+                delay: index * 320,
+                ease: "Linear"
+              });
+            } else if (config.gameplay.enemyBehavior !== "chase") {
+              this.tweens.add({
+                targets: hazard,
+                y: y - 28,
+                angle: 12,
+                duration: 900 + index * 140,
+                yoyo: true,
+                repeat: -1,
+                ease: Phaser.Math.Easing.Sine.InOut
+              });
+            }
           }
+        }
+
+        private updateHazardBehavior(hazard: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle) {
+          if (config.gameplay.enemyBehavior !== "chase" || !this.player) return;
+          const dx = this.player.x - hazard.x;
+          const dy = this.player.y - hazard.y;
+          const distance = Math.max(1, Math.hypot(dx, dy));
+          const speed = config.difficulty === "hard" ? 1.6 : config.difficulty === "easy" ? 0.7 : 1.05;
+          hazard.x += (dx / distance) * speed;
+          hazard.y += (dy / distance) * speed;
         }
 
         private burst(
@@ -306,7 +348,7 @@ export function PhaserPreview({
             fontFamily: "Arial",
             fontSize: "14px"
           }).setOrigin(0.5));
-          this.overlay.add(this.add.text(480, 286, "Click or press Enter to start", {
+          this.overlay.add(this.add.text(480, 286, "点击或按 Enter 开始", {
             color: "#071018",
             fontFamily: "Arial",
             fontSize: "18px",
@@ -326,20 +368,20 @@ export function PhaserPreview({
           const won = result === "won";
           this.overlay = this.add.container(0, 0).setDepth(30);
           this.overlay.add(this.add.rectangle(480, 242, 540, 250, won ? 0x062018 : 0x210a12, 0.94).setStrokeStyle(2, won ? 0x45f6c8 : 0xfb7185));
-          this.overlay.add(this.add.text(480, 164, won ? "You Win!" : "Game Over", {
+          this.overlay.add(this.add.text(480, 164, won ? "胜利" : "游戏结束", {
             color: won ? "#45f6c8" : "#fb7185",
             fontFamily: "Arial",
             fontSize: "34px",
             fontStyle: "bold"
           }).setOrigin(0.5));
-          this.overlay.add(this.add.text(480, 218, won ? "Goal complete. Share this playable with friends." : "You touched a hazard. Try a cleaner route.", {
+          this.overlay.add(this.add.text(480, 218, won ? "目标完成，可以分享给朋友试玩。" : "碰到了危险物，换条路线再试。", {
             align: "center",
             color: "#e8fbff",
             fixedWidth: 450,
             fontFamily: "Arial",
             fontSize: "15px"
           }).setOrigin(0.5));
-          this.overlay.add(this.add.text(480, 286, "Click or press Enter to restart", {
+          this.overlay.add(this.add.text(480, 286, "点击或按 Enter 重新开始", {
             color: "#071018",
             fontFamily: "Arial",
             fontSize: "17px",
@@ -350,7 +392,7 @@ export function PhaserPreview({
         }
 
         private updateHud() {
-          this.scoreText?.setText(`Score ${this.runtimeState.score}/${config.level.winScore} | ${assetPackSummary(assetPack)}`);
+          this.scoreText?.setText(`得分 ${this.runtimeState.score}/${config.level.winScore} | ${assetPackSummary(assetPack)}`);
         }
 
         private stopPlayer() {
@@ -427,17 +469,17 @@ export function PhaserPreview({
 }
 
 function assetPackSummary(assetPack?: AssetPack): string {
-  if (!assetPack) return "asset-pack: not attached";
+  if (!assetPack) return "asset-pack：未绑定";
   const ready = assetPack.assets.filter((asset) => asset.status !== "missing" && asset.status !== "failed").length;
-  return `asset-pack ${assetPack.versionId}: ${ready}/${assetPack.assets.length} ready`;
+  return `asset-pack ${assetPack.versionId}：${ready}/${assetPack.assets.length} 已就绪`;
 }
 
 function controlsLabel(config: GameConfig): string {
   const base =
     config.templateFamily === "platformer"
-      ? "Controls: Arrow Left/Right to move, Space to jump."
-      : "Controls: Arrow keys to move in 8 directions.";
-  return `${base} Goal: ${config.playerGoal}`;
+      ? "控制：方向键左右移动，空格跳跃。"
+      : "控制：方向键八方向移动。";
+  return `${base} 目标：${config.playerGoal}`;
 }
 
 function loadImage(scene: import("phaser").Scene, key: string, url?: string) {

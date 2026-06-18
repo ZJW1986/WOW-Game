@@ -168,6 +168,64 @@ describe("fast playable generation experience", () => {
     expect(result.questions.map((question) => question.prompt)).toContain("玩家主要如何操作角色？");
   });
 
+  it("keeps guided questions in Chinese when the model returns English copy for a Chinese idea", async () => {
+    const service = createGenerationService({
+      deepseekApiKey: "test-key",
+      fetcher: async () =>
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  questions: [
+                    {
+                      id: "controls",
+                      label: "Controls",
+                      prompt: "How will the player move the spaceship?",
+                      inputType: "single_choice",
+                      options: ["Arrow keys", "Mouse click/touch", "Tilt (mobile)"],
+                      defaultAnswer: "Arrow keys",
+                      required: true
+                    },
+                    {
+                      id: "goal",
+                      label: "Goal",
+                      prompt: "What should the player collect?",
+                      inputType: "short_text",
+                      defaultAnswer: "Collect six stars",
+                      required: true
+                    },
+                    {
+                      id: "failure",
+                      label: "Failure",
+                      prompt: "What makes the player lose?",
+                      inputType: "short_text",
+                      defaultAnswer: "Hit asteroids",
+                      required: true
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        })
+    });
+
+    const result = await service.generateGuidedQuestions({
+      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      templateFamily: "top_down",
+      model: "deepseek-v4-flash"
+    });
+
+    const visibleText = result.questions
+      .flatMap((question) => [question.label, question.prompt, question.defaultAnswer, ...(question.options ?? [])])
+      .join(" ");
+
+    expect(visibleText).toContain("玩家怎样算赢？");
+    expect(visibleText).not.toContain("How will the player move");
+    expect(visibleText).not.toContain("Arrow keys");
+  });
+
   it("falls back to fixed guided questions when model question output is invalid", async () => {
     const service = createGenerationService({
       deepseekApiKey: "test-key",

@@ -83,4 +83,19 @@ describe("standard artifact pipeline", () => {
     );
     expect(project.assetPack.assets.every((asset) => asset.status !== "missing")).toBe(true);
   });
+
+  it("creates different gameplay contracts for different template families", () => {
+    const topDown = runMockPipeline("make a top down spaceship dodge and collect game");
+    const platformer = runMockPipeline("make a platform jump game with coins and spikes");
+    const towerDefense = runMockPipeline("make a tower defense game with waves and buildable turrets");
+
+    expect(topDown.gameConfig.gameplay.primaryAction).toBe("dodge_collect");
+    expect(platformer.gameConfig.gameplay.primaryAction).toBe("jump_reach_goal");
+    expect(towerDefense.gameConfig.gameplay.primaryAction).toBe("defend_route");
+    expect(new Set([
+      topDown.gameConfig.gameplay.enemyBehavior,
+      platformer.gameConfig.gameplay.enemyBehavior,
+      towerDefense.gameConfig.gameplay.enemyBehavior
+    ]).size).toBe(3);
+  });
 });

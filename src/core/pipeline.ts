@@ -25,6 +25,29 @@ const TEMPLATE_KEYWORDS: Record<TemplateFamily, string[]> = {
 
 export function classifyIdea(idea: string): Classification {
   const normalized = idea.toLowerCase();
+  const explicitTemplate = detectExplicitTemplate(normalized);
+  if (explicitTemplate) {
+    return {
+      templateFamily: explicitTemplate,
+      reasons: [
+        `physics-first match: ${explicitTemplate}`,
+        explicitTemplate === "platformer"
+          ? "gravity and jump timing are the dominant mechanics"
+          : explicitTemplate === "tower_defense"
+            ? "route defense and wave pressure are the dominant mechanics"
+            : explicitTemplate === "grid_logic"
+              ? "discrete board logic and puzzle state are the dominant mechanics"
+              : explicitTemplate === "ui_heavy"
+                ? "interface decisions and resource state are the dominant mechanics"
+                : "2D spatial movement and collision checks are the dominant mechanics"
+      ],
+      risks: [
+        "MVP locks engine lifecycle and scene registration to template code",
+        "Generated logic must stay inside config and approved hooks"
+      ],
+      unsupportedRequests: detectUnsupportedRequests(normalized)
+    };
+  }
   const scores = Object.entries(TEMPLATE_KEYWORDS).map(([family, keywords]) => ({
     family: family as TemplateFamily,
     score: keywords.filter((keyword) => normalized.includes(keyword)).length
@@ -50,6 +73,15 @@ export function classifyIdea(idea: string): Classification {
     ],
     unsupportedRequests: detectUnsupportedRequests(normalized)
   };
+}
+
+function detectExplicitTemplate(idea: string): TemplateFamily | null {
+  if (idea.includes("tower defense") || idea.includes("turret") || idea.includes("waves")) return "tower_defense";
+  if (idea.includes("platformer") || idea.includes("platform jump") || idea.includes("gravity")) return "platformer";
+  if (idea.includes("grid puzzle") || idea.includes("limited moves") || idea.includes("logic puzzle")) return "grid_logic";
+  if (idea.includes("card") || idea.includes("management") || idea.includes("ui heavy")) return "ui_heavy";
+  if (idea.includes("top down") || idea.includes("top_down") || idea.includes("arena dodge")) return "top_down";
+  return null;
 }
 
 export function runMockPipeline(idea: string): MockProject {
@@ -470,16 +502,67 @@ export function createGameConfig(
     controls:
       templateFamily === "platformer"
         ? ["ArrowLeft", "ArrowRight", "Space"]
+        : templateFamily === "tower_defense"
+          ? ["Mouse", "1", "2"]
+          : templateFamily === "grid_logic"
+            ? ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"]
         : ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"],
     difficulty: "normal",
     referencedAssetKeys: assetPack.assets.map((asset) => asset.assetKey),
+    gameplay: createGameplayContract(templateFamily),
     level: {
       width: 960,
       height: 540,
       collectibles: 6,
-      hazards: 4,
+      hazards: templateFamily === "tower_defense" ? 8 : templateFamily === "platformer" ? 3 : 4,
       winScore: 6
     }
+  };
+}
+
+function createGameplayContract(templateFamily: TemplateFamily): GameConfig["gameplay"] {
+  if (templateFamily === "platformer") {
+    return {
+      primaryAction: "jump_reach_goal",
+      enemyBehavior: "patrol",
+      objectiveMode: "reach_exit",
+      playerAbility: "jump",
+      spawnPattern: "staggered"
+    };
+  }
+  if (templateFamily === "grid_logic") {
+    return {
+      primaryAction: "solve_grid",
+      enemyBehavior: "timer",
+      objectiveMode: "solve_state",
+      playerAbility: "push",
+      spawnPattern: "grid"
+    };
+  }
+  if (templateFamily === "tower_defense") {
+    return {
+      primaryAction: "defend_route",
+      enemyBehavior: "wave",
+      objectiveMode: "defend_base",
+      playerAbility: "build",
+      spawnPattern: "waves"
+    };
+  }
+  if (templateFamily === "ui_heavy") {
+    return {
+      primaryAction: "manage_choices",
+      enemyBehavior: "timer",
+      objectiveMode: "survive_timer",
+      playerAbility: "choose",
+      spawnPattern: "fixed"
+    };
+  }
+  return {
+    primaryAction: "dodge_collect",
+    enemyBehavior: "chase",
+    objectiveMode: "collect_score",
+    playerAbility: "dash",
+    spawnPattern: "staggered"
   };
 }
 

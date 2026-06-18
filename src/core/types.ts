@@ -86,6 +86,18 @@ export interface GameConfig {
   controls: string[];
   difficulty: "easy" | "normal" | "hard";
   referencedAssetKeys: string[];
+  gameplay: {
+    primaryAction:
+      | "dodge_collect"
+      | "jump_reach_goal"
+      | "solve_grid"
+      | "defend_route"
+      | "manage_choices";
+    enemyBehavior: "static" | "patrol" | "chase" | "wave" | "timer";
+    objectiveMode: "collect_score" | "reach_exit" | "survive_timer" | "defend_base" | "solve_state";
+    playerAbility: "dash" | "jump" | "push" | "build" | "choose";
+    spawnPattern: "fixed" | "staggered" | "lanes" | "grid" | "waves";
+  };
   level: {
     width: number;
     height: number;
@@ -195,6 +207,25 @@ export interface PlayFeedback {
   playerName: string;
   iterationSuggestion: string;
   createdAt: string;
+}
+
+export interface ReferencePackageSummary {
+  projectId: string;
+  versionId: string;
+  packageName: string;
+  packageFileName: string;
+  fileCount: number;
+  totalSize: number;
+  healthStatus: "pass" | "warning" | "fail";
+  entry: string;
+  scripts: string[];
+  styles: string[];
+  images: UploadedPackageFile[];
+  audio: UploadedPackageFile[];
+  fonts: UploadedPackageFile[];
+  data: UploadedPackageFile[];
+  suggestedEdits: string[];
+  risks: string[];
 }
 
 export interface UploadedPackageFile {
