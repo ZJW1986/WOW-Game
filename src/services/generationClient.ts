@@ -8,6 +8,8 @@ export interface PlayableGenerationRequest {
   projectId: string;
   baseUrl: string;
   model: StartModelId;
+  referencePackageId?: string;
+  referenceVersionId?: string;
 }
 
 export interface UploadPlayablePackageRequest {
@@ -43,7 +45,7 @@ export async function requestPlayableGeneration(
       },
       body: JSON.stringify(input)
     }),
-    options.timeoutMs ?? 20000,
+    options.timeoutMs ?? 90000,
     "Generation request timed out"
   );
   const payload = await parseJson(response);

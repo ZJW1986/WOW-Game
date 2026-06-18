@@ -290,6 +290,99 @@ describe("generation api handler", () => {
     expect(playResponse.body.uploadedPackage.packageManifest.fileCount).toBe(4);
   });
 
+  it("uses an uploaded package as reference context while generating a new ai project", async () => {
+    const storeIO = memoryStore();
+    const prompts: string[] = [];
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        DEEPSEEK_API_KEY: "server-key",
+        PUBLIC_BASE_URL: "https://wow-game.example"
+      },
+      storeIO,
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as { messages: Array<{ content: string }> };
+        const prompt = body.messages.at(-1)?.content ?? "";
+        prompts.push(prompt);
+        const content = prompt.includes("llm.classification")
+          ? {
+              templateFamily: "top_down",
+              reasons: ["reference package suggests top-down dodge and collect pacing"],
+              risks: [],
+              unsupportedRequests: []
+            }
+          : prompt.includes("llm.gdd")
+            ? {
+                concept: "参考节奏的新飞船游戏",
+                loop: ["移动", "躲避", "收集", "胜利"],
+                entities: ["玩家", "收集物", "危险物"],
+                level: { width: 960, height: 540, collectibles: 6, hazards: 4, winScore: 6 },
+                numbers: { playerSpeed: 260 },
+                implementationRoute: "使用 top_down 模板生成新游戏，不修改上传 ZIP"
+              }
+            : {
+                templateFamily: "top_down",
+                title: "参考星航",
+                pitch: "参考上传包节奏生成的新游戏",
+                playerGoal: "收集 6 个能量并避开敌人",
+                controls: ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"],
+                difficulty: "normal",
+                referencedAssetKeys: ["cover.main", "player.ship", "world.background"],
+                gameplay: {
+                  primaryAction: "dodge_collect",
+                  enemyBehavior: "patrol",
+                  objectiveMode: "collect_score",
+                  playerAbility: "dash",
+                  spawnPattern: "lanes"
+                },
+                level: { width: 960, height: 540, collectibles: 6, hazards: 4, winScore: 6 }
+              };
+        return JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] });
+      }
+    });
+
+    const uploadResponse = await handler({
+      method: "POST",
+      path: "/api/upload-package",
+      body: {
+        packageName: "Plane Reference",
+        packageFileName: "plane-reference.zip",
+        packageBase64: zipBase64({
+          "plane/index.html": '<script src="js/main.js"></script><img src="image/player.png"><audio src="audio/bgm.mp3"></audio>',
+          "plane/js/main.js": "console.log('reference')",
+          "plane/image/player.png": "png",
+          "plane/audio/bgm.mp3": "mp3"
+        })
+      }
+    });
+    const generateResponse = await handler({
+      method: "POST",
+      path: "/api/generate-playable",
+      body: {
+        idea: "参考飞机大战做一个太空猫躲避陨石收集鱼干",
+        answers: [],
+        templateFamily: "top_down",
+        projectId: "project-reference-generated",
+        model: "deepseek-v4-flash",
+        referencePackageId: uploadResponse.body.project.id,
+        referenceVersionId: "v1"
+      }
+    });
+
+    const artifactNames = generateResponse.body.project.artifacts.map((artifact: { fileName: string }) => artifact.fileName);
+    const referenceArtifact = generateResponse.body.project.artifacts.find(
+      (artifact: { fileName: string }) => artifact.fileName === "reference-package.json"
+    );
+
+    expect(generateResponse.status).toBe(200);
+    expect(generateResponse.body.project.contentType).toBe("ai_project");
+    expect(artifactNames).toContain("reference-package.json");
+    expect(referenceArtifact.content.packageName).toBe("Plane Reference");
+    expect(referenceArtifact.content.images[0].path).toBe("image/player.png");
+    expect(prompts.join("\n")).toContain("referencePackageSummary");
+    expect(prompts.join("\n")).toContain("Plane Reference");
+  });
+
   it("returns a fallback AI edit plan for persisted uploaded packages", async () => {
     const storeIO = memoryStore();
     const handler = createGenerationApiHandler({

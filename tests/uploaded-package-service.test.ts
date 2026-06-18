@@ -39,6 +39,27 @@ describe("uploaded package parser", () => {
     expect(result.aiEditPlan.editableAssets.map((asset) => asset.path)).toContain("assets/player.png");
   });
 
+  it("accepts HTML5 zips wrapped in one top-level folder", async () => {
+    const result = await parseUploadedPackage({
+      packageName: "Wrapped Plane",
+      packageFileName: "wrapped-plane.zip",
+      packageBase64: zipBase64({
+        "wrapped-plane/index.html": '<html><head><script src="js/main.js"></script></head><body><img src="image/player.png"></body></html>',
+        "wrapped-plane/js/main.js": "console.log('game')",
+        "wrapped-plane/image/player.png": "png"
+      }),
+      projectId: "package-wrapped",
+      versionId: "v1"
+    });
+
+    expect(result.packageManifest.entry).toBe("index.html");
+    expect(result.packageManifest.fileCount).toBe(3);
+    expect(result.assetIndex.images.map((asset) => asset.path)).toContain("image/player.png");
+    expect(result.runtimeEntry.scripts).toEqual(["js/main.js"]);
+    expect(result.runtimeEntry.entryUrl).toBe("/uploads/package-wrapped/v1/files/index.html");
+    expect(result.extractedFiles.map((file) => file.path)).toContain("index.html");
+  });
+
   it("rejects packages without index.html", async () => {
     await expect(
       parseUploadedPackage({

@@ -32,6 +32,29 @@ describe("browser generation client", () => {
     expect(requestBody).not.toContain("server-key");
   });
 
+  it("posts optional reference package ids for reference-driven generation", async () => {
+    let requestBody = "";
+    await requestPlayableGeneration(
+      {
+        idea: "做一个参考飞机大战节奏的新游戏",
+        answers: [],
+        templateFamily: "top_down",
+        projectId: "project-client-reference",
+        baseUrl: "http://localhost:5173",
+        model: "deepseek-v4-flash",
+        referencePackageId: "package-reference-1",
+        referenceVersionId: "v1"
+      },
+      async (_url, init) => {
+        requestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+    );
+
+    expect(requestBody).toContain("package-reference-1");
+    expect(requestBody).toContain("referenceVersionId");
+  });
+
   it("throws a readable error when generation endpoint fails", async () => {
     await expect(
       requestPlayableGeneration(
@@ -63,6 +86,35 @@ describe("browser generation client", () => {
         { timeoutMs: 1 }
       )
     ).rejects.toThrow("Generation request timed out");
+  });
+
+  it("uses a long default timeout for real model generation", async () => {
+    const calls: Array<{ delay: number; callback: () => void }> = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    globalThis.setTimeout = ((callback: () => void, delay?: number) => {
+      calls.push({ callback, delay: Number(delay) });
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = (() => undefined) as typeof clearTimeout;
+    try {
+      await requestPlayableGeneration(
+        {
+          idea: "做一个飞船躲避陨石的小游戏",
+          answers: [],
+          templateFamily: "top_down",
+          projectId: "project-client-timeout-default",
+          baseUrl: "http://localhost:5173",
+          model: "deepseek-v4-flash"
+        },
+        async () => new Response(JSON.stringify({ ok: true }), { status: 200 })
+      );
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+
+    expect(calls[0]?.delay).toBe(90000);
   });
 
   it("loads persisted playable projects by project and version id", async () => {

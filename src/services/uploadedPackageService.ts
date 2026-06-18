@@ -30,9 +30,10 @@ export async function parseUploadedPackage(input: ParseUploadedPackageInput): Pr
   }
 
   const entries = unzipSync(decodeBase64(input.packageBase64));
-  const extractedFiles = Object.entries(entries)
+  const rawFiles = Object.entries(entries)
     .filter(([path]) => !path.endsWith("/"))
     .map(([path, bytes]) => ({ path: normalizePackagePath(path), bytes }));
+  const extractedFiles = stripSingleTopLevelFolder(rawFiles);
 
   if (extractedFiles.length === 0) {
     throw new Error("Uploaded package is empty");
@@ -116,6 +117,30 @@ function normalizePackagePath(path: string): string {
     throw new Error(`Unsafe package path: ${path}`);
   }
   return normalized;
+}
+
+function stripSingleTopLevelFolder(files: Array<{ path: string; bytes: Uint8Array }>) {
+  if (files.some((file) => file.path.toLowerCase() === "index.html")) {
+    return files;
+  }
+  const roots = new Set(
+    files
+      .map((file) => file.path.split("/")[0])
+      .filter((root) => root.length > 0)
+  );
+  if (roots.size !== 1) {
+    return files;
+  }
+  const [root] = [...roots];
+  const prefix = `${root}/`;
+  const stripped = files
+    .filter((file) => file.path.startsWith(prefix))
+    .map((file) => ({
+      ...file,
+      path: file.path.slice(prefix.length)
+    }))
+    .filter((file) => file.path.length > 0);
+  return stripped.some((file) => file.path.toLowerCase() === "index.html") ? stripped : files;
 }
 
 function classifyPackageFile(path: string): UploadedPackageFile["type"] {

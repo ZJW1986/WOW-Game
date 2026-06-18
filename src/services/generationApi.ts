@@ -1,4 +1,4 @@
-import type { TemplateFamily, UserAnswer } from "../core/types";
+import type { ReferencePackageSummary, TemplateFamily, UploadedPackageArtifacts, UserAnswer } from "../core/types";
 import type { StartModelId } from "../core/start";
 import { createPublishRecord, runMockPipeline } from "../core/pipeline";
 import { createGenerationService, type GenerationServiceOptions } from "./generationService";
@@ -274,7 +274,12 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         templateFamily: parseTemplateFamily(request.body.templateFamily),
         projectId: optionalString(request.body.projectId) ?? `project-${Date.now()}`,
         baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
-        model: parseModel(request.body.model)
+        model: parseModel(request.body.model),
+        referencePackageSummary: await readReferencePackageSummary(
+          store,
+          optionalString(request.body.referencePackageId),
+          optionalString(request.body.referenceVersionId)
+        )
       });
       await store.savePlayable({
         project: result.project,
@@ -289,6 +294,42 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         body: { error: error instanceof Error ? error.message : String(error) }
       };
     }
+  };
+}
+
+async function readReferencePackageSummary(
+  store: ReturnType<typeof createPlayableStore>,
+  projectId?: string,
+  versionId?: string
+): Promise<ReferencePackageSummary | undefined> {
+  if (!projectId || !versionId) return undefined;
+  const record = await store.readPlayable(projectId, versionId);
+  if (!record?.uploadedPackage) return undefined;
+  return summarizeReferencePackage(projectId, versionId, record.uploadedPackage);
+}
+
+function summarizeReferencePackage(
+  projectId: string,
+  versionId: string,
+  uploadedPackage: UploadedPackageArtifacts
+): ReferencePackageSummary {
+  return {
+    projectId,
+    versionId,
+    packageName: uploadedPackage.packageManifest.packageName,
+    packageFileName: uploadedPackage.packageManifest.packageFileName,
+    fileCount: uploadedPackage.packageManifest.fileCount,
+    totalSize: uploadedPackage.packageManifest.totalSize,
+    healthStatus: uploadedPackage.healthReport.status,
+    entry: uploadedPackage.runtimeEntry.entry,
+    scripts: uploadedPackage.runtimeEntry.scripts.slice(0, 20),
+    styles: uploadedPackage.runtimeEntry.styles.slice(0, 20),
+    images: uploadedPackage.assetIndex.images.slice(0, 30),
+    audio: uploadedPackage.assetIndex.audio.slice(0, 20),
+    fonts: uploadedPackage.assetIndex.fonts.slice(0, 10),
+    data: uploadedPackage.assetIndex.data.slice(0, 20),
+    suggestedEdits: uploadedPackage.aiEditPlan.suggestedEdits,
+    risks: [...uploadedPackage.healthReport.errors, ...uploadedPackage.healthReport.warnings]
   };
 }
 
