@@ -13,8 +13,9 @@ export interface PlayableGenerationRequest {
 export interface UploadPlayablePackageRequest {
   packageName: string;
   packageFileName: string;
-  packageEntry: string;
+  packageBase64: string;
   description?: string;
+  baseUrl?: string;
 }
 
 export interface GuidedQuestionsRequest {
@@ -25,18 +26,26 @@ export interface GuidedQuestionsRequest {
 }
 
 type BrowserFetcher = typeof fetch;
+interface RequestClientOptions {
+  timeoutMs?: number;
+}
 
 export async function requestPlayableGeneration(
   input: PlayableGenerationRequest,
-  fetcher: BrowserFetcher = fetch
+  fetcher: BrowserFetcher = fetch,
+  options: RequestClientOptions = {}
 ) {
-  const response = await fetcher("/api/generate-playable", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(input)
-  });
+  const response = await withTimeout(
+    fetcher("/api/generate-playable", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(input)
+    }),
+    options.timeoutMs ?? 20000,
+    "Generation request timed out"
+  );
   const payload = await parseJson(response);
   if (!response.ok) {
     const message =
@@ -49,6 +58,17 @@ export async function requestPlayableGeneration(
     throw new Error(`Generation request failed: ${message}`);
   }
   return payload;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  if (timeoutMs <= 0) return promise;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
 }
 
 export async function requestGuidedQuestions(
@@ -127,6 +147,42 @@ export async function uploadPlayablePackage(
   const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(`Upload request failed: ${readError(payload, response)}`);
+  }
+  return payload;
+}
+
+export async function requestPackageEditPlan(
+  input: { projectId: string; versionId: string; userGoal: string },
+  fetcher: BrowserFetcher = fetch
+) {
+  const response = await fetcher("/api/package-edit-plan", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Package edit plan request failed: ${readError(payload, response)}`);
+  }
+  return payload;
+}
+
+export async function replacePackageAsset(
+  input: { projectId: string; versionId: string; assetPath: string; fileBase64: string; fileName: string },
+  fetcher: BrowserFetcher = fetch
+) {
+  const response = await fetcher("/api/replace-package-asset", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Package asset replacement failed: ${readError(payload, response)}`);
   }
   return payload;
 }

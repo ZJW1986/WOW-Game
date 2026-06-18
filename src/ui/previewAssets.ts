@@ -13,7 +13,7 @@ export function selectPreviewRuntimeAssets(assetPack?: AssetPack): PreviewRuntim
   const imageAssets = assetPack.assets.filter(
     (asset) =>
       (asset.type === "image" || asset.type === "ui") &&
-      asset.fileUrl.startsWith("data:image") &&
+      isPreviewImageUrl(asset.fileUrl) &&
       asset.status !== "missing" &&
       asset.status !== "failed"
   );
@@ -24,6 +24,15 @@ export function selectPreviewRuntimeAssets(assetPack?: AssetPack): PreviewRuntim
     background: findAssetUrl(imageAssets, ["world.background", "cover.main"]),
     tile: findAssetUrl(imageAssets, ["world.tiles", "world.path"])
   };
+}
+
+function isPreviewImageUrl(fileUrl: string): boolean {
+  return (
+    fileUrl.startsWith("data:image") ||
+    fileUrl.startsWith("/projects/") ||
+    fileUrl.startsWith("blob:") ||
+    /^https?:\/\//.test(fileUrl)
+  );
 }
 
 function findAssetUrl(assets: AssetPack["assets"], keys: string[]): string | undefined {

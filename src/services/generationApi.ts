@@ -3,6 +3,10 @@ import type { StartModelId } from "../core/start";
 import { createPublishRecord, runMockPipeline } from "../core/pipeline";
 import { createGenerationService, type GenerationServiceOptions } from "./generationService";
 import { createPlayableStore, type PlayableStoreOptions } from "./playableStore";
+import {
+  createFallbackEditPlan,
+  parseUploadedPackage
+} from "./uploadedPackageService";
 
 export interface GenerationApiRequest {
   method: string;
@@ -18,7 +22,7 @@ export interface GenerationApiResponse {
 export interface GenerationApiOptions {
   env?: Record<string, string | undefined>;
   fetcher?: GenerationServiceOptions["fetcher"];
-  storeIO?: Pick<PlayableStoreOptions, "writeText" | "readText" | "ensureDir">;
+  storeIO?: Pick<PlayableStoreOptions, "writeText" | "readText" | "writeBytes" | "readBytes" | "ensureDir">;
 }
 
 export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
@@ -30,6 +34,24 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       dataDir: env.DATA_DIR ?? "data",
       ...options.storeIO
     });
+    const uploadFileMatch = request.path.match(/^\/api\/uploads\/([^/]+)\/([^/]+)\/files\/(.+)$/);
+    if (request.method === "GET" && uploadFileMatch) {
+      const bytes = await store.readUploadedPackageFile(
+        uploadFileMatch[1],
+        uploadFileMatch[2],
+        decodeURIComponent(uploadFileMatch[3])
+      );
+      if (!bytes) {
+        return { status: 404, body: { error: "Uploaded package file not found" } };
+      }
+      return {
+        status: 200,
+        body: {
+          fileBase64: encodeBase64(bytes),
+          contentType: contentTypeForPath(uploadFileMatch[3])
+        }
+      };
+    }
     const playMatch = request.path.match(/^\/api\/play\/([^/]+)\/([^/]+)$/);
     if (request.method === "GET" && playMatch) {
       const record = await store.readPlayable(playMatch[1], playMatch[2]);
@@ -61,20 +83,20 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       try {
         const packageName = requireString(request.body.packageName, "packageName");
         const packageFileName = requireString(request.body.packageFileName, "packageFileName");
-        const packageEntry = requireString(request.body.packageEntry, "packageEntry");
-        if (packageEntry !== "index.html") {
-          throw new Error("Uploaded package must provide index.html as the entry file");
-        }
-        if (!packageFileName.toLowerCase().endsWith(".zip")) {
-          throw new Error("Uploaded package must be a .zip file");
-        }
-
         const projectId = `package-${Date.now()}`;
+        const versionId = "v1";
+        const parsedPackage = await parseUploadedPackage({
+          packageName,
+          packageFileName,
+          packageBase64: requireString(request.body.packageBase64, "packageBase64"),
+          projectId,
+          versionId
+        });
         const project = runMockPipeline(optionalString(request.body.description) ?? packageName);
         project.id = projectId;
         project.title = packageName;
         project.contentType = "uploaded_package";
-        project.editable = false;
+        project.editable = true;
         project.shareable = true;
         project.sourceLabel = "ZIP Package";
 
@@ -84,10 +106,18 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         });
         project.playUrl = publishRecord.playUrl;
 
+        await store.saveUploadedPackageFiles(project.id, project.version.id, parsedPackage.extractedFiles);
         await store.savePlayable({
           project,
           publishRecord,
-          feedback: []
+          feedback: [],
+          uploadedPackage: {
+            packageManifest: parsedPackage.packageManifest,
+            assetIndex: parsedPackage.assetIndex,
+            runtimeEntry: parsedPackage.runtimeEntry,
+            healthReport: parsedPackage.healthReport,
+            aiEditPlan: parsedPackage.aiEditPlan
+          }
         });
 
         return {
@@ -95,10 +125,104 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
           body: {
             project,
             publishRecord,
-            packageMeta: {
-              packageFileName,
-              packageEntry
-            }
+            packageManifest: parsedPackage.packageManifest,
+            assetIndex: parsedPackage.assetIndex,
+            runtimeEntry: parsedPackage.runtimeEntry,
+            healthReport: parsedPackage.healthReport,
+            aiEditPlan: parsedPackage.aiEditPlan
+          }
+        };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/package-edit-plan") {
+      try {
+        const projectId = requireString(request.body.projectId, "projectId");
+        const versionId = requireString(request.body.versionId, "versionId");
+        const userGoal = requireString(request.body.userGoal, "userGoal");
+        const record = await store.readPlayable(projectId, versionId);
+        if (!record?.uploadedPackage) {
+          return { status: 404, body: { error: "Uploaded package not found" } };
+        }
+        const aiEditPlan = createFallbackEditPlan(
+          record.project.title,
+          record.uploadedPackage.assetIndex,
+          record.uploadedPackage.healthReport,
+          userGoal
+        );
+        const nextRecord = {
+          ...record,
+          uploadedPackage: {
+            ...record.uploadedPackage,
+            aiEditPlan
+          }
+        };
+        await store.savePlayable(nextRecord);
+        return {
+          status: 200,
+          body: {
+            aiEditPlan,
+            modelTask: {
+              taskType: "llm.package_edit_plan",
+              provider: "mock",
+              model: "local-package-analyzer",
+              status: "fallback"
+            },
+            fallbackUsed: true
+          }
+        };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/replace-package-asset") {
+      try {
+        const projectId = requireString(request.body.projectId, "projectId");
+        const versionId = requireString(request.body.versionId, "versionId");
+        const assetPath = requireString(request.body.assetPath, "assetPath");
+        const fileBase64 = requireString(request.body.fileBase64, "fileBase64");
+        const record = await store.readPlayable(projectId, versionId);
+        if (!record?.uploadedPackage) {
+          return { status: 404, body: { error: "Uploaded package not found" } };
+        }
+        const editableAsset = [
+          ...record.uploadedPackage.assetIndex.images,
+          ...record.uploadedPackage.assetIndex.audio
+        ].find((asset) => asset.path === assetPath);
+        if (!editableAsset) {
+          return { status: 400, body: { error: `Asset is not safely replaceable: ${assetPath}` } };
+        }
+        await store.saveUploadedPackageFiles(projectId, versionId, [
+          { path: assetPath, bytes: decodeBase64(fileBase64) }
+        ]);
+        const aiEditPlan = createFallbackEditPlan(
+          record.project.title,
+          record.uploadedPackage.assetIndex,
+          record.uploadedPackage.healthReport,
+          `${assetPath} 已替换`
+        );
+        await store.savePlayable({
+          ...record,
+          uploadedPackage: {
+            ...record.uploadedPackage,
+            aiEditPlan
+          }
+        });
+        return {
+          status: 200,
+          body: {
+            replacedAsset: editableAsset,
+            aiEditPlan,
+            healthReport: record.uploadedPackage.healthReport
           }
         };
       } catch (error) {
@@ -166,6 +290,38 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       };
     }
   };
+}
+
+function contentTypeForPath(filePath: string): string {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".html")) return "text/html; charset=utf-8";
+  if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "text/javascript; charset=utf-8";
+  if (lower.endsWith(".css")) return "text/css; charset=utf-8";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".json")) return "application/json; charset=utf-8";
+  return "application/octet-stream";
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  const bufferCtor = (globalThis as { Buffer?: { from: (bytes: Uint8Array) => { toString: (encoding: string) => string } } }).Buffer;
+  if (bufferCtor) return bufferCtor.from(bytes).toString("base64");
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const normalized = value.includes(",") ? value.split(",").pop() ?? "" : value;
+  const bufferCtor = (globalThis as { Buffer?: { from: (value: string, encoding: string) => Uint8Array } }).Buffer;
+  if (bufferCtor) return bufferCtor.from(normalized, "base64");
+  const binary = atob(normalized);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
 function requireString(value: unknown, field: string): string {

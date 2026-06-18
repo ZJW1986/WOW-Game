@@ -63,11 +63,17 @@ export const assetRequirementSchema = z.object({
   prompt: z.string(),
   acceptedFileTypes: z.array(z.string()),
   previewUrl: z.string(),
-  source: z.enum(["mock", "preset", "uploaded", "generated"]),
+  source: z.enum(["mock", "preset", "uploaded", "generated", "library"]),
   fileUrl: z.string(),
   provider: z.string(),
   model: z.string(),
   generationParams: z.record(z.union([z.string(), z.number(), z.boolean()])),
+  transparentBackgroundRequired: z.boolean().optional(),
+  targetSize: z.string().optional(),
+  libraryTags: z.array(z.string()).optional(),
+  libraryAssetId: z.string().optional(),
+  derivedFromAssetKey: z.string().optional(),
+  approvalStatus: z.enum(["pending", "approved", "rejected"]).optional(),
   error: z.string().optional()
 });
 

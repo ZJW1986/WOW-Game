@@ -1,15 +1,18 @@
-import type { MockProject, PlayFeedback, PublishRecord } from "../core/types";
+import type { MockProject, PlayFeedback, PublishRecord, UploadedPackageArtifacts } from "../core/types";
 
 export interface PlayableStoreRecord {
   project: MockProject;
   publishRecord: PublishRecord;
   feedback: PlayFeedback[];
+  uploadedPackage?: UploadedPackageArtifacts;
 }
 
 export interface PlayableStoreOptions {
   dataDir: string;
   writeText?: (filePath: string, content: string) => Promise<void>;
   readText?: (filePath: string) => Promise<string | null>;
+  writeBytes?: (filePath: string, content: Uint8Array) => Promise<void>;
+  readBytes?: (filePath: string) => Promise<Uint8Array | null>;
   ensureDir?: (dirPath: string) => Promise<void>;
 }
 
@@ -17,6 +20,8 @@ export function createPlayableStore(options: PlayableStoreOptions) {
   const io = {
     writeText: options.writeText ?? defaultWriteText,
     readText: options.readText ?? defaultReadText,
+    writeBytes: options.writeBytes ?? defaultWriteBytes,
+    readBytes: options.readBytes ?? defaultReadBytes,
     ensureDir: options.ensureDir ?? defaultEnsureDir
   };
 
@@ -30,10 +35,7 @@ export function createPlayableStore(options: PlayableStoreOptions) {
     async readPlayable(projectId: string, versionId: string): Promise<PlayableStoreRecord | null> {
       const filePath = projectJsonPath(options.dataDir, projectId, versionId);
       const raw = await io.readText(filePath);
-      if (!raw) {
-        return null;
-      }
-      return JSON.parse(raw) as PlayableStoreRecord;
+      return raw ? (JSON.parse(raw) as PlayableStoreRecord) : null;
     },
 
     async addFeedback(
@@ -50,18 +52,41 @@ export function createPlayableStore(options: PlayableStoreOptions) {
         createdAt: new Date("2026-06-17T00:00:00.000Z").toISOString(),
         iterationSuggestion: `下一版可以根据“${feedback.comment}”优化节奏、数值和反馈。`
       };
-      const nextRecord: PlayableStoreRecord = {
+      await this.savePlayable({
         ...current,
         feedback: [...current.feedback, nextFeedback]
-      };
-      await this.savePlayable(nextRecord);
+      });
       return nextFeedback;
+    },
+
+    async saveUploadedPackageFiles(
+      projectId: string,
+      versionId: string,
+      files: Array<{ path: string; bytes: Uint8Array }>
+    ): Promise<void> {
+      for (const file of files) {
+        const filePath = uploadFilePath(options.dataDir, projectId, versionId, file.path);
+        await io.ensureDir(dirname(filePath));
+        await io.writeBytes(filePath, file.bytes);
+      }
+    },
+
+    async readUploadedPackageFile(
+      projectId: string,
+      versionId: string,
+      filePath: string
+    ): Promise<Uint8Array | null> {
+      return io.readBytes(uploadFilePath(options.dataDir, projectId, versionId, filePath));
     }
   };
 }
 
 function projectJsonPath(dataDir: string, projectId: string, versionId: string): string {
   return [dataDir, "projects", projectId, "versions", versionId, "project.json"].join("/");
+}
+
+function uploadFilePath(dataDir: string, projectId: string, versionId: string, filePath: string): string {
+  return [dataDir, "uploads", projectId, versionId, "files", filePath].join("/");
 }
 
 async function defaultWriteText(filePath: string, content: string): Promise<void> {
@@ -79,6 +104,21 @@ async function defaultReadText(filePath: string): Promise<string | null> {
   }
 }
 
+async function defaultWriteBytes(filePath: string, content: Uint8Array): Promise<void> {
+  const { mkdir, writeFile } = await loadFsPromises();
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, content);
+}
+
+async function defaultReadBytes(filePath: string): Promise<Uint8Array | null> {
+  try {
+    const { readFile } = await loadFsPromises();
+    return await readFile(filePath);
+  } catch {
+    return null;
+  }
+}
+
 async function defaultEnsureDir(dirPath: string): Promise<void> {
   const { mkdir } = await loadFsPromises();
   await mkdir(dirPath, { recursive: true });
@@ -90,13 +130,25 @@ function dirname(filePath: string): string {
 
 async function loadFsPromises(): Promise<{
   mkdir: (path: string, options: { recursive: boolean }) => Promise<unknown>;
-  readFile: (path: string, encoding: "utf8") => Promise<string>;
-  writeFile: (path: string, content: string, encoding: "utf8") => Promise<unknown>;
+  readFile: {
+    (path: string, encoding: "utf8"): Promise<string>;
+    (path: string): Promise<Uint8Array>;
+  };
+  writeFile: {
+    (path: string, content: string, encoding: "utf8"): Promise<unknown>;
+    (path: string, content: Uint8Array): Promise<unknown>;
+  };
 }> {
   const load = new Function("return import('fs/promises')");
   return (await load()) as {
     mkdir: (path: string, options: { recursive: boolean }) => Promise<unknown>;
-    readFile: (path: string, encoding: "utf8") => Promise<string>;
-    writeFile: (path: string, content: string, encoding: "utf8") => Promise<unknown>;
+    readFile: {
+      (path: string, encoding: "utf8"): Promise<string>;
+      (path: string): Promise<Uint8Array>;
+    };
+    writeFile: {
+      (path: string, content: string, encoding: "utf8"): Promise<unknown>;
+      (path: string, content: Uint8Array): Promise<unknown>;
+    };
   };
 }

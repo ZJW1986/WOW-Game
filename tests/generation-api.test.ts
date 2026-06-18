@@ -1,15 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { createGenerationApiHandler } from "../src/services/generationApi";
+import { zipSync, strToU8 } from "fflate";
 
 function memoryStore() {
   const writes = new Map<string, string>();
+  const binaryWrites = new Map<string, Uint8Array>();
   return {
     writeText: async (path: string, content: string) => {
       writes.set(path, content);
     },
     readText: async (path: string) => writes.get(path) ?? null,
+    writeBytes: async (path: string, content: Uint8Array) => {
+      binaryWrites.set(path, content);
+    },
+    readBytes: async (path: string) => binaryWrites.get(path) ?? null,
     ensureDir: async () => undefined
   };
+}
+
+function zipBase64(files: Record<string, string>): string {
+  const zipped = zipSync(
+    Object.fromEntries(Object.entries(files).map(([path, content]) => [path, strToU8(content)]))
+  );
+  return Buffer.from(zipped).toString("base64");
 }
 
 describe("generation api handler", () => {
@@ -231,7 +244,7 @@ describe("generation api handler", () => {
     expect(playResponse.body.feedback).toHaveLength(1);
   });
 
-  it("accepts uploaded package records as read-only playables", async () => {
+  it("parses uploaded zip packages into editable package artifacts", async () => {
     const storeIO = memoryStore();
     const handler = createGenerationApiHandler({
       env: {
@@ -247,15 +260,117 @@ describe("generation api handler", () => {
       body: {
         packageName: "Neon Drift",
         packageFileName: "neon-drift.zip",
-        packageEntry: "index.html",
+        packageBase64: zipBase64({
+          "index.html": '<script src="game.js"></script><img src="assets/player.png"><audio src="audio/bgm.mp3"></audio>',
+          "game.js": "console.log('play')",
+          "assets/player.png": "png",
+          "audio/bgm.mp3": "mp3"
+        }),
         description: "上传一个只读小游戏用于商城试玩"
       }
     });
 
     expect(uploadResponse.status).toBe(201);
     expect(uploadResponse.body.project.contentType).toBe("uploaded_package");
-    expect(uploadResponse.body.project.editable).toBe(false);
+    expect(uploadResponse.body.project.editable).toBe(true);
     expect(uploadResponse.body.project.shareable).toBe(true);
     expect(uploadResponse.body.project.sourceLabel).toBe("ZIP Package");
+    expect(uploadResponse.body.packageManifest.entry).toBe("index.html");
+    expect(uploadResponse.body.assetIndex.images[0].path).toBe("assets/player.png");
+    expect(uploadResponse.body.runtimeEntry.entryUrl).toContain("/uploads/");
+    expect(uploadResponse.body.healthReport.status).toBe("pass");
+
+    const playResponse = await handler({
+      method: "GET",
+      path: `/api/play/${uploadResponse.body.project.id}/v1`,
+      body: {}
+    });
+
+    expect(playResponse.status).toBe(200);
+    expect(playResponse.body.uploadedPackage.packageManifest.fileCount).toBe(4);
+  });
+
+  it("returns a fallback AI edit plan for persisted uploaded packages", async () => {
+    const storeIO = memoryStore();
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test" },
+      storeIO
+    });
+
+    const uploadResponse = await handler({
+      method: "POST",
+      path: "/api/upload-package",
+      body: {
+        packageName: "Neon Drift",
+        packageFileName: "neon-drift.zip",
+        packageBase64: zipBase64({
+          "index.html": '<script src="game.js"></script><img src="assets/player.png">',
+          "game.js": "console.log('play')",
+          "assets/player.png": "png"
+        })
+      }
+    });
+    const editPlanResponse = await handler({
+      method: "POST",
+      path: "/api/package-edit-plan",
+      body: {
+        projectId: uploadResponse.body.project.id,
+        versionId: "v1",
+        userGoal: "把主角换成机器人"
+      }
+    });
+
+    expect(editPlanResponse.status).toBe(200);
+    expect(editPlanResponse.body.fallbackUsed).toBe(true);
+    expect(editPlanResponse.body.aiEditPlan.summary).toContain("把主角换成机器人");
+    expect(editPlanResponse.body.aiEditPlan.editableAssets[0].path).toBe("assets/player.png");
+  });
+
+  it("replaces a safe uploaded package asset and keeps the play record readable", async () => {
+    const storeIO = memoryStore();
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test" },
+      storeIO
+    });
+
+    const uploadResponse = await handler({
+      method: "POST",
+      path: "/api/upload-package",
+      body: {
+        packageName: "Neon Drift",
+        packageFileName: "neon-drift.zip",
+        packageBase64: zipBase64({
+          "index.html": '<script src="game.js"></script><img src="assets/player.png">',
+          "game.js": "console.log('play')",
+          "assets/player.png": "old-png"
+        })
+      }
+    });
+    const replaceResponse = await handler({
+      method: "POST",
+      path: "/api/replace-package-asset",
+      body: {
+        projectId: uploadResponse.body.project.id,
+        versionId: "v1",
+        assetPath: "assets/player.png",
+        fileBase64: Buffer.from("new-png").toString("base64"),
+        fileName: "robot.png"
+      }
+    });
+    const fileResponse = await handler({
+      method: "GET",
+      path: `/api/uploads/${uploadResponse.body.project.id}/v1/files/assets/player.png`,
+      body: {}
+    });
+    const playResponse = await handler({
+      method: "GET",
+      path: `/api/play/${uploadResponse.body.project.id}/v1`,
+      body: {}
+    });
+
+    expect(replaceResponse.status).toBe(200);
+    expect(replaceResponse.body.replacedAsset.path).toBe("assets/player.png");
+    expect(fileResponse.body.fileBase64).toBe(Buffer.from("new-png").toString("base64"));
+    expect(playResponse.body.uploadedPackage.healthReport.status).toBe("pass");
   });
 });

@@ -58,6 +58,7 @@ import { createMediaGateway } from "../services/mediaGateway";
 import {
   requestPlayableGeneration,
   requestGuidedQuestions,
+  replacePackageAsset,
   requestPlayableProject,
   submitPlayableFeedback,
   uploadPlayablePackage
@@ -539,7 +540,8 @@ export function App() {
           const payload = await uploadPlayablePackage({
             packageName: file.name.replace(/\.zip$/i, ""),
             packageFileName: file.name,
-            packageEntry: "index.html",
+            packageBase64: await readFileAsBase64(file),
+            baseUrl: getBrowserBaseUrl(),
             description: `上传包：${file.name}`
           });
           addUploadedPackage(payload.project as MockProject);
@@ -700,7 +702,15 @@ export function App() {
               <PreviewWorkspace project={generatedProject} messages={t} phase={creationPhase} notice={generationNotice} />
             )}
             {activeTab === "assets" && (
-              <AssetWorkspace key={`${project.id}-${project.version.id}`} project={project} messages={t} />
+              <AssetWorkspace
+                key={`${project.id}-${project.version.id}`}
+                project={project}
+                messages={t}
+                onAssetsChange={(assets) => {
+                  const nextProject = { ...project, assetPack: { ...project.assetPack, assets } };
+                  setGeneratedProject(nextProject);
+                }}
+              />
             )}
             {activeTab === "code" && <CodeWorkspace project={project} messages={t} />}
           </div>
@@ -717,6 +727,18 @@ export function App() {
       )}
     </main>
   );
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result ?? "");
+      resolve(value.includes(",") ? value.split(",").pop() ?? "" : value);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read uploaded package"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function StartPage({
@@ -1018,17 +1040,28 @@ function PlayableDetailPage({
   messages: ReturnType<typeof getMessages>;
   onCreate: () => void;
 }) {
-  const [record, setRecord] = useState<{ project: MockProject; publishRecord: { publicUrl: string } } | null>(null);
+  const [record, setRecord] = useState<{
+    project: MockProject;
+    publishRecord: { publicUrl: string };
+    uploadedPackage?: {
+      runtimeEntry: { entryUrl: string };
+      packageManifest: { fileCount: number; totalSize: number };
+      assetIndex: { images: Array<{ path: string; type: string }>; audio: Array<{ path: string; type: string }> };
+      healthReport: { status: string; errors: string[]; warnings: string[] };
+      aiEditPlan: { summary: string; suggestedEdits: string[] };
+    };
+  } | null>(null);
   const [error, setError] = useState("");
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [packageMessage, setPackageMessage] = useState("");
 
   useEffect(() => {
     let active = true;
     requestPlayableProject(projectId, versionId)
       .then((payload) => {
-        if (active) setRecord(payload as { project: MockProject; publishRecord: { publicUrl: string } });
+        if (active) setRecord(payload as NonNullable<typeof record>);
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -1062,6 +1095,11 @@ function PlayableDetailPage({
   }
 
   const project = record.project;
+  const refreshRecord = () => {
+    requestPlayableProject(projectId, versionId).then((payload) => {
+      setRecord(payload as NonNullable<typeof record>);
+    });
+  };
   return (
     <main className="play-detail-shell">
       <header className="play-detail-header">
@@ -1074,7 +1112,11 @@ function PlayableDetailPage({
       </header>
       <section className="play-detail-layout">
         <div className="play-detail-game">
-          <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
+          {record.uploadedPackage ? (
+            <UploadedPackagePreview packageRecord={record.uploadedPackage} title={project.title} />
+          ) : (
+            <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
+          )}
         </div>
         <aside className="play-detail-side">
           <h2>{messages.playDetail.goal}</h2>
@@ -1083,6 +1125,41 @@ function PlayableDetailPage({
           <p>{project.gameConfig.controls.join(" / ")}</p>
           <h2>{messages.playDetail.shareLink}</h2>
           <code>{record.publishRecord.publicUrl}</code>
+          {record.uploadedPackage ? (
+            <div className="uploaded-package-summary">
+              <h2>上传包体</h2>
+              <p>
+                {record.uploadedPackage.packageManifest.fileCount} files / {record.uploadedPackage.healthReport.status}
+              </p>
+              <p>图片 {record.uploadedPackage.assetIndex.images.length} / 音频 {record.uploadedPackage.assetIndex.audio.length}</p>
+              <strong>AI 修改建议</strong>
+              <p>{record.uploadedPackage.aiEditPlan.summary}</p>
+              <strong>安全替换资源</strong>
+              {[...record.uploadedPackage.assetIndex.images, ...record.uploadedPackage.assetIndex.audio].map((asset) => (
+                <label className="package-asset-replace" key={asset.path}>
+                  <span>{asset.path}</span>
+                  <input
+                    type="file"
+                    accept={asset.type === "audio" ? "audio/*" : "image/*"}
+                    onChange={async (event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      await replacePackageAsset({
+                        projectId,
+                        versionId,
+                        assetPath: asset.path,
+                        fileBase64: await readFileAsBase64(file),
+                        fileName: file.name
+                      });
+                      setPackageMessage(`${asset.path} 已替换`);
+                      refreshRecord();
+                    }}
+                  />
+                </label>
+              ))}
+              {packageMessage ? <p className="feedback-message">{packageMessage}</p> : null}
+            </div>
+          ) : null}
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -1116,6 +1193,34 @@ function PlayableDetailPage({
         </aside>
       </section>
     </main>
+  );
+}
+
+function UploadedPackagePreview({
+  packageRecord,
+  title
+}: {
+  packageRecord: {
+    runtimeEntry: { entryUrl: string };
+    healthReport: { status: string; errors: string[]; warnings: string[] };
+  };
+  title: string;
+}) {
+  if (packageRecord.healthReport.status === "fail") {
+    return (
+      <div className="uploaded-package-preview error">
+        <h2>上传游戏暂不可运行</h2>
+        <p>{packageRecord.healthReport.errors.join(" / ")}</p>
+      </div>
+    );
+  }
+  return (
+    <iframe
+      className="uploaded-package-frame"
+      title={`${title} uploaded playable`}
+      src={packageRecord.runtimeEntry.entryUrl}
+      sandbox="allow-scripts allow-same-origin allow-pointer-lock"
+    />
   );
 }
 
@@ -1759,7 +1864,15 @@ function VerificationRail({ project, messages }: { project: MockProject; message
   );
 }
 
-function AssetWorkspace({ project, messages }: { project: MockProject; messages: ReturnType<typeof getMessages> }) {
+function AssetWorkspace({
+  project,
+  messages,
+  onAssetsChange
+}: {
+  project: MockProject;
+  messages: ReturnType<typeof getMessages>;
+  onAssetsChange: (assets: AssetRequirement[]) => void;
+}) {
   const [assets, setAssets] = useState<AssetRequirement[]>(project.assetPack.assets);
   const [query, setQuery] = useState("");
   const [selectedKey, setSelectedKey] = useState(project.assetPack.assets[0]?.assetKey ?? "");
@@ -1772,9 +1885,11 @@ function AssetWorkspace({ project, messages }: { project: MockProject; messages:
   });
 
   const updateAsset = (nextAsset: AssetRequirement) => {
-    setAssets((current) =>
-      current.map((asset) => (asset.assetKey === nextAsset.assetKey ? nextAsset : asset))
-    );
+    setAssets((current) => {
+      const nextAssets = current.map((asset) => (asset.assetKey === nextAsset.assetKey ? nextAsset : asset));
+      onAssetsChange(nextAssets);
+      return nextAssets;
+    });
     setSelectedKey(nextAsset.assetKey);
   };
 
@@ -1792,6 +1907,17 @@ function AssetWorkspace({ project, messages }: { project: MockProject; messages:
       )
     );
     setAssets(nextAssets);
+    onAssetsChange(nextAssets);
+  };
+
+  const replaceFromLibrary = async (asset: AssetRequirement) => {
+    const nextAsset = await mediaGateway.generateProjectAsset(project.id, project.version.id, {
+      ...asset,
+      source: "library",
+      provider: "asset-library",
+      model: "builtin-library-v1"
+    });
+    updateAsset(nextAsset);
   };
 
   const uploadAsset = (asset: AssetRequirement, file: File) => {
@@ -1842,6 +1968,12 @@ function AssetWorkspace({ project, messages }: { project: MockProject; messages:
             {messages.assets.create}
           </button>
         )}
+        {selectedAsset && (selectedAsset.type === "image" || selectedAsset.type === "ui") && (
+          <button className="asset-toolbar-button" onClick={() => replaceFromLibrary(selectedAsset)}>
+            <Library size={16} />
+            {messages.assets.replaceFromLibrary}
+          </button>
+        )}
       </div>
 
       <div className="asset-browser-summary">
@@ -1859,6 +1991,7 @@ function AssetWorkspace({ project, messages }: { project: MockProject; messages:
               selected={asset.assetKey === selectedAsset?.assetKey}
               onSelect={() => setSelectedKey(asset.assetKey)}
               onRegenerate={() => regenerateAsset(asset)}
+              onReplaceFromLibrary={() => replaceFromLibrary(asset)}
               onUpload={(file) => uploadAsset(asset, file)}
             />
           ))}
@@ -1875,6 +2008,8 @@ function AssetInspector({ asset, messages }: { asset: AssetRequirement; messages
       <div className="asset-inspector-preview">
         {asset.type === "sfx" || asset.type === "bgm" ? (
           <div className="audio-preview">{messages.assets.audio}</div>
+        ) : asset.fileUrl && asset.fileUrl.startsWith("data:image") ? (
+          <img src={asset.fileUrl} alt={asset.assetKey} />
         ) : (
           <div className={`asset-visual ${asset.type}`}>{asset.type}</div>
         )}
@@ -1895,6 +2030,10 @@ function AssetInspector({ asset, messages }: { asset: AssetRequirement; messages
         <strong>{asset.model}</strong>
         <span>{messages.assets.copyright}</span>
         <strong>{asset.copyrightStatus}</strong>
+        <span>{messages.assets.targetSize}</span>
+        <strong>{asset.targetSize ?? "-"}</strong>
+        <span>{messages.assets.approval}</span>
+        <strong>{asset.approvalStatus ?? "-"}</strong>
       </div>
       {asset.error && <p className="asset-error">{asset.error}</p>}
     </aside>
@@ -1926,6 +2065,7 @@ function AssetTile({
   selected,
   onSelect,
   onRegenerate,
+  onReplaceFromLibrary,
   onUpload
 }: {
   asset: AssetRequirement;
@@ -1933,13 +2073,20 @@ function AssetTile({
   selected: boolean;
   onSelect: () => void;
   onRegenerate: () => void;
+  onReplaceFromLibrary: () => void;
   onUpload: (file: File) => void;
 }) {
   return (
     <article className={selected ? "asset-tile selected" : "asset-tile"} onClick={onSelect}>
       <input className="asset-check" type="checkbox" checked={selected} readOnly aria-label={asset.assetKey} />
       <div className={`asset-thumb ${asset.type}`}>
-        {asset.type === "sfx" || asset.type === "bgm" ? <span>{audioLabel}</span> : <Database size={22} />}
+        {asset.type === "sfx" || asset.type === "bgm" ? (
+          <span>{audioLabel}</span>
+        ) : asset.fileUrl && asset.fileUrl.startsWith("data:image") ? (
+          <img src={asset.fileUrl} alt="" />
+        ) : (
+          <Database size={22} />
+        )}
       </div>
       <strong>{asset.assetKey}</strong>
       <span>{asset.type} / {asset.status}</span>
@@ -1952,6 +2099,16 @@ function AssetTile({
         >
           <RefreshCcw size={14} />
         </button>
+        {(asset.type === "image" || asset.type === "ui") && (
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onReplaceFromLibrary();
+            }}
+          >
+            <Library size={14} />
+          </button>
+        )}
         <label onClick={(event) => event.stopPropagation()}>
           <Upload size={14} />
           <input

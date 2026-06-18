@@ -36,9 +36,9 @@ describe("procedural game resources", () => {
     );
 
     expect(generated.every((asset) => asset.status === "generated")).toBe(true);
-    expect(generated.every((asset) => asset.source === "generated")).toBe(true);
-    expect(generated.every((asset) => asset.provider === "procedural")).toBe(true);
-    expect(generated.find((asset) => asset.assetKey === "player.ship")?.fileUrl).toMatch(/^data:image\/svg\+xml/);
+    expect(generated.find((asset) => asset.assetKey === "player.ship")?.source).toBe("library");
+    expect(generated.find((asset) => asset.assetKey === "player.ship")?.provider).toBe("asset-library");
+    expect(generated.find((asset) => asset.assetKey === "player.ship")?.fileUrl).toMatch(/^data:image\/png/);
     expect(generated.find((asset) => asset.assetKey === "sfx.collect")?.fileUrl).toMatch(/^data:application\/json/);
     expect(generated.find((asset) => asset.assetKey === "bgm.loop")?.generationParams.pattern).toBe("loop");
     expect(generated.find((asset) => asset.assetKey === "vfx.collect")?.generationParams.preset).toBe("collect-burst");
@@ -51,6 +51,7 @@ describe("procedural game resources", () => {
     expect(project.assetPack.assets.some((asset) => asset.assetKey === "item.collectible")).toBe(true);
     expect(project.assetPack.assets.some((asset) => asset.assetKey === "vfx.collect")).toBe(true);
     expect(project.assetPack.assets.every((asset) => asset.fileUrl.startsWith("data:"))).toBe(true);
+    expect(project.assetPack.assets.find((asset) => asset.assetKey === "player.ship")?.source).toBe("library");
   });
 
   it("keeps the asset key stable when users upload replacement resources", () => {
@@ -81,7 +82,7 @@ describe("procedural game resources", () => {
     });
 
     expect(result.project.artifacts.some((artifact) => artifact.fileName === "asset-style-guide.json")).toBe(true);
-    expect(result.project.assetPack.assets.every((asset) => asset.provider === "procedural")).toBe(true);
+    expect(result.project.assetPack.assets.find((asset) => asset.assetKey === "player.ship")?.provider).toBe("asset-library");
     expect(result.project.assetPack.assets.every((asset) => asset.fileUrl.startsWith("data:"))).toBe(true);
     expect(result.project.qaReport.scores.buildHealth).toBeGreaterThan(80);
   });
@@ -91,9 +92,25 @@ describe("procedural game resources", () => {
 
     const runtimeAssets = selectPreviewRuntimeAssets(project.assetPack);
 
-    expect(runtimeAssets.player).toMatch(/^data:image\/svg\+xml/);
-    expect(runtimeAssets.collectible).toMatch(/^data:image\/svg\+xml/);
-    expect(runtimeAssets.hazard).toMatch(/^data:image\/svg\+xml/);
-    expect(runtimeAssets.background).toMatch(/^data:image\/svg\+xml/);
+    expect(runtimeAssets.player).toMatch(/^data:image\/png/);
+    expect(runtimeAssets.collectible).toMatch(/^data:image\/png/);
+    expect(runtimeAssets.hazard).toMatch(/^data:image\/png/);
+    expect(runtimeAssets.background).toMatch(/^data:image\/png/);
+  });
+
+  it("selects project image urls for the Phaser preview runtime", () => {
+    const project = runMockPipeline("做一个飞船躲避陨石并收集星星的小游戏");
+    const assetPack = {
+      ...project.assetPack,
+      assets: project.assetPack.assets.map((asset) =>
+        asset.assetKey === "player.ship"
+          ? { ...asset, fileUrl: "/projects/project-1/v1/assets/player.ship.png" }
+          : asset
+      )
+    };
+
+    const runtimeAssets = selectPreviewRuntimeAssets(assetPack);
+
+    expect(runtimeAssets.player).toBe("/projects/project-1/v1/assets/player.ship.png");
   });
 });

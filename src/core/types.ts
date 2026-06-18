@@ -20,7 +20,7 @@ export type PipelineStage =
 
 export type AssetType = "image" | "sfx" | "bgm" | "effect" | "ui" | "build";
 export type AssetStatus = "missing" | "mock" | "uploaded" | "generated" | "failed";
-export type AssetSource = "mock" | "preset" | "uploaded" | "generated";
+export type AssetSource = "mock" | "preset" | "uploaded" | "generated" | "library";
 
 export interface AssetStyleGuide {
   visualStyle: string;
@@ -64,6 +64,12 @@ export interface AssetRequirement {
   provider: string;
   model: string;
   generationParams: Record<string, string | number | boolean>;
+  transparentBackgroundRequired?: boolean;
+  targetSize?: string;
+  libraryTags?: string[];
+  libraryAssetId?: string;
+  derivedFromAssetKey?: string;
+  approvalStatus?: "pending" | "approved" | "rejected";
   error?: string;
 }
 
@@ -189,4 +195,62 @@ export interface PlayFeedback {
   playerName: string;
   iterationSuggestion: string;
   createdAt: string;
+}
+
+export interface UploadedPackageFile {
+  path: string;
+  size: number;
+  type: "html" | "script" | "style" | "image" | "audio" | "font" | "data" | "other";
+}
+
+export interface UploadedPackageManifest {
+  packageName: string;
+  packageFileName: string;
+  projectId: string;
+  versionId: string;
+  entry: string;
+  fileCount: number;
+  totalSize: number;
+  playable: boolean;
+  files: UploadedPackageFile[];
+}
+
+export interface UploadedAssetIndex {
+  images: UploadedPackageFile[];
+  audio: UploadedPackageFile[];
+  fonts: UploadedPackageFile[];
+  data: UploadedPackageFile[];
+  scripts: UploadedPackageFile[];
+  styles: UploadedPackageFile[];
+}
+
+export interface RuntimeEntry {
+  entry: string;
+  entryUrl: string;
+  scripts: string[];
+  styles: string[];
+  images: string[];
+  audio: string[];
+}
+
+export interface PackageHealthReport {
+  status: "pass" | "warning" | "fail";
+  checks: string[];
+  errors: string[];
+  warnings: string[];
+}
+
+export interface AiPackageEditPlan {
+  summary: string;
+  editableAssets: UploadedPackageFile[];
+  suggestedEdits: string[];
+  risks: string[];
+}
+
+export interface UploadedPackageArtifacts {
+  packageManifest: UploadedPackageManifest;
+  assetIndex: UploadedAssetIndex;
+  runtimeEntry: RuntimeEntry;
+  healthReport: PackageHealthReport;
+  aiEditPlan: AiPackageEditPlan;
 }

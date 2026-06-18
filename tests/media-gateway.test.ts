@@ -8,6 +8,19 @@ import { createAssetRequirements } from "../src/core/pipeline";
 import { createMediaGateway } from "../src/services/mediaGateway";
 
 describe("project asset protocol", () => {
+  it("adds image constraints for character and environment requirements", () => {
+    const requirements = createAssetRequirements("top_down");
+    const player = requirements.find((asset) => asset.assetKey === "player.ship");
+    const background = requirements.find((asset) => asset.assetKey === "world.background");
+
+    expect(player?.transparentBackgroundRequired).toBe(true);
+    expect(player?.targetSize).toBe("512x512");
+    expect(player?.libraryTags).toEqual(expect.arrayContaining(["character", "top_down"]));
+    expect(background?.transparentBackgroundRequired).toBe(false);
+    expect(background?.targetSize).toBe("1536x864");
+    expect(background?.libraryTags).toEqual(expect.arrayContaining(["environment", "top_down"]));
+  });
+
   it("marks generated project assets with status, source, file url and model metadata", async () => {
     const requirement = createAssetRequirements("top_down").find(
       (asset) => asset.assetKey === "player.ship"
@@ -56,6 +69,45 @@ describe("project asset protocol", () => {
     expect(asset.status).toBe("mock");
     expect(asset.source).toBe("mock");
     expect(asset.error).toContain("audio provider unavailable");
+  });
+
+  it("uses asset library fallback for images when no image provider is configured", async () => {
+    const requirement = createAssetRequirements("top_down").find(
+      (asset) => asset.assetKey === "player.ship"
+    );
+    if (!requirement) throw new Error("missing player.ship fixture");
+
+    const gateway = createMediaGateway();
+    const asset = await gateway.generateProjectAsset("project-1", "v1", requirement);
+
+    expect(asset.assetKey).toBe("player.ship");
+    expect(asset.source).toBe("library");
+    expect(asset.status).toBe("generated");
+    expect(asset.provider).toBe("asset-library");
+    expect(asset.fileUrl).toMatch(/^data:image\/png/);
+    expect(asset.generationParams.transparentBackground).toBe(true);
+    expect(asset.libraryAssetId).toContain("player.ship");
+    expect(asset.approvalStatus).toBe("pending");
+  });
+
+  it("falls back to asset library for images when provider execution fails", async () => {
+    const requirement = createAssetRequirements("top_down").find(
+      (asset) => asset.assetKey === "world.background"
+    );
+    if (!requirement) throw new Error("missing world.background fixture");
+
+    const gateway = createMediaGateway({
+      imageProvider: async () => {
+        throw new Error("image provider unavailable");
+      }
+    });
+
+    const asset = await gateway.generateProjectAsset("project-1", "v1", requirement);
+
+    expect(asset.source).toBe("library");
+    expect(asset.provider).toBe("asset-library");
+    expect(asset.error).toContain("image provider unavailable");
+    expect(asset.generationParams.transparentBackground).toBe(false);
   });
 
   it("keeps the same asset key when regenerating a failed asset", async () => {

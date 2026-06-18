@@ -71,13 +71,16 @@ export function runMockPipeline(idea: string): MockProject {
   const mediaGateway = createMediaGateway();
   const assetPack: AssetPack = {
     versionId: "v1",
-    assets: assetRequirements.map((requirement) =>
-      mediaGateway.generateProceduralAsset("project-starlight-001", "v1", {
+    assets: assetRequirements.map((requirement) => {
+      const styledRequirement = {
         ...requirement,
         style: `${assetStyleGuide.visualStyle}; ${requirement.style}`,
         prompt: assetStyleGuide.assetPrompts[requirement.assetKey] ?? requirement.prompt
-      })
-    )
+      };
+      return styledRequirement.type === "image" || styledRequirement.type === "ui"
+        ? mediaGateway.generateImageAsset("project-starlight-001", "v1", styledRequirement)
+        : mediaGateway.generateProceduralAsset("project-starlight-001", "v1", styledRequirement);
+    })
   };
   const gameConfig = createGameConfig(title, idea, classification.templateFamily, assetPack);
   const qaReport = createQaReport(gameConfig, assetPack);
@@ -179,7 +182,10 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       style: "bright arcade thumbnail",
       generationMode: "mock",
       copyrightStatus: "placeholder",
-      spec: "16:9 cover, clear title-safe center"
+      spec: "16:9 cover, clear title-safe center",
+      transparentBackgroundRequired: false,
+      targetSize: "1536x864",
+      libraryTags: ["cover", "environment"]
     }),
     projectAsset({
       assetKey: "ui.button",
@@ -352,6 +358,8 @@ export function createAssetStyleGuide(input: {
 }
 
 function mockImage(assetKey: string, purpose: string, spec: string): AssetRequirement {
+  const isCharacter = assetKey.startsWith("player.");
+  const isEnvironment = assetKey.startsWith("world.") || assetKey === "cover.main";
   return projectAsset({
     assetKey,
     type: "image",
@@ -359,7 +367,13 @@ function mockImage(assetKey: string, purpose: string, spec: string): AssetRequir
     style: "clean 2D arcade",
     generationMode: "mock",
     copyrightStatus: "placeholder",
-    spec
+    spec,
+    transparentBackgroundRequired: isCharacter,
+    targetSize: isEnvironment ? "1536x864" : "512x512",
+    libraryTags: [
+      isCharacter ? "character" : isEnvironment ? "environment" : "prop",
+      assetKey.includes("ship") || assetKey.includes("background") ? "top_down" : "template"
+    ]
   });
 }
 
@@ -371,6 +385,9 @@ function projectAsset(input: {
   generationMode: AssetRequirement["generationMode"];
   copyrightStatus: AssetRequirement["copyrightStatus"];
   spec: string;
+  transparentBackgroundRequired?: boolean;
+  targetSize?: string;
+  libraryTags?: string[];
 }): AssetRequirement {
   const status = defaultStatus(input.generationMode);
   const source = defaultSource(input.generationMode);
@@ -384,6 +401,9 @@ function projectAsset(input: {
     fileUrl: defaultFileUrl(input.assetKey, input.type, source),
     provider: input.generationMode === "preset" ? "preset" : "mock",
     model: input.generationMode === "preset" ? "preset-v1" : "mock-media-v1",
+    transparentBackgroundRequired: input.transparentBackgroundRequired,
+    targetSize: input.targetSize,
+    libraryTags: input.libraryTags,
     generationParams: {
       spec: input.spec,
       style: input.style

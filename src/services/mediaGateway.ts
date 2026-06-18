@@ -28,12 +28,13 @@ export interface MediaGatewayOptions {
   imageProvider?: (input: MediaProviderInput) => Promise<MediaProviderResult>;
   audioProvider?: (input: MediaProviderInput) => Promise<MediaProviderResult>;
   effectProvider?: (input: MediaProviderInput) => Promise<MediaProviderResult>;
+  assetLibraryProvider?: (input: MediaProviderInput) => Promise<MediaProviderResult>;
 }
 
 export function createMediaGateway(options: MediaGatewayOptions = {}) {
   return {
     generateImageAsset(projectId: string, versionId: string, requirement: AssetRequirement): AssetRequirement {
-      return proceduralAsset(projectId, versionId, requirement);
+      return applyProviderResult(requirement, builtinLibraryAsset({ projectId, versionId, requirement }));
     },
 
     generateSfxAsset(projectId: string, versionId: string, requirement: AssetRequirement): AssetRequirement {
@@ -116,8 +117,21 @@ async function generateWithProvider(
       const result = await provider({ projectId, versionId, requirement });
       return applyProviderResult(requirement, result);
     }
+    if (isImageRequirement(requirement)) {
+      return applyProviderResult(requirement, await selectLibraryAsset({ projectId, versionId, requirement }, options));
+    }
     return proceduralAsset(projectId, versionId, requirement);
   } catch (error) {
+    if (isImageRequirement(requirement)) {
+      const libraryAsset = applyProviderResult(
+        requirement,
+        await selectLibraryAsset({ projectId, versionId, requirement }, options)
+      );
+      return {
+        ...libraryAsset,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
     return fallbackAsset(
       projectId,
       versionId,
@@ -125,6 +139,218 @@ async function generateWithProvider(
       error instanceof Error ? error.message : String(error)
     );
   }
+}
+
+async function selectLibraryAsset(
+  input: MediaProviderInput,
+  options: MediaGatewayOptions
+): Promise<MediaProviderResult> {
+  if (options.assetLibraryProvider) {
+    return options.assetLibraryProvider(input);
+  }
+  return builtinLibraryAsset(input);
+}
+
+function isImageRequirement(requirement: AssetRequirement): boolean {
+  return requirement.type === "image" || requirement.type === "ui";
+}
+
+function builtinLibraryAsset(input: MediaProviderInput): MediaProviderResult {
+  const { requirement, projectId, versionId } = input;
+  const transparent = Boolean(requirement.transparentBackgroundRequired);
+  const targetSize = requirement.targetSize ?? (transparent ? "512x512" : "1536x864");
+  const fileUrl = createLibraryPngDataUrl(requirement, transparent);
+  return {
+    status: "generated",
+    source: "library",
+    fileUrl,
+    previewUrl: fileUrl,
+    provider: "asset-library",
+    model: "builtin-library-v1",
+    generationParams: {
+      projectId,
+      versionId,
+      targetSize,
+      transparentBackground: transparent,
+      libraryTags: (requirement.libraryTags ?? []).join(",")
+    }
+  };
+}
+
+function colorForBackground(assetKey: string): string {
+  if (assetKey.includes("background") || assetKey.includes("cover")) return "#10243a";
+  if (assetKey.includes("tiles") || assetKey.includes("path")) return "#1f3b2f";
+  return "#111827";
+}
+
+function createLibraryPngDataUrl(requirement: AssetRequirement, transparent: boolean): string {
+  const size = 32;
+  const pixels = new Uint8Array(size * size * 4);
+  const fill = parseHexColor(transparent ? "#000000" : colorForBackground(requirement.assetKey));
+  const primary = parseHexColor(colorForAsset(requirement.assetKey));
+  const accent = parseHexColor(accentForAsset(requirement.assetKey));
+  const shape = shapeForAsset(requirement.assetKey);
+
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      setPixel(pixels, size, x, y, fill, transparent ? 0 : 255);
+    }
+  }
+
+  if (shape === "ship") {
+    for (let y = 3; y < 29; y += 1) {
+      const halfWidth = Math.max(1, Math.floor((y - 2) / 2.2));
+      for (let x = 16 - halfWidth; x <= 16 + halfWidth; x += 1) {
+        if (x >= 0 && x < size) setPixel(pixels, size, x, y, primary, 255);
+      }
+    }
+    drawCircle(pixels, size, 16, 18, 4, accent, 255);
+  } else if (shape === "collectible") {
+    drawCircle(pixels, size, 16, 16, 10, primary, 255);
+    drawCircle(pixels, size, 16, 16, 4, accent, 255);
+  } else if (shape === "hazard") {
+    for (let y = 5; y < 29; y += 1) {
+      const halfWidth = Math.floor((y - 5) / 1.2);
+      for (let x = 16 - halfWidth; x <= 16 + halfWidth; x += 1) {
+        if (x >= 0 && x < size) setPixel(pixels, size, x, y, primary, 255);
+      }
+    }
+    drawCircle(pixels, size, 16, 22, 2, accent, 255);
+  } else {
+    for (let y = 21; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        if (y > 24 - Math.sin(x / 4) * 3) setPixel(pixels, size, x, y, primary, 220);
+      }
+    }
+    drawCircle(pixels, size, 7, 8, 1, accent, 255);
+    drawCircle(pixels, size, 23, 11, 1, accent, 255);
+  }
+
+  return `data:image/png;base64,${encodeBase64(encodePng(size, size, pixels))}`;
+}
+
+function parseHexColor(hex: string): [number, number, number] {
+  const normalized = hex.replace("#", "");
+  return [
+    Number.parseInt(normalized.slice(0, 2), 16),
+    Number.parseInt(normalized.slice(2, 4), 16),
+    Number.parseInt(normalized.slice(4, 6), 16)
+  ];
+}
+
+function setPixel(
+  pixels: Uint8Array,
+  size: number,
+  x: number,
+  y: number,
+  color: [number, number, number],
+  alpha: number
+) {
+  const offset = (y * size + x) * 4;
+  pixels[offset] = color[0];
+  pixels[offset + 1] = color[1];
+  pixels[offset + 2] = color[2];
+  pixels[offset + 3] = alpha;
+}
+
+function drawCircle(
+  pixels: Uint8Array,
+  size: number,
+  centerX: number,
+  centerY: number,
+  radius: number,
+  color: [number, number, number],
+  alpha: number
+) {
+  for (let y = centerY - radius; y <= centerY + radius; y += 1) {
+    for (let x = centerX - radius; x <= centerX + radius; x += 1) {
+      if (x >= 0 && x < size && y >= 0 && y < size && (x - centerX) ** 2 + (y - centerY) ** 2 <= radius ** 2) {
+        setPixel(pixels, size, x, y, color, alpha);
+      }
+    }
+  }
+}
+
+function encodePng(width: number, height: number, rgba: Uint8Array): Uint8Array {
+  const scanlines = new Uint8Array((width * 4 + 1) * height);
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = y * (width * 4 + 1);
+    scanlines[rowStart] = 0;
+    scanlines.set(rgba.subarray(y * width * 4, (y + 1) * width * 4), rowStart + 1);
+  }
+  return concatBytes([
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", concatBytes([uint32(width), uint32(height), new Uint8Array([8, 6, 0, 0, 0])])),
+    pngChunk("IDAT", zlibStore(scanlines)),
+    pngChunk("IEND", new Uint8Array())
+  ]);
+}
+
+function zlibStore(data: Uint8Array): Uint8Array {
+  const blocks: Uint8Array[] = [new Uint8Array([0x78, 0x01])];
+  for (let offset = 0; offset < data.length; offset += 65535) {
+    const chunk = data.subarray(offset, offset + 65535);
+    const finalBlock = offset + 65535 >= data.length ? 1 : 0;
+    const header = new Uint8Array([
+      finalBlock,
+      chunk.length & 0xff,
+      (chunk.length >> 8) & 0xff,
+      (~chunk.length) & 0xff,
+      ((~chunk.length) >> 8) & 0xff
+    ]);
+    blocks.push(header, chunk);
+  }
+  blocks.push(uint32(adler32(data)));
+  return concatBytes(blocks);
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const typeBytes = new TextEncoder().encode(type);
+  return concatBytes([uint32(data.length), typeBytes, data, uint32(crc32(concatBytes([typeBytes, data])))]);
+}
+
+function uint32(value: number): Uint8Array {
+  return new Uint8Array([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result;
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function adler32(bytes: Uint8Array): number {
+  let a = 1;
+  let b = 0;
+  for (const byte of bytes) {
+    a = (a + byte) % 65521;
+    b = (b + a) % 65521;
+  }
+  return ((b << 16) | a) >>> 0;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  const bufferCtor = (globalThis as { Buffer?: { from: (bytes: Uint8Array) => { toString: (encoding: string) => string } } }).Buffer;
+  if (bufferCtor) return bufferCtor.from(bytes).toString("base64");
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 function proceduralAsset(
@@ -278,6 +504,11 @@ function applyProviderResult(
     previewUrl: result.previewUrl ?? result.fileUrl,
     provider: result.provider,
     model: result.model,
+    libraryAssetId:
+      result.source === "library"
+        ? `${result.provider}:${requirement.assetKey}:${requirement.targetSize ?? "auto"}`
+        : requirement.libraryAssetId,
+    approvalStatus: result.source === "uploaded" ? "approved" : "pending",
     generationParams: {
       ...requirement.generationParams,
       ...(result.generationParams ?? {})

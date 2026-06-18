@@ -219,6 +219,7 @@ export const messages = {
       upload: "上传",
       create: "生成",
       regenerate: "重新生成",
+      replaceFromLibrary: "从资源库替换",
       regenerateMissing: "补齐缺失",
       search: "搜索资源",
       ready: "就绪",
@@ -226,6 +227,8 @@ export const messages = {
       back: "返回",
       provider: "Provider",
       model: "Model",
+      targetSize: "目标尺寸",
+      approval: "确认状态",
       audio: "Audio"
     },
     code: {
@@ -449,6 +452,7 @@ export const messages = {
       upload: "Upload",
       create: "Create",
       regenerate: "Regenerate",
+      replaceFromLibrary: "Use library",
       regenerateMissing: "Regenerate missing",
       search: "Search assets",
       ready: "ready",
@@ -456,6 +460,8 @@ export const messages = {
       back: "Back",
       provider: "Provider",
       model: "Model",
+      targetSize: "Target size",
+      approval: "Approval",
       audio: "Audio"
     },
     code: {
