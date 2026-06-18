@@ -1,4 +1,4 @@
-import type { DesignQuestion, UserAnswer, TemplateFamily } from "../core/types";
+import type { DesignQuestion, UserAnswer, TemplateFamily, UserMaterial } from "../core/types";
 import type { StartModelId } from "../core/start";
 
 export interface PlayableGenerationRequest {
@@ -10,6 +10,7 @@ export interface PlayableGenerationRequest {
   model: StartModelId;
   referencePackageId?: string;
   referenceVersionId?: string;
+  userMaterials?: UserMaterial[];
 }
 
 export interface UploadPlayablePackageRequest {

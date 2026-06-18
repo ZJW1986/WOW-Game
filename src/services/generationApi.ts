@@ -278,7 +278,8 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         projectId: optionalString(request.body.projectId) ?? `project-${Date.now()}`,
         baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
         model: parseModel(request.body.model),
-        referencePackageSummary
+        referencePackageSummary,
+        userMaterials: parseUserMaterials(request.body.userMaterials)
       });
       if (referencePackageId && referenceVersionId && !referencePackageSummary) {
         result.fallbacksUsed.push("reference_package_missing");
@@ -422,6 +423,35 @@ function parseAnswers(value: unknown): UserAnswer[] {
       questionId: answer.questionId,
       value: answer.value,
       answeredAt: answer.answeredAt
+    }));
+}
+
+function parseUserMaterials(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (material) =>
+        typeof material === "object" &&
+        material !== null &&
+        typeof material.assetKey === "string" &&
+        typeof material.fileName === "string" &&
+        typeof material.fileUrl === "string" &&
+        typeof material.mimeType === "string"
+    )
+    .map((material) => ({
+      assetKey: material.assetKey,
+      slot:
+        material.slot === "player" ||
+        material.slot === "background" ||
+        material.slot === "hazard" ||
+        material.slot === "collectible" ||
+        material.slot === "cover"
+          ? material.slot
+          : undefined,
+      fileName: material.fileName,
+      fileUrl: material.fileUrl,
+      previewUrl: typeof material.previewUrl === "string" ? material.previewUrl : undefined,
+      mimeType: material.mimeType
     }));
 }
 

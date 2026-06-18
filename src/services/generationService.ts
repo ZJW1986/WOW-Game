@@ -19,6 +19,7 @@ import type {
   PublishRecord,
   ReferencePackageSummary,
   TemplateFamily,
+  UserMaterial,
   UserAnswer
 } from "../core/types";
 import type { ModelTaskRequest } from "./backend";
@@ -37,6 +38,7 @@ export interface GeneratePlayableInput {
   baseUrl: string;
   model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
   referencePackageSummary?: ReferencePackageSummary;
+  userMaterials?: UserMaterial[];
 }
 
 export interface GenerateGuidedQuestionsInput {
@@ -200,7 +202,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       );
       const assetPack: AssetPack = {
         versionId: "v1",
-        assets: generatedAssets
+        assets: applyUserMaterials(generatedAssets, input.userMaterials ?? [])
       };
 
       const fallbackConfig = {
@@ -759,6 +761,72 @@ function extractArtifactContent(project: MockProject, fileName: string) {
     throw new Error(`Missing mock artifact: ${fileName}`);
   }
   return artifact.content;
+}
+
+function applyUserMaterials(
+  assets: AssetPack["assets"],
+  userMaterials: UserMaterial[]
+): AssetPack["assets"] {
+  if (userMaterials.length === 0) return assets;
+  const availableKeys = new Set(assets.map((asset) => asset.assetKey));
+  const materialByKey = new Map(
+    userMaterials
+      .map((material) => [resolveUserMaterialAssetKey(material, availableKeys), material] as const)
+      .filter(([assetKey]) => Boolean(assetKey))
+  );
+  return assets.map((asset) => {
+    const material = materialByKey.get(asset.assetKey);
+    if (!material || !isCompatibleUserMaterial(asset.type, material.mimeType)) return asset;
+    const fileUrl = material.fileUrl.trim();
+    const previewUrl = (material.previewUrl ?? material.fileUrl).trim();
+    if (!fileUrl) return asset;
+    return {
+      ...asset,
+      status: "uploaded",
+      source: "uploaded",
+      generationMode: "uploaded",
+      copyrightStatus: "user_provided",
+      fileUrl,
+      previewUrl: previewUrl || fileUrl,
+      provider: "uploaded",
+      model: "user-upload",
+      generationParams: {
+        ...asset.generationParams,
+        fileName: material.fileName,
+        mimeType: material.mimeType,
+        slot: material.slot ?? ""
+      },
+      approvalStatus: "approved"
+    };
+  });
+}
+
+function resolveUserMaterialAssetKey(material: UserMaterial, availableKeys: Set<string>): string {
+  if (availableKeys.has(material.assetKey)) return material.assetKey;
+  const slot = material.slot ?? inferUserMaterialSlot(material.assetKey);
+  const fallbackKeys: Record<NonNullable<UserMaterial["slot"]>, string[]> = {
+    player: ["player.hero", "player.ship", "player.cursor", "player.tower", "player.panel"],
+    background: ["world.background", "cover.main", "world.tiles", "world.path"],
+    hazard: ["hazard.enemy", "hazard.spike", "hazard.block", "hazard.timer"],
+    collectible: ["item.collectible"],
+    cover: ["cover.main", "world.background"]
+  };
+  return fallbackKeys[slot].find((assetKey) => availableKeys.has(assetKey)) ?? material.assetKey;
+}
+
+function inferUserMaterialSlot(assetKey: string): NonNullable<UserMaterial["slot"]> {
+  if (assetKey.startsWith("player.")) return "player";
+  if (assetKey.startsWith("hazard.")) return "hazard";
+  if (assetKey.startsWith("item.")) return "collectible";
+  if (assetKey === "cover.main") return "cover";
+  return "background";
+}
+
+function isCompatibleUserMaterial(assetType: AssetPack["assets"][number]["type"], mimeType: string): boolean {
+  if (assetType === "image" || assetType === "ui") return mimeType.startsWith("image/");
+  if (assetType === "sfx" || assetType === "bgm") return mimeType.startsWith("audio/");
+  if (assetType === "effect") return mimeType.startsWith("image/") || mimeType === "application/json";
+  return false;
 }
 
 function createSharePayload(publishRecord: PublishRecord): SharePayload {

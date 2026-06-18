@@ -113,4 +113,48 @@ describe("procedural game resources", () => {
 
     expect(runtimeAssets.player).toBe("/projects/project-1/v1/assets/player.ship.png");
   });
+
+  it("gives uploaded user materials priority in generated playable asset-packs and preview runtime", async () => {
+    const service = createGenerationService();
+
+    const result = await service.generatePlayableVersion({
+      idea: "做一个横版平台跳跃游戏，主角收集金币到终点",
+      answers: [],
+      templateFamily: "platformer",
+      projectId: "project-uploaded-materials",
+      baseUrl: "https://wow-game.example",
+      model: "mock-designer",
+      userMaterials: [
+        {
+          assetKey: "world.background",
+          slot: "background",
+          fileName: "forest-bg.png",
+          fileUrl: "data:image/png;base64,uploadedBackground",
+          previewUrl: "data:image/png;base64,uploadedBackground",
+          mimeType: "image/png"
+        },
+        {
+          assetKey: "player.hero",
+          slot: "player",
+          fileName: "hero.png",
+          fileUrl: "data:image/png;base64,uploadedHero",
+          previewUrl: "data:image/png;base64,uploadedHero",
+          mimeType: "image/png"
+        }
+      ]
+    });
+
+    const background = result.project.assetPack.assets.find((asset) => asset.assetKey === "cover.main");
+    const hero = result.project.assetPack.assets.find((asset) => asset.assetKey === "player.hero");
+    const runtimeAssets = selectPreviewRuntimeAssets(result.project.assetPack);
+
+    expect(result.project.gameConfig.templateFamily).toBe("platformer");
+    expect(result.project.gameConfig.gameplay.primaryAction).toBe("jump_reach_goal");
+    expect(background?.source).toBe("uploaded");
+    expect(background?.provider).toBe("uploaded");
+    expect(background?.fileUrl).toBe("data:image/png;base64,uploadedBackground");
+    expect(hero?.source).toBe("uploaded");
+    expect(runtimeAssets.background).toBe("data:image/png;base64,uploadedBackground");
+    expect(runtimeAssets.player).toBe("data:image/png;base64,uploadedHero");
+  });
 });

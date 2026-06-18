@@ -669,21 +669,41 @@ button {
 
 .uploaded-files {
   display: flex;
+  flex-wrap: wrap;
   grid-column: 1 / -1;
   min-width: 0;
   gap: 6px;
 }
 
+.uploaded-files label {
+  display: flex;
+  align-items: center;
+  max-width: 240px;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid rgb(0 229 255 / 18%);
+  border-radius: 6px;
+  background: rgb(0 229 255 / 9%);
+}
+
 .uploaded-files span {
   overflow: hidden;
   max-width: 120px;
-  padding: 5px 7px;
+  padding: 0;
   border-radius: 6px;
   color: #a8f7ef;
-  background: rgb(0 229 255 / 12%);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.uploaded-files select {
+  max-width: 92px;
+  border: 1px solid rgb(69 246 200 / 28%);
+  border-radius: 5px;
+  color: #d7fffb;
+  background: rgb(3 14 22 / 92%);
+  font-size: 11px;
 }
 
 .reference-package-card {

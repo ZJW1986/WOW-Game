@@ -1,4 +1,4 @@
-import type { TemplateFamily } from "./types";
+import type { TemplateFamily, UserMaterialSlot } from "./types";
 
 export type StartModelId = "deepseek-v4-flash" | "mock-designer" | "custom-provider";
 
@@ -7,6 +7,17 @@ export interface StartGameDraft {
   model: StartModelId;
   templateFamily: TemplateFamily;
   uploadedFileNames: string[];
+  uploadedMaterials: StartUploadedMaterial[];
+}
+
+export interface StartUploadedMaterial {
+  id: string;
+  fileName: string;
+  fileUrl: string;
+  previewUrl: string;
+  mimeType: string;
+  slot: UserMaterialSlot;
+  assetKey: string;
 }
 
 export const modelOptions: Array<{ id: StartModelId; label: string; description: string }> = [
@@ -40,11 +51,13 @@ export function createStartGameDraft(input: {
   model?: StartModelId;
   templateFamily?: TemplateFamily;
   uploadedFileNames?: string[];
+  uploadedMaterials?: StartUploadedMaterial[];
 }): StartGameDraft {
   return {
     idea: input.idea,
     model: input.model ?? "deepseek-v4-flash",
     templateFamily: input.templateFamily ?? "top_down",
-    uploadedFileNames: input.uploadedFileNames ?? []
+    uploadedFileNames: input.uploadedFileNames ?? input.uploadedMaterials?.map((material) => material.fileName) ?? [],
+    uploadedMaterials: input.uploadedMaterials ?? []
   };
 }

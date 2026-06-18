@@ -79,6 +79,17 @@ export interface AssetPack {
   assets: AssetRequirement[];
 }
 
+export type UserMaterialSlot = "player" | "background" | "hazard" | "collectible" | "cover";
+
+export interface UserMaterial {
+  assetKey: string;
+  slot?: UserMaterialSlot;
+  fileName: string;
+  fileUrl: string;
+  previewUrl?: string;
+  mimeType: string;
+}
+
 export interface GameConfig {
   templateFamily: TemplateFamily;
   title: string;

@@ -44,7 +44,8 @@ import type {
   MockProject,
   PipelineArtifact,
   ReferencePackageSummary,
-  TemplateFamily
+  TemplateFamily,
+  UserMaterialSlot
 } from "../core/types";
 import { getMessages, type Locale } from "./i18n";
 import { buildIdeaDialogModel } from "./ideaDialogModel";
@@ -321,7 +322,15 @@ export function App() {
         baseUrl: getBrowserBaseUrl(),
         model: "deepseek-v4-flash",
         referencePackageId: referencePackage?.projectId,
-        referenceVersionId: referencePackage?.versionId
+        referenceVersionId: referencePackage?.versionId,
+        userMaterials: activeDraft.uploadedMaterials.map((material) => ({
+          assetKey: material.assetKey,
+          slot: material.slot,
+          fileName: material.fileName,
+          fileUrl: material.fileUrl,
+          previewUrl: material.previewUrl,
+          mimeType: material.mimeType
+        }))
       })) as GenerationResult;
       setGenerationResult(result);
       setGeneratedProject(result.project);
@@ -345,7 +354,15 @@ export function App() {
         templateFamily: activeDraft.templateFamily,
         projectId: "project-local-fallback",
         baseUrl: getBrowserBaseUrl(),
-        model: "mock-designer"
+        model: "mock-designer",
+        userMaterials: activeDraft.uploadedMaterials.map((material) => ({
+          assetKey: material.assetKey,
+          slot: material.slot,
+          fileName: material.fileName,
+          fileUrl: material.fileUrl,
+          previewUrl: material.previewUrl,
+          mimeType: material.mimeType
+        }))
       });
       setGenerationResult(fallback);
       setGeneratedProject(fallback.project);
@@ -761,6 +778,66 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read uploaded material"));
+    reader.readAsDataURL(file);
+  });
+}
+
+const materialSlotLabels: Record<UserMaterialSlot, string> = {
+  background: "背景",
+  player: "角色",
+  hazard: "敌人/障碍",
+  collectible: "收集物",
+  cover: "封面"
+};
+
+const materialSlotOptions: UserMaterialSlot[] = ["background", "player", "hazard", "collectible", "cover"];
+
+function resolveMaterialAssetKey(slot: UserMaterialSlot, templateFamily: TemplateFamily): string {
+  const map: Record<TemplateFamily, Record<UserMaterialSlot, string>> = {
+    platformer: {
+      background: "cover.main",
+      player: "player.hero",
+      hazard: "hazard.spike",
+      collectible: "item.collectible",
+      cover: "cover.main"
+    },
+    top_down: {
+      background: "world.background",
+      player: "player.ship",
+      hazard: "hazard.enemy",
+      collectible: "item.collectible",
+      cover: "cover.main"
+    },
+    grid_logic: {
+      background: "world.tiles",
+      player: "player.cursor",
+      hazard: "hazard.block",
+      collectible: "item.collectible",
+      cover: "cover.main"
+    },
+    tower_defense: {
+      background: "world.path",
+      player: "player.tower",
+      hazard: "hazard.enemy",
+      collectible: "item.collectible",
+      cover: "cover.main"
+    },
+    ui_heavy: {
+      background: "world.background",
+      player: "player.panel",
+      hazard: "hazard.timer",
+      collectible: "item.collectible",
+      cover: "cover.main"
+    }
+  };
+  return map[templateFamily][slot];
+}
+
 function createReferencePackageSummary(payload: Record<string, any>): ReferencePackageSummary {
   const packageManifest = payload.packageManifest ?? {};
   const assetIndex = payload.assetIndex ?? {};
@@ -877,7 +954,16 @@ function StartPage({
               <button
                 key={template.id}
                 className={draft.templateFamily === template.id ? "template-chip active" : "template-chip"}
-                onClick={() => updateDraft({ templateFamily: template.id as TemplateFamily })}
+                onClick={() => {
+                  const templateFamily = template.id as TemplateFamily;
+                  updateDraft({
+                    templateFamily,
+                    uploadedMaterials: draft.uploadedMaterials.map((material) => ({
+                      ...material,
+                      assetKey: resolveMaterialAssetKey(material.slot, templateFamily)
+                    }))
+                  });
+                }}
               >
                 <strong>{template.label}</strong>
                 <span>{template.description}</span>
@@ -897,10 +983,28 @@ function StartPage({
                   multiple
                   type="file"
                   accept="image/*,audio/*,.png,.jpg,.jpeg,.webp,.gif,.mp3,.wav,.ogg,.m4a"
-                  onChange={(event) => {
+                  onChange={async (event) => {
                     const files = Array.from(event.target.files ?? []);
+                    const materials = await Promise.all(
+                      files
+                        .filter((file) => file.type.startsWith("image/"))
+                        .map(async (file, index) => {
+                          const slot: UserMaterialSlot = index === 0 ? "background" : "player";
+                          const fileUrl = await readFileAsDataUrl(file);
+                          return {
+                            id: `${file.name}-${file.lastModified}-${index}`,
+                            fileName: file.name,
+                            fileUrl,
+                            previewUrl: fileUrl,
+                            mimeType: file.type || "image/png",
+                            slot,
+                            assetKey: resolveMaterialAssetKey(slot, draft.templateFamily)
+                          };
+                        })
+                    );
                     updateDraft({
-                      uploadedFileNames: files.map((file) => file.name)
+                      uploadedFileNames: files.map((file) => file.name),
+                      uploadedMaterials: materials
                     });
                   }}
                 />
@@ -927,9 +1031,36 @@ function StartPage({
             </div>
             {draft.uploadedFileNames.length > 0 ? (
               <div className="uploaded-files">
-                {draft.uploadedFileNames.slice(0, 3).map((fileName) => (
-                  <span key={fileName}>{fileName}</span>
-                ))}
+                {draft.uploadedMaterials.length > 0
+                  ? draft.uploadedMaterials.slice(0, 4).map((material) => (
+                      <label key={material.id}>
+                        <span>{material.fileName}</span>
+                        <select
+                          value={material.slot}
+                          onChange={(event) => {
+                            const slot = event.target.value as UserMaterialSlot;
+                            updateDraft({
+                              uploadedMaterials: draft.uploadedMaterials.map((item) =>
+                                item.id === material.id
+                                  ? {
+                                      ...item,
+                                      slot,
+                                      assetKey: resolveMaterialAssetKey(slot, draft.templateFamily)
+                                    }
+                                  : item
+                              )
+                            });
+                          }}
+                        >
+                          {materialSlotOptions.map((slot) => (
+                            <option key={slot} value={slot}>
+                              {materialSlotLabels[slot]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))
+                  : draft.uploadedFileNames.slice(0, 3).map((fileName) => <span key={fileName}>{fileName}</span>)}
               </div>
             ) : null}
             {referencePackage ? (
