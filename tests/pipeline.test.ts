@@ -37,6 +37,7 @@ describe("standard artifact pipeline", () => {
       "asset-requirements.md",
       "asset-pack.json",
       "game-config.json",
+      "game-hooks.json",
       "qa-report.json",
       "qa-report.md",
       "publish-record.json",

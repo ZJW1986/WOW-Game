@@ -8,11 +8,12 @@ import {
   runMockPipeline,
   validateAssetReferences
 } from "../core/pipeline";
-import { classificationSchema, gameConfigSchema, gddSchema, guidedQuestionsSchema } from "../core/schemas";
+import { classificationSchema, gameConfigSchema, gameHooksSchema, gddSchema, guidedQuestionsSchema } from "../core/schemas";
 import type {
   AssetPack,
   DesignQuestion,
   GameConfig,
+  GameHooks,
   MockProject,
   PlayFeedback,
   PublishRecord,
@@ -26,6 +27,7 @@ import { createMediaGateway, type MediaGatewayOptions } from "./mediaGateway";
 import { createModelGateway, type GatewayResult } from "./modelGateway";
 import { createPromptForTask } from "./promptPack";
 import { createAgnesImageProvider } from "./agnesImageProvider";
+import { runDynamicVerification } from "./verificationBench";
 
 export interface GeneratePlayableInput {
   idea: string;
@@ -65,7 +67,8 @@ type GenerationModelTask =
   | GatewayResult<ReturnType<typeof classificationSchema.parse>>
   | GatewayResult<ReturnType<typeof guidedQuestionsSchema.parse>>
   | GatewayResult<ReturnType<typeof gddSchema.parse>>
-  | GatewayResult<ReturnType<typeof gameConfigSchema.parse>>;
+  | GatewayResult<ReturnType<typeof gameConfigSchema.parse>>
+  | GatewayResult<ReturnType<typeof gameHooksSchema.parse>>;
 
 export function createGenerationService(options: GenerationServiceOptions = {}) {
   const env = readRuntimeEnv();
@@ -224,11 +227,42 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       trackFallback(configTask, fallbacksUsed);
 
       const gameConfig = sanitizeGameConfig(configTask.output, assetPack);
-      const qaReport = createQaReport(gameConfig, assetPack);
+      const fallbackHooks = createFallbackGameHooks(gameConfig);
+      const hooksTask = await gateway.runModelTask({
+        taskType: "llm.game_hooks",
+        provider,
+        model,
+        prompt: createPromptForTask("llm.game_hooks", {
+          idea: input.idea,
+          answers: input.answers,
+          classification: classificationTask.output,
+          gdd: gddTask.output,
+          gameConfig,
+          referencePackageSummary: input.referencePackageSummary
+        }),
+        schema: gameHooksSchema,
+        preprocess: (raw) => normalizeGameHooks(raw, fallbackHooks),
+        fallback: fallbackHooks
+      });
+      modelTasks.push(hooksTask);
+      trackFallback(hooksTask, fallbacksUsed);
+
+      const gameHooks = hooksTask.output;
       const publishRecord = createPublishRecord(input.projectId, "v1", gameConfig.title, {
         visibility: "public",
         baseUrl: input.baseUrl,
         coverAssetKey: "cover.main"
+      });
+      const qaReport = runDynamicVerification({
+        ...mockProject,
+        id: input.projectId,
+        title: gameConfig.title,
+        classification: classificationTask.output,
+        assetPack,
+        gameConfig,
+        gameHooks,
+        qaReport: createQaReport(gameConfig, assetPack),
+        playUrl: publishRecord.playUrl
       });
       const artifacts = createArtifacts({
         idea: input.idea,
@@ -238,6 +272,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         assetStyleGuide,
         assetPack,
         gameConfig,
+        gameHooks,
         qaReport,
         publishRecord
       })
@@ -255,7 +290,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           input.referencePackageSummary
             ? [
                 {
-                  stage: "asset-review" as const,
+                  stage: "asset-requirements" as const,
                   fileName: "reference-package.json",
                   title: "Reference Package",
                   content: input.referencePackageSummary,
@@ -273,6 +308,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         artifacts,
         assetPack,
         gameConfig,
+        gameHooks,
         qaReport,
         playUrl: publishRecord.playUrl
       };
@@ -414,6 +450,108 @@ function normalizeGameConfig(raw: unknown, fallback: GameConfig): GameConfig {
   };
 }
 
+function createFallbackGameHooks(config: GameConfig): GameHooks {
+  return {
+    enemyRules: {
+      movement: config.gameplay.enemyBehavior === "wave" ? "wave" : config.gameplay.enemyBehavior === "chase" ? "chase" : "patrol",
+      speed: config.templateFamily === "platformer" ? 120 : 150,
+      waveIntervalMs: config.gameplay.enemyBehavior === "wave" ? 1400 : 0
+    },
+    collectibleRules: {
+      placement: config.templateFamily === "grid_logic" ? "grid" : config.templateFamily === "platformer" ? "arc" : "line",
+      value: 1,
+      respawn: false
+    },
+    winCondition: {
+      mode: config.gameplay.objectiveMode,
+      target: config.level.winScore
+    },
+    failCondition: {
+      mode: config.templateFamily === "tower_defense" ? "base_destroyed" : "hit_hazard",
+      lives: 1
+    },
+    numberTuning: {
+      playerSpeed: config.templateFamily === "platformer" ? 210 : 250,
+      jumpVelocity: config.templateFamily === "platformer" ? 430 : 0,
+      hazardSpeed: config.templateFamily === "platformer" ? 90 : 130
+    },
+    levelLayout: {
+      platforms:
+        config.templateFamily === "platformer"
+          ? [
+              { x: 480, y: 510, width: 920, height: 28 },
+              { x: 360, y: 390, width: 180, height: 20 },
+              { x: 680, y: 290, width: 180, height: 20 }
+            ]
+          : [],
+      lanes: [
+        { y: 170, speed: 120, count: Math.max(1, Math.ceil(config.level.hazards / 2)) },
+        { y: 320, speed: 150, count: Math.max(1, Math.floor(config.level.hazards / 2)) }
+      ],
+      grid: { columns: 8, rows: 6 }
+    }
+  };
+}
+
+function normalizeGameHooks(raw: unknown, fallback: GameHooks): GameHooks {
+  const value = asRecord(raw);
+  const enemyRules = asRecord(value.enemyRules);
+  const collectibleRules = asRecord(value.collectibleRules);
+  const winCondition = asRecord(value.winCondition);
+  const failCondition = asRecord(value.failCondition);
+  const numberTuning = asRecord(value.numberTuning);
+  const levelLayout = asRecord(value.levelLayout);
+  return {
+    enemyRules: {
+      movement: normalizeEnum(enemyRules.movement, fallback.enemyRules.movement, ["static", "patrol", "chase", "wave"]),
+      speed: normalizeNumber(enemyRules.speed, fallback.enemyRules.speed),
+      waveIntervalMs: normalizeNumber(enemyRules.waveIntervalMs, fallback.enemyRules.waveIntervalMs)
+    },
+    collectibleRules: {
+      placement: normalizeEnum(collectibleRules.placement, fallback.collectibleRules.placement, [
+        "line",
+        "arc",
+        "grid",
+        "random"
+      ]),
+      value: normalizeNumber(collectibleRules.value, fallback.collectibleRules.value),
+      respawn: typeof collectibleRules.respawn === "boolean" ? collectibleRules.respawn : fallback.collectibleRules.respawn
+    },
+    winCondition: {
+      mode: normalizeEnum(winCondition.mode, fallback.winCondition.mode, [
+        "collect_score",
+        "reach_exit",
+        "survive_timer",
+        "defend_base",
+        "solve_state"
+      ]),
+      target: normalizeNumber(winCondition.target, fallback.winCondition.target)
+    },
+    failCondition: {
+      mode: normalizeEnum(failCondition.mode, fallback.failCondition.mode, [
+        "hit_hazard",
+        "time_out",
+        "base_destroyed",
+        "moves_exhausted"
+      ]),
+      lives: normalizeNumber(failCondition.lives, fallback.failCondition.lives)
+    },
+    numberTuning: {
+      playerSpeed: normalizeNumber(numberTuning.playerSpeed, fallback.numberTuning.playerSpeed),
+      jumpVelocity: normalizeNumber(numberTuning.jumpVelocity, fallback.numberTuning.jumpVelocity),
+      hazardSpeed: normalizeNumber(numberTuning.hazardSpeed, fallback.numberTuning.hazardSpeed)
+    },
+    levelLayout: {
+      platforms: normalizeRectArray(levelLayout.platforms, fallback.levelLayout.platforms),
+      lanes: normalizeLaneArray(levelLayout.lanes, fallback.levelLayout.lanes),
+      grid: {
+        columns: normalizeNumber(asRecord(levelLayout.grid).columns, fallback.levelLayout.grid.columns),
+        rows: normalizeNumber(asRecord(levelLayout.grid).rows, fallback.levelLayout.grid.rows)
+      }
+    }
+  };
+}
+
 function normalizeGameplay(value: unknown, fallback: GameConfig["gameplay"]): GameConfig["gameplay"] {
   const record = asRecord(value);
   return {
@@ -496,6 +634,43 @@ function normalizeLevel(value: unknown, fallback: GameConfig["level"]) {
     hazards: normalizeNumber(record.hazards, fallback.hazards),
     winScore: normalizeNumber(record.winScore, fallback.winScore)
   };
+}
+
+function normalizeRectArray(
+  value: unknown,
+  fallback: GameHooks["levelLayout"]["platforms"]
+): GameHooks["levelLayout"]["platforms"] {
+  if (!Array.isArray(value)) return fallback;
+  const items = value
+    .map((item) => {
+      const record = asRecord(item);
+      return {
+        x: normalizeNumber(record.x, 0),
+        y: normalizeNumber(record.y, 0),
+        width: normalizeNumber(record.width, 0),
+        height: normalizeNumber(record.height, 0)
+      };
+    })
+    .filter((item) => item.width > 0 && item.height > 0);
+  return items.length > 0 ? items : fallback;
+}
+
+function normalizeLaneArray(
+  value: unknown,
+  fallback: GameHooks["levelLayout"]["lanes"]
+): GameHooks["levelLayout"]["lanes"] {
+  if (!Array.isArray(value)) return fallback;
+  const items = value
+    .map((item) => {
+      const record = asRecord(item);
+      return {
+        y: normalizeNumber(record.y, 0),
+        speed: normalizeNumber(record.speed, 0),
+        count: normalizeNumber(record.count, 0)
+      };
+    })
+    .filter((item) => item.count > 0);
+  return items.length > 0 ? items : fallback;
 }
 
 function normalizeNumber(value: unknown, fallback: number): number {

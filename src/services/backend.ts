@@ -20,6 +20,7 @@ export interface ModelTaskRequest {
     | "llm.guided_questions"
     | "llm.gdd"
     | "llm.game_config"
+    | "llm.game_hooks"
     | "image.asset"
     | "audio.sfx"
     | "audio.bgm"

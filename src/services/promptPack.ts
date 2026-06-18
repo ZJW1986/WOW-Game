@@ -38,6 +38,13 @@ export function createPromptForTask(
       'Return exactly this JSON shape: {"templateFamily":"top_down","title":"...","pitch":"...","playerGoal":"...","controls":["ArrowUp"],"difficulty":"normal","referencedAssetKeys":["player.hero"],"level":{"width":960,"height":540,"collectibles":6,"hazards":4,"winScore":6}}.',
       "referencedAssetKeys must only use keys already present in asset-pack."
     ].join("\n"),
+    "llm.game_hooks": [
+      "Task: llm.game_hooks.",
+      "Create config-only hook parameters for the locked Phaser template.",
+      "Do not output JavaScript or TypeScript.",
+      'Return exactly this JSON shape: {"enemyRules":{"movement":"patrol","speed":120,"waveIntervalMs":0},"collectibleRules":{"placement":"arc","value":1,"respawn":false},"winCondition":{"mode":"collect_score","target":6},"failCondition":{"mode":"hit_hazard","lives":1},"numberTuning":{"playerSpeed":250,"jumpVelocity":430,"hazardSpeed":120},"levelLayout":{"platforms":[{"x":480,"y":510,"width":920,"height":28}],"lanes":[{"y":150,"speed":95,"count":3}],"grid":{"columns":0,"rows":0}}}.',
+      'Allowed movement values: "static", "patrol", "chase", "wave". Do not include code strings.'
+    ].join("\n"),
     "image.asset": [
       "Task: image.asset.",
       'Return JSON with {"assetKey","style","spec","prompt","copyrightStatus"}.'

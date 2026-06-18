@@ -268,6 +268,9 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
         fetcher: options.fetcher
       });
+      const referencePackageId = optionalString(request.body.referencePackageId);
+      const referenceVersionId = optionalString(request.body.referenceVersionId);
+      const referencePackageSummary = await readReferencePackageSummary(store, referencePackageId, referenceVersionId);
       const result = await service.generatePlayableVersion({
         idea: requireString(request.body.idea, "idea"),
         answers: parseAnswers(request.body.answers),
@@ -275,12 +278,11 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         projectId: optionalString(request.body.projectId) ?? `project-${Date.now()}`,
         baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
         model: parseModel(request.body.model),
-        referencePackageSummary: await readReferencePackageSummary(
-          store,
-          optionalString(request.body.referencePackageId),
-          optionalString(request.body.referenceVersionId)
-        )
+        referencePackageSummary
       });
+      if (referencePackageId && referenceVersionId && !referencePackageSummary) {
+        result.fallbacksUsed.push("reference_package_missing");
+      }
       await store.savePlayable({
         project: result.project,
         publishRecord: result.publishRecord,

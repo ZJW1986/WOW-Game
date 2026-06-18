@@ -7,6 +7,7 @@ import type {
   AssetType,
   Classification,
   GameConfig,
+  GameHooks,
   MockProject,
   PipelineArtifact,
   PublishRecord,
@@ -14,6 +15,7 @@ import type {
   TemplateFamily
 } from "./types";
 import { createMediaGateway } from "../services/mediaGateway";
+import { runDynamicVerification } from "../services/verificationBench";
 
 const TEMPLATE_KEYWORDS: Record<TemplateFamily, string[]> = {
   platformer: ["跳", "跳跃", "jump", "gravity", "平台", "横版", "尖刺", "攀爬", "金币"],
@@ -115,8 +117,34 @@ export function runMockPipeline(idea: string): MockProject {
     })
   };
   const gameConfig = createGameConfig(title, idea, classification.templateFamily, assetPack);
-  const qaReport = createQaReport(gameConfig, assetPack);
+  const gameHooks = createGameHooks(gameConfig);
   const publishRecord = createPublishRecord("project-starlight-001", "v1", title);
+  const previewProject = {
+    id: "project-starlight-001",
+    title,
+    contentType: "ai_project" as const,
+    editable: true,
+    shareable: true,
+    sourceLabel: "AI Generated",
+    version: {
+      id: "v1",
+      label: "v1 Mock playable",
+      status: "published" as const
+    },
+    classification,
+    artifacts: [],
+    assetPack,
+    gameConfig,
+    gameHooks,
+    qaReport: createQaReport(gameConfig, assetPack),
+    playUrl: publishRecord.playUrl,
+    feedback: {
+      rating: 4,
+      comment: "",
+      iterationSuggestion: ""
+    }
+  };
+  const qaReport = runDynamicVerification(previewProject);
   const artifacts = createArtifacts({
     idea,
     title,
@@ -125,6 +153,7 @@ export function runMockPipeline(idea: string): MockProject {
     assetStyleGuide,
     assetPack,
     gameConfig,
+    gameHooks,
     qaReport,
     publishRecord
   });
@@ -145,12 +174,74 @@ export function runMockPipeline(idea: string): MockProject {
     artifacts,
     assetPack,
     gameConfig,
+    gameHooks,
     qaReport,
     playUrl: publishRecord.playUrl,
     feedback: {
       rating: 4,
       comment: "玩法已经跑通，第二版可以增加关卡节奏和美术差异。",
       iterationSuggestion: "下一版建议降低前 20 秒难度，增加奖励道具，并强化失败反馈。"
+    }
+  };
+}
+
+export function createGameHooks(config: GameConfig): GameHooks {
+  return {
+    enemyRules: {
+      movement:
+        config.gameplay.enemyBehavior === "wave"
+          ? "wave"
+          : config.gameplay.enemyBehavior === "chase"
+            ? "chase"
+            : config.gameplay.enemyBehavior === "patrol"
+              ? "patrol"
+              : "static",
+      speed: config.templateFamily === "tower_defense" ? 95 : config.templateFamily === "platformer" ? 130 : 150,
+      waveIntervalMs: config.templateFamily === "tower_defense" ? 1200 : 0
+    },
+    collectibleRules: {
+      placement:
+        config.gameplay.spawnPattern === "grid"
+          ? "grid"
+          : config.templateFamily === "platformer"
+            ? "arc"
+            : config.gameplay.spawnPattern === "lanes"
+              ? "line"
+              : "random",
+      value: 1,
+      respawn: false
+    },
+    winCondition: {
+      mode: config.gameplay.objectiveMode,
+      target: config.level.winScore
+    },
+    failCondition: {
+      mode: config.templateFamily === "tower_defense" ? "base_destroyed" : "hit_hazard",
+      lives: config.templateFamily === "tower_defense" ? 5 : 1
+    },
+    numberTuning: {
+      playerSpeed: config.templateFamily === "platformer" ? 210 : 250,
+      jumpVelocity: config.templateFamily === "platformer" ? 430 : 0,
+      hazardSpeed: config.templateFamily === "tower_defense" ? 95 : 140
+    },
+    levelLayout: {
+      platforms:
+        config.templateFamily === "platformer"
+          ? [
+              { x: 480, y: 510, width: 920, height: 28 },
+              { x: 360, y: 390, width: 180, height: 20 },
+              { x: 680, y: 290, width: 180, height: 20 }
+            ]
+          : [],
+      lanes:
+        config.templateFamily === "tower_defense"
+          ? [
+              { y: 150, speed: 95, count: 3 },
+              { y: 245, speed: 105, count: 3 },
+              { y: 340, speed: 115, count: 2 }
+            ]
+          : [],
+      grid: config.templateFamily === "grid_logic" ? { columns: 8, rows: 5 } : { columns: 0, rows: 0 }
     }
   };
 }
@@ -600,6 +691,7 @@ export function createArtifacts(input: {
   assetStyleGuide: AssetStyleGuide;
   assetPack: AssetPack;
   gameConfig: GameConfig;
+  gameHooks: GameHooks;
   qaReport: QaReport;
   publishRecord: PublishRecord;
 }): PipelineArtifact[] {
@@ -638,6 +730,7 @@ export function createArtifacts(input: {
     mdArtifact("asset-requirements", "asset-requirements.md", "Asset Requirements", input.assetRequirements),
     jsonArtifact("asset-pack", "asset-pack.json", "Asset Pack", input.assetPack),
     jsonArtifact("game-config", "game-config.json", "Game Config", input.gameConfig),
+    jsonArtifact("game-hooks", "game-hooks.json", "Game Hooks", input.gameHooks),
     jsonArtifact("qa-report", "qa-report.json", "QA Report", input.qaReport),
     mdArtifact("qa-report", "qa-report.md", "QA Report", input.qaReport),
     jsonArtifact("publish-record", "publish-record.json", "Publish Record", input.publishRecord),

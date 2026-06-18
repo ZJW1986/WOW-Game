@@ -14,6 +14,7 @@ export type PipelineStage =
   | "asset-style-guide"
   | "asset-pack"
   | "game-config"
+  | "game-hooks"
   | "qa-report"
   | "publish-record"
   | "iteration-report";
@@ -107,6 +108,37 @@ export interface GameConfig {
   };
 }
 
+export interface GameHooks {
+  enemyRules: {
+    movement: "static" | "patrol" | "chase" | "wave";
+    speed: number;
+    waveIntervalMs: number;
+  };
+  collectibleRules: {
+    placement: "line" | "arc" | "grid" | "random";
+    value: number;
+    respawn: boolean;
+  };
+  winCondition: {
+    mode: "collect_score" | "reach_exit" | "survive_timer" | "defend_base" | "solve_state";
+    target: number;
+  };
+  failCondition: {
+    mode: "hit_hazard" | "time_out" | "base_destroyed" | "moves_exhausted";
+    lives: number;
+  };
+  numberTuning: {
+    playerSpeed: number;
+    jumpVelocity: number;
+    hazardSpeed: number;
+  };
+  levelLayout: {
+    platforms: Array<{ x: number; y: number; width: number; height: number }>;
+    lanes: Array<{ y: number; speed: number; count: number }>;
+    grid: { columns: number; rows: number };
+  };
+}
+
 export interface QaReport {
   scores: {
     buildHealth: number;
@@ -115,6 +147,13 @@ export interface QaReport {
   };
   checks: string[];
   debugProtocolEntries: string[];
+  evidence?: {
+    canvasNonEmpty: boolean;
+    consoleErrorCount: number;
+    screenshotCaptured: boolean;
+    playerMoved: boolean;
+    interactionObserved: boolean;
+  };
 }
 
 export interface GameVersion {
@@ -135,6 +174,7 @@ export interface MockProject {
   artifacts: PipelineArtifact[];
   assetPack: AssetPack;
   gameConfig: GameConfig;
+  gameHooks: GameHooks;
   qaReport: QaReport;
   playUrl: string;
   feedback: {

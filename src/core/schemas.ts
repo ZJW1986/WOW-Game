@@ -132,6 +132,37 @@ export const gameConfigSchema = z.object({
   })
 });
 
+export const gameHooksSchema = z.object({
+  enemyRules: z.object({
+    movement: z.enum(["static", "patrol", "chase", "wave"]),
+    speed: z.number(),
+    waveIntervalMs: z.number()
+  }),
+  collectibleRules: z.object({
+    placement: z.enum(["line", "arc", "grid", "random"]),
+    value: z.number(),
+    respawn: z.boolean()
+  }),
+  winCondition: z.object({
+    mode: z.enum(["collect_score", "reach_exit", "survive_timer", "defend_base", "solve_state"]),
+    target: z.number()
+  }),
+  failCondition: z.object({
+    mode: z.enum(["hit_hazard", "time_out", "base_destroyed", "moves_exhausted"]),
+    lives: z.number()
+  }),
+  numberTuning: z.object({
+    playerSpeed: z.number(),
+    jumpVelocity: z.number(),
+    hazardSpeed: z.number()
+  }),
+  levelLayout: z.object({
+    platforms: z.array(z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })),
+    lanes: z.array(z.object({ y: z.number(), speed: z.number(), count: z.number() })),
+    grid: z.object({ columns: z.number(), rows: z.number() })
+  })
+});
+
 export const qaReportSchema = z.object({
   scores: z.object({
     buildHealth: z.number(),
@@ -139,7 +170,14 @@ export const qaReportSchema = z.object({
     intentAlignment: z.number()
   }),
   checks: z.array(z.string()),
-  debugProtocolEntries: z.array(z.string())
+  debugProtocolEntries: z.array(z.string()),
+  evidence: z.object({
+    canvasNonEmpty: z.boolean(),
+    consoleErrorCount: z.number(),
+    screenshotCaptured: z.boolean(),
+    playerMoved: z.boolean(),
+    interactionObserved: z.boolean()
+  }).optional()
 });
 
 export const publishRecordSchema = z.object({
@@ -168,6 +206,7 @@ export const artifactSchemas = {
   "asset-style-guide": assetStyleGuideSchema,
   "asset-pack": assetPackSchema,
   "game-config": gameConfigSchema,
+  "game-hooks": gameHooksSchema,
   "qa-report": qaReportSchema,
   "publish-record": publishRecordSchema,
   "iteration-report": iterationReportSchema

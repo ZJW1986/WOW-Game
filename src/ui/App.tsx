@@ -666,7 +666,8 @@ export function App() {
                 project,
                 messages: t,
                 phase: creationPhase,
-                session
+                session,
+                referencePackageName: referencePackage?.packageName
               })}
             />
           </div>
@@ -1177,7 +1178,7 @@ function PlayableDetailPage({
           {record.uploadedPackage ? (
             <UploadedPackagePreview packageRecord={record.uploadedPackage} title={project.title} />
           ) : (
-            <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
+            <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} gameHooks={project.gameHooks} />
           )}
         </div>
         <aside className="play-detail-side">
@@ -1898,7 +1899,7 @@ function PreviewWorkspace({
       {!isCooking && isPlayableReady && (
         <>
           <div className="preview-canvas-shell">
-            <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} />
+            <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} gameHooks={project.gameHooks} />
           </div>
           <div className="floating-status">
             <CheckCircle2 size={16} />

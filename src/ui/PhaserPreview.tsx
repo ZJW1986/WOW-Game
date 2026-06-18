@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef } from "react";
-import type { AssetPack, GameConfig } from "../core/types";
+import type { AssetPack, GameConfig, GameHooks } from "../core/types";
 import {
   collectPlayableItem,
   createPlayableRuntimeState,
@@ -13,10 +13,12 @@ import { selectPreviewRuntimeAssets } from "./previewAssets";
 export function PhaserPreview({
   config,
   assetPack,
+  gameHooks,
   compact = false
 }: {
   config: GameConfig;
   assetPack?: AssetPack;
+  gameHooks?: GameHooks;
   compact?: boolean;
 }) {
   const id = useId().replace(/:/g, "");
@@ -73,14 +75,16 @@ export function PhaserPreview({
         update() {
           if (this.runtimeState.phase !== "playing" || !this.player?.body) return;
           const body = this.player.body as Phaser.Physics.Arcade.Body;
-          const speed = config.templateFamily === "platformer" ? 210 : 250;
+          const speed = gameHooks?.numberTuning.playerSpeed ?? (config.templateFamily === "platformer" ? 210 : 250);
           body.setVelocityX(0);
 
           if (this.cursors?.left.isDown) body.setVelocityX(-speed);
           if (this.cursors?.right.isDown) body.setVelocityX(speed);
 
           if (config.templateFamily === "platformer") {
-            if (this.cursors?.space.isDown && body.blocked.down) body.setVelocityY(-430);
+            if (this.cursors?.space.isDown && body.blocked.down) {
+              body.setVelocityY(-(gameHooks?.numberTuning.jumpVelocity || 430));
+            }
           } else {
             body.setVelocityY(0);
             if (this.cursors?.up.isDown) body.setVelocityY(-speed);
@@ -168,15 +172,19 @@ export function PhaserPreview({
           if (config.templateFamily === "platformer") {
             body.setGravityY(480);
             const platforms = this.physics.add.staticGroup();
-            const floor = this.createRuntimeImage(480, 510, "generated-tile", 920, 28, 0x334155);
-            const left = this.createRuntimeImage(360, 390, "generated-tile", 180, 20, 0x334155);
-            const right = this.createRuntimeImage(680, 290, "generated-tile", 180, 20, 0x334155);
-            platforms.add(floor);
-            platforms.add(left);
-            platforms.add(right);
-            this.addWorldObject(floor);
-            this.addWorldObject(left);
-            this.addWorldObject(right);
+            const layoutPlatforms =
+              gameHooks?.levelLayout.platforms.length
+                ? gameHooks.levelLayout.platforms
+                : [
+                    { x: 480, y: 510, width: 920, height: 28 },
+                    { x: 360, y: 390, width: 180, height: 20 },
+                    { x: 680, y: 290, width: 180, height: 20 }
+                  ];
+            for (const platform of layoutPlatforms) {
+              const tile = this.createRuntimeImage(platform.x, platform.y, "generated-tile", platform.width, platform.height, 0x334155);
+              platforms.add(tile);
+              this.addWorldObject(tile);
+            }
             this.physics.add.collider(this.player, platforms);
           }
 
@@ -221,9 +229,15 @@ export function PhaserPreview({
         }
 
         private createCollectibles(Phaser: typeof import("phaser")) {
+          const placement = gameHooks?.collectibleRules.placement ?? (config.templateFamily === "platformer" ? "arc" : "line");
           for (let index = 0; index < config.level.collectibles; index += 1) {
-            const x = 230 + index * 95;
-            const y = config.templateFamily === "platformer" ? 330 - (index % 3) * 70 : 150 + (index % 3) * 90;
+            const x = placement === "grid" ? 230 + (index % 4) * 110 : 230 + index * 95;
+            const y =
+              placement === "grid"
+                ? 150 + Math.floor(index / 4) * 90
+                : placement === "arc" || config.templateFamily === "platformer"
+                  ? 330 - (index % 3) * 70
+                  : 150 + (index % 3) * 90;
             const star = this.createRuntimeImage(x, y, "generated-collectible", 26, 26, 0xfacc15);
             this.collectibles.push(star);
             this.addWorldObject(star);
@@ -240,15 +254,20 @@ export function PhaserPreview({
         }
 
         private createHazards(Phaser: typeof import("phaser")) {
+          const hookMovement = gameHooks?.enemyRules.movement;
+          const hookLanes = gameHooks?.levelLayout.lanes ?? [];
           for (let index = 0; index < config.level.hazards; index += 1) {
+            const lane = hookLanes.length > 0 ? hookLanes[index % hookLanes.length] : undefined;
             const x =
-              config.gameplay.spawnPattern === "waves"
+              hookMovement === "wave" || config.gameplay.spawnPattern === "waves"
                 ? 960 + index * 70
                 : config.gameplay.spawnPattern === "grid"
                   ? 250 + (index % 4) * 110
                   : 310 + index * 140;
             const y =
-              config.gameplay.spawnPattern === "lanes" || config.gameplay.spawnPattern === "waves"
+              lane
+                ? lane.y
+                : config.gameplay.spawnPattern === "lanes" || config.gameplay.spawnPattern === "waves"
                 ? 150 + (index % 3) * 95
                 : config.templateFamily === "platformer"
                   ? 480
@@ -256,7 +275,8 @@ export function PhaserPreview({
             const hazard = this.createRuntimeImage(x, y, "generated-hazard", 34, 34, 0xfb7185);
             this.hazards.push(hazard);
             this.addWorldObject(hazard);
-            if (config.gameplay.enemyBehavior === "patrol") {
+            const movement = hookMovement ?? (config.gameplay.enemyBehavior === "timer" ? "static" : config.gameplay.enemyBehavior);
+            if (movement === "patrol") {
               this.tweens.add({
                 targets: hazard,
                 x: x + (index % 2 === 0 ? 58 : -58),
@@ -266,16 +286,16 @@ export function PhaserPreview({
                 repeat: -1,
                 ease: Phaser.Math.Easing.Sine.InOut
               });
-            } else if (config.gameplay.enemyBehavior === "wave") {
+            } else if (movement === "wave") {
               this.tweens.add({
                 targets: hazard,
                 x: -40,
-                duration: 4200 + index * 260,
+                duration: Math.max(900, (960 / (lane?.speed ?? gameHooks?.enemyRules.speed ?? 95)) * 1000),
                 repeat: -1,
-                delay: index * 320,
+                delay: index * (gameHooks?.enemyRules.waveIntervalMs || 320),
                 ease: "Linear"
               });
-            } else if (config.gameplay.enemyBehavior !== "chase") {
+            } else if (movement !== "chase") {
               this.tweens.add({
                 targets: hazard,
                 y: y - 28,
@@ -290,11 +310,12 @@ export function PhaserPreview({
         }
 
         private updateHazardBehavior(hazard: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle) {
-          if (config.gameplay.enemyBehavior !== "chase" || !this.player) return;
+          const movement = gameHooks?.enemyRules.movement ?? config.gameplay.enemyBehavior;
+          if (movement !== "chase" || !this.player) return;
           const dx = this.player.x - hazard.x;
           const dy = this.player.y - hazard.y;
           const distance = Math.max(1, Math.hypot(dx, dy));
-          const speed = config.difficulty === "hard" ? 1.6 : config.difficulty === "easy" ? 0.7 : 1.05;
+          const speed = (gameHooks?.enemyRules.speed ?? gameHooks?.numberTuning.hazardSpeed ?? 130) / 120;
           hazard.x += (dx / distance) * speed;
           hazard.y += (dy / distance) * speed;
         }

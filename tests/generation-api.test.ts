@@ -383,6 +383,34 @@ describe("generation api handler", () => {
     expect(prompts.join("\n")).toContain("Plane Reference");
   });
 
+  it("marks a fallback when requested reference package cannot be read", async () => {
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        PUBLIC_BASE_URL: "https://wow-game.example"
+      },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/generate-playable",
+      body: {
+        idea: "参考一个不存在的包生成新的飞行躲避游戏",
+        answers: [],
+        templateFamily: "top_down",
+        projectId: "project-missing-reference",
+        model: "mock-designer",
+        referencePackageId: "missing-package",
+        referenceVersionId: "v1"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.project.contentType).toBe("ai_project");
+    expect(response.body.fallbacksUsed).toContain("reference_package_missing");
+  });
+
   it("returns a fallback AI edit plan for persisted uploaded packages", async () => {
     const storeIO = memoryStore();
     const handler = createGenerationApiHandler({

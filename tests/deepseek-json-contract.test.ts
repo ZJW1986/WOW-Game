@@ -17,6 +17,10 @@ describe("DeepSeek JSON contract", () => {
       idea: "make a platform coin collector",
       assetPack: { assets: [{ assetKey: "player.hero" }] }
     });
+    const hooksPrompt = createPromptForTask("llm.game_hooks", {
+      idea: "make a platform coin collector",
+      gameConfig: { templateFamily: "platformer" }
+    });
 
     expect(classificationPrompt).toContain("Return strict JSON only");
     expect(classificationPrompt).toContain('"templateFamily"');
@@ -25,7 +29,9 @@ describe("DeepSeek JSON contract", () => {
     expect(gddPrompt).toContain('"implementationRoute"');
     expect(configPrompt).toContain('"referencedAssetKeys"');
     expect(configPrompt).toContain("asset-pack");
-    expect(containsMojibake(`${classificationPrompt}\n${gddPrompt}\n${configPrompt}`)).toBe(false);
+    expect(hooksPrompt).toContain('"enemyRules"');
+    expect(hooksPrompt).toContain("Do not output JavaScript or TypeScript");
+    expect(containsMojibake(`${classificationPrompt}\n${gddPrompt}\n${configPrompt}\n${hooksPrompt}`)).toBe(false);
   });
 
   it("accepts fenced JSON content returned by the chat model", async () => {

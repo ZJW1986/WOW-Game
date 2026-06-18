@@ -111,4 +111,18 @@ describe("studio chat message layout", () => {
     expect(messages.at(-1)?.content).toContain("可以开始生成首版游戏");
     expect(messages.at(-1)?.content).toContain(project.gameConfig.playerGoal);
   });
+
+  it("shows uploaded zip reference as a separate system turn", () => {
+    const project = runMockPipeline("做一个太空猫躲避陨石的小游戏");
+    const messages = buildStudioChatMessages({
+      idea: "做一个太空猫躲避陨石的小游戏",
+      project,
+      messages: getMessages("zh-CN"),
+      phase: "chatting",
+      followups: [],
+      referencePackageName: "飞机大战参考包"
+    });
+
+    expect(messages.some((message) => message.role === "system" && message.content === "已参考：飞机大战参考包")).toBe(true);
+  });
 });

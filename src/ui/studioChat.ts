@@ -40,7 +40,8 @@ export function buildStudioChatMessages({
   project,
   messages,
   phase,
-  session
+  session,
+  referencePackageName
 }: {
   idea: string;
   followups: StudioFollowup[];
@@ -48,6 +49,7 @@ export function buildStudioChatMessages({
   messages: ReturnType<typeof getMessages>;
   phase: StudioChatPhase;
   session?: ConversationSession;
+  referencePackageName?: string;
 }): StudioChatMessage[] {
   const splitIdea = splitIdeaTurns(idea);
   const normalizedFollowups =
@@ -73,6 +75,15 @@ export function buildStudioChatMessages({
       content: splitIdea.idea
     }
   ];
+
+  if (referencePackageName) {
+    result.push({
+      id: "reference-package",
+      role: "system",
+      meta: "参考案例",
+      content: `已参考：${referencePackageName}`
+    });
+  }
 
   if (session) {
     for (const question of session.questions) {

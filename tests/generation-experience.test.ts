@@ -77,6 +77,22 @@ describe("fast playable generation experience", () => {
             numbers: { playerSpeed: 230, jumpVelocity: 430 },
             implementationRoute: "使用 platformer Phaser 模板，只生成配置和资源引用。"
           };
+        } else if (prompt.includes("llm.game_hooks")) {
+          content = {
+            enemyRules: { movement: "patrol", speed: 140, waveIntervalMs: 0 },
+            collectibleRules: { placement: "arc", value: 1, respawn: false },
+            winCondition: { mode: "collect_score", target: 6 },
+            failCondition: { mode: "hit_hazard", lives: 1 },
+            numberTuning: { playerSpeed: 230, jumpVelocity: 430, hazardSpeed: 140 },
+            levelLayout: {
+              platforms: [
+                { x: 480, y: 510, width: 920, height: 28 },
+                { x: 360, y: 390, width: 180, height: 20 }
+              ],
+              lanes: [],
+              grid: { columns: 0, rows: 0 }
+            }
+          };
         } else {
           content = {
             templateFamily: "platformer",
@@ -107,8 +123,11 @@ describe("fast playable generation experience", () => {
     expect(result.modelTasks.map((task) => task.taskType)).toEqual([
       "llm.classification",
       "llm.gdd",
-      "llm.game_config"
+      "llm.game_config",
+      "llm.game_hooks"
     ]);
+    expect(result.project.artifacts.map((artifact) => artifact.fileName)).toContain("game-hooks.json");
+    expect(result.project.gameHooks.enemyRules.movement).toBe("patrol");
     expect(result.modelTasks.every((task) => task.status === "success")).toBe(true);
     expect(result.fallbacksUsed).toEqual([]);
   });
@@ -260,11 +279,12 @@ describe("fast playable generation experience", () => {
     });
 
     expect(result.project.gameConfig.templateFamily).toBe("top_down");
-    expect(result.modelTasks).toHaveLength(3);
+    expect(result.modelTasks).toHaveLength(4);
     expect(result.fallbacksUsed).toEqual([
       "llm.classification",
       "llm.gdd",
-      "llm.game_config"
+      "llm.game_config",
+      "llm.game_hooks"
     ]);
   });
 
