@@ -15,7 +15,7 @@ describe("api router boundary", () => {
     const sessionResponse = await api.handle("POST", "/api/sessions", {
       idea: "做一个飞船躲避陨石的小游戏"
     });
-    expect(sessionResponse.body.session.questions).toHaveLength(4);
+    expect(sessionResponse.body.session.questions).toHaveLength(5);
 
     const versionResponse = await api.handle("POST", "/api/projects/project-1/versions", {});
     expect(versionResponse.body.version.artifactFiles).toContain("gdd.json");

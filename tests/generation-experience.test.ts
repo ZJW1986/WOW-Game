@@ -20,7 +20,7 @@ describe("fast playable generation experience", () => {
 
     expect(session.projectId).toBe("project-fast-1");
     expect(session.stage).toBe("guided_questions");
-    expect(session.questions).toHaveLength(4);
+    expect(session.questions).toHaveLength(5);
     expect(session.turns.map((turn) => turn.content).join(" ")).toContain("关键问题");
   });
 
@@ -77,6 +77,16 @@ describe("fast playable generation experience", () => {
             numbers: { playerSpeed: 230, jumpVelocity: 430 },
             implementationRoute: "使用 platformer Phaser 模板，只生成配置和资源引用。"
           };
+        } else if (prompt.includes("llm.mature_game_brief")) {
+          content = {
+            referencePatternId: "pattern-platformer-first-run",
+            coreLoop: ["安全起步", "跳跃收集", "躲避尖刺", "抵达终点"],
+            firstThirtySeconds: ["看到金币路径", "完成第一跳", "遇到尖刺", "接近终点"],
+            visualTheme: "森林平台和 parallax 背景",
+            feedbackChecklist: ["收集粒子", "命中闪烁", "胜利庆祝"],
+            difficultyCurve: ["先教学", "再危险", "最后终点"],
+            gameFeelMoments: ["金币路径", "落地反馈", "终点庆祝"]
+          };
         } else if (prompt.includes("llm.game_hooks")) {
           content = {
             enemyRules: { movement: "patrol", speed: 140, waveIntervalMs: 0 },
@@ -122,6 +132,7 @@ describe("fast playable generation experience", () => {
     expect(result.project.gameConfig.title).toBe("跃动森林");
     expect(result.modelTasks.map((task) => task.taskType)).toEqual([
       "llm.classification",
+      "llm.mature_game_brief",
       "llm.gdd",
       "llm.game_config",
       "llm.game_hooks"
@@ -240,7 +251,8 @@ describe("fast playable generation experience", () => {
       .flatMap((question) => [question.label, question.prompt, question.defaultAnswer, ...(question.options ?? [])])
       .join(" ");
 
-    expect(visibleText).toContain("玩家怎样算赢？");
+    expect(visibleText).toContain("玩家怎样才算赢？");
+    expect(visibleText).toContain("视听与节奏");
     expect(visibleText).not.toContain("How will the player move");
     expect(visibleText).not.toContain("Arrow keys");
   });
@@ -261,8 +273,8 @@ describe("fast playable generation experience", () => {
     });
 
     expect(result.fallbackUsed).toBe(true);
-    expect(result.questions).toHaveLength(4);
-    expect(result.questions[0].prompt).toBe("玩家怎样算赢？");
+    expect(result.questions).toHaveLength(5);
+    expect(result.questions[0].prompt).toContain("玩家怎样才算赢");
     expect(result.questions[0].defaultAnswer).toContain("金币");
   });
 
@@ -279,9 +291,10 @@ describe("fast playable generation experience", () => {
     });
 
     expect(result.project.gameConfig.templateFamily).toBe("top_down");
-    expect(result.modelTasks).toHaveLength(4);
+    expect(result.modelTasks).toHaveLength(5);
     expect(result.fallbacksUsed).toEqual([
       "llm.classification",
+      "llm.mature_game_brief",
       "llm.gdd",
       "llm.game_config",
       "llm.game_hooks"

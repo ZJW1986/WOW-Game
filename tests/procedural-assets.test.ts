@@ -114,6 +114,25 @@ describe("procedural game resources", () => {
     expect(runtimeAssets.player).toBe("/projects/project-1/v1/assets/player.ship.png");
   });
 
+  it("selects uploaded audio urls for the Phaser preview runtime", () => {
+    const project = runMockPipeline("做一个飞船躲避陨石并收集星星的小游戏");
+    const assetPack = {
+      ...project.assetPack,
+      assets: project.assetPack.assets.map((asset) => {
+        if (asset.assetKey === "bgm.loop") return { ...asset, fileUrl: "data:audio/mpeg;base64,bgm" };
+        if (asset.assetKey === "sfx.collect") return { ...asset, fileUrl: "data:audio/wav;base64,collect" };
+        if (asset.assetKey === "sfx.hit") return { ...asset, fileUrl: "data:audio/wav;base64,hit" };
+        return asset;
+      })
+    };
+
+    const runtimeAssets = selectPreviewRuntimeAssets(assetPack);
+
+    expect(runtimeAssets.bgm).toBe("data:audio/mpeg;base64,bgm");
+    expect(runtimeAssets.sfx.collect).toBe("data:audio/wav;base64,collect");
+    expect(runtimeAssets.sfx.hit).toBe("data:audio/wav;base64,hit");
+  });
+
   it("gives uploaded user materials priority in generated playable asset-packs and preview runtime", async () => {
     const service = createGenerationService();
 
@@ -156,5 +175,47 @@ describe("procedural game resources", () => {
     expect(hero?.source).toBe("uploaded");
     expect(runtimeAssets.background).toBe("data:image/png;base64,uploadedBackground");
     expect(runtimeAssets.player).toBe("data:image/png;base64,uploadedHero");
+  });
+
+  it("gives uploaded audio user materials priority in generated playable asset-packs", async () => {
+    const service = createGenerationService();
+
+    const result = await service.generatePlayableVersion({
+      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      answers: [],
+      templateFamily: "top_down",
+      projectId: "project-uploaded-audio",
+      baseUrl: "https://wow-game.example",
+      model: "mock-designer",
+      userMaterials: [
+        {
+          assetKey: "bgm.loop",
+          slot: "bgm",
+          fileName: "loop.mp3",
+          fileUrl: "data:audio/mpeg;base64,bgm",
+          previewUrl: "data:audio/mpeg;base64,bgm",
+          mimeType: "audio/mpeg"
+        },
+        {
+          assetKey: "sfx.hit",
+          slot: "sfx",
+          fileName: "hit.wav",
+          fileUrl: "data:audio/wav;base64,hit",
+          previewUrl: "data:audio/wav;base64,hit",
+          mimeType: "audio/wav"
+        }
+      ]
+    });
+
+    const bgm = result.project.assetPack.assets.find((asset) => asset.assetKey === "bgm.loop");
+    const hit = result.project.assetPack.assets.find((asset) => asset.assetKey === "sfx.hit");
+    const runtimeAssets = selectPreviewRuntimeAssets(result.project.assetPack);
+
+    expect(bgm?.source).toBe("uploaded");
+    expect(bgm?.fileUrl).toBe("data:audio/mpeg;base64,bgm");
+    expect(hit?.source).toBe("uploaded");
+    expect(hit?.fileUrl).toBe("data:audio/wav;base64,hit");
+    expect(runtimeAssets.bgm).toBe("data:audio/mpeg;base64,bgm");
+    expect(runtimeAssets.sfx.hit).toBe("data:audio/wav;base64,hit");
   });
 });

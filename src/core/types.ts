@@ -8,9 +8,13 @@ export type TemplateFamily =
 export type PipelineStage =
   | "idea-intake"
   | "guided-questions"
+  | "design-brief"
   | "classification"
+  | "mature-game-brief"
   | "gdd"
   | "asset-requirements"
+  | "asset-candidates"
+  | "confirmed-assets"
   | "asset-style-guide"
   | "asset-pack"
   | "game-config"
@@ -79,7 +83,7 @@ export interface AssetPack {
   assets: AssetRequirement[];
 }
 
-export type UserMaterialSlot = "player" | "background" | "hazard" | "collectible" | "cover";
+export type UserMaterialSlot = "player" | "background" | "hazard" | "collectible" | "cover" | "bgm" | "sfx";
 
 export interface UserMaterial {
   assetKey: string;
@@ -88,6 +92,56 @@ export interface UserMaterial {
   fileUrl: string;
   previewUrl?: string;
   mimeType: string;
+}
+
+export interface DesignBrief {
+  coreGameplay: string;
+  playerGoal: string;
+  referenceTakeaways: string[];
+  risks: string[];
+  questionFocus: string[];
+  developerPrompt: string;
+}
+
+export interface MatureGameBrief {
+  referencePatternId: string;
+  coreLoop: string[];
+  firstThirtySeconds: string[];
+  visualTheme: string;
+  feedbackChecklist: string[];
+  difficultyCurve: string[];
+  gameFeelMoments: string[];
+}
+
+export interface AssetCandidate {
+  slot: UserMaterialSlot;
+  assetKey: string;
+  type: AssetType;
+  label: string;
+  prompt: string;
+  style: string;
+  purpose: string;
+  acceptedFileTypes: string[];
+  previewUrl: string;
+  fileUrl: string;
+  source: AssetSource;
+  approvalStatus?: "pending" | "approved" | "rejected";
+}
+
+export interface AssetCandidates {
+  candidates: AssetCandidate[];
+}
+
+export interface ConfirmedAssets {
+  assets: AssetCandidate[];
+}
+
+export interface RevisionAnalysis {
+  understoodChange: string;
+  updatedDeveloperPrompt: string;
+  confirmationQuestions: DesignQuestion[];
+  affectedAssets: string[];
+  risks: string[];
 }
 
 export interface GameConfig {
@@ -148,6 +202,41 @@ export interface GameHooks {
     lanes: Array<{ y: number; speed: number; count: number }>;
     grid: { columns: number; rows: number };
   };
+  levelFlow?: {
+    spawnPoint: { x: number; y: number };
+    safeZones: Array<{ x: number; y: number; width: number; height: number }>;
+    finishZone?: { x: number; y: number; width: number; height: number };
+    cameraIntent: string;
+    tutorialBeats: string[];
+  };
+  collisionRules?: {
+    collisionRadius: number;
+    invulnerabilityMs: number;
+    knockbackForce: number;
+  };
+  feedbackRules?: {
+    particleCount: number;
+    screenShakeIntensity: number;
+    collectBurstCount: number;
+    floatingScore?: boolean;
+    comboText?: boolean;
+    audioCueKeys?: string[];
+  };
+  spawnRules?: {
+    hazardIntervalMs: number;
+    maxActiveHazards: number;
+  };
+  visualLayerRules?: {
+    backgroundTreatment: string;
+    foregroundProps: string[];
+    uiBadgeStyle: string;
+  };
+  difficultyRules?: {
+    hazardRamp: string;
+    enemyPacing: string;
+    collectibleSpacing: string;
+    checkpointPolicy: string;
+  };
 }
 
 export interface QaReport {
@@ -155,6 +244,9 @@ export interface QaReport {
     buildHealth: number;
     visualUsability: number;
     intentAlignment: number;
+    firstThirtySeconds?: number;
+    visualDepth?: number;
+    gameFeel?: number;
   };
   checks: string[];
   debugProtocolEntries: string[];

@@ -8,6 +8,7 @@ import type {
   Classification,
   GameConfig,
   GameHooks,
+  MatureGameBrief,
   MockProject,
   PipelineArtifact,
   PublishRecord,
@@ -16,6 +17,7 @@ import type {
 } from "./types";
 import { createMediaGateway } from "../services/mediaGateway";
 import { runDynamicVerification } from "../services/verificationBench";
+import { getReferenceGamePattern } from "../services/referenceGamePatterns";
 
 const TEMPLATE_KEYWORDS: Record<TemplateFamily, string[]> = {
   platformer: ["跳", "跳跃", "jump", "gravity", "平台", "横版", "尖刺", "攀爬", "金币"],
@@ -90,6 +92,7 @@ export function runMockPipeline(idea: string): MockProject {
   const classification = classifyIdea(idea);
   const title = createTitle(idea, classification.templateFamily);
   const assetRequirements = createAssetRequirements(classification.templateFamily);
+  const matureGameBrief = createMatureGameBrief(classification.templateFamily);
   const assetStyleGuide = createAssetStyleGuide({
     title,
     templateFamily: classification.templateFamily,
@@ -149,6 +152,7 @@ export function runMockPipeline(idea: string): MockProject {
     idea,
     title,
     classification,
+    matureGameBrief,
     assetRequirements,
     assetStyleGuide,
     assetPack,
@@ -242,7 +246,82 @@ export function createGameHooks(config: GameConfig): GameHooks {
             ]
           : [],
       grid: config.templateFamily === "grid_logic" ? { columns: 8, rows: 5 } : { columns: 0, rows: 0 }
+    },
+    levelFlow: createLevelFlow(config.templateFamily),
+    collisionRules: {
+      collisionRadius: config.templateFamily === "platformer" ? 8 : 12,
+      invulnerabilityMs: 520,
+      knockbackForce: config.templateFamily === "platformer" ? 180 : 140
+    },
+    feedbackRules: {
+      particleCount: config.templateFamily === "platformer" ? 24 : 18,
+      screenShakeIntensity: config.templateFamily === "platformer" ? 0.016 : 0.012,
+      collectBurstCount: config.templateFamily === "platformer" ? 14 : 12,
+      floatingScore: true,
+      comboText: config.templateFamily !== "ui_heavy",
+      audioCueKeys: ["sfx.collect", "sfx.hit", "sfx.win", "sfx.lose"]
+    },
+    spawnRules: {
+      hazardIntervalMs: config.gameplay.spawnPattern === "waves" ? 700 : 1100,
+      maxActiveHazards: Math.max(1, config.level.hazards)
+    },
+    visualLayerRules: {
+      backgroundTreatment: config.templateFamily === "platformer" ? "parallax forest layers" : "parallax arena depth",
+      foregroundProps: config.templateFamily === "platformer" ? ["grass lip", "finish flag"] : ["danger markers", "score glints"],
+      uiBadgeStyle: "compact neon readable HUD"
+    },
+    difficultyRules: {
+      hazardRamp: config.templateFamily === "platformer" ? "teach jump before first hazard" : "pressure rises after two pickups",
+      enemyPacing: config.templateFamily === "tower_defense" ? "wave preview then slow first wave" : "early safe read then active threat",
+      collectibleSpacing: config.templateFamily === "platformer" ? "coin path follows jump arc" : "collectibles pull player across safe lanes",
+      checkpointPolicy: config.templateFamily === "platformer" ? "finish gate visible after first reward" : "short retry with no hidden loss"
     }
+  };
+}
+
+export function createMatureGameBrief(templateFamily: TemplateFamily): MatureGameBrief {
+  const pattern = getReferenceGamePattern(templateFamily);
+  const isPlatformer = templateFamily === "platformer";
+  return {
+    referencePatternId: pattern.id,
+    coreLoop: isPlatformer
+      ? ["起步安全区", "沿金币路径跳跃", "躲避危险物", "抵达终点门"]
+      : ["进入安全区", "收集目标", "应对敌人压力", "完成胜利条件"],
+    firstThirtySeconds: isPlatformer
+      ? ["0-5 秒看到目标和金币路径", "5-15 秒完成教学跳跃", "15-25 秒遇到第一个危险物", "25-30 秒接近终点"]
+      : ["0-5 秒理解移动和目标", "5-15 秒收集第一个奖励", "15-25 秒出现敌人压力", "25-30 秒形成逃脱和收集循环"],
+    visualTheme: isPlatformer ? "森林平台、清晰地面剪影、背景 parallax" : "高对比竞技场、清晰角色和危险物",
+    feedbackChecklist: ["收集粒子", "命中闪烁", "屏幕轻微震动", "胜利庆祝", "失败重试提示"],
+    difficultyCurve: pattern.difficultyPrinciples,
+    gameFeelMoments: isPlatformer ? ["金币路径引导跳跃", "落地反馈", "终点门庆祝"] : ["擦边逃脱", "连收奖励", "危险接近提示"]
+  };
+}
+
+function createLevelFlow(templateFamily: TemplateFamily): GameHooks["levelFlow"] {
+  if (templateFamily === "platformer") {
+    return {
+      spawnPoint: { x: 96, y: 430 },
+      safeZones: [{ x: 96, y: 430, width: 170, height: 120 }],
+      finishZone: { x: 820, y: 430, width: 64, height: 110 },
+      cameraIntent: "keep the full first route readable in a single-screen preview",
+      tutorialBeats: ["first coin before hazard", "short jump before long jump", "finish gate visible"]
+    };
+  }
+  if (templateFamily === "tower_defense") {
+    return {
+      spawnPoint: { x: 40, y: 270 },
+      safeZones: [{ x: 760, y: 220, width: 130, height: 120 }],
+      finishZone: { x: 850, y: 270, width: 80, height: 120 },
+      cameraIntent: "show enemy route and base health at all times",
+      tutorialBeats: ["route preview", "first wave warning", "base hit feedback"]
+    };
+  }
+  return {
+    spawnPoint: { x: 480, y: 300 },
+    safeZones: [{ x: 480, y: 300, width: 180, height: 140 }],
+    finishZone: undefined,
+    cameraIntent: "keep arena exits and threat lanes visible",
+    tutorialBeats: ["safe start", "first collectible", "first enemy pressure"]
   };
 }
 
@@ -687,6 +766,7 @@ export function createArtifacts(input: {
   idea: string;
   title: string;
   classification: Classification;
+  matureGameBrief: MatureGameBrief;
   assetRequirements: AssetRequirement[];
   assetStyleGuide: AssetStyleGuide;
   assetPack: AssetPack;
@@ -722,6 +802,8 @@ export function createArtifacts(input: {
     jsonArtifact("idea-intake", "idea-intake.json", "Idea Intake", ideaIntake),
     mdArtifact("idea-intake", "idea-intake.md", "Idea Intake", ideaIntake),
     jsonArtifact("classification", "classification.json", "Physics Classification", input.classification),
+    jsonArtifact("mature-game-brief", "mature-game-brief.json", "Mature Game Brief", input.matureGameBrief),
+    mdArtifact("mature-game-brief", "mature-game-brief.md", "Mature Game Brief", input.matureGameBrief),
     jsonArtifact("gdd", "gdd.json", "Technical GDD", gdd),
     mdArtifact("gdd", "gdd.md", "Technical GDD", gdd),
     jsonArtifact("asset-style-guide", "asset-style-guide.json", "Asset Style Guide", input.assetStyleGuide),

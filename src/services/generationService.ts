@@ -2,22 +2,41 @@ import { createConversationSession, createGuidedQuestions } from "../core/conver
 import {
   createArtifacts,
   createAssetRequirements,
+  createMatureGameBrief,
   createAssetStyleGuide,
+  createGameHooks,
   createPublishRecord,
   createQaReport,
   runMockPipeline,
   validateAssetReferences
 } from "../core/pipeline";
-import { classificationSchema, gameConfigSchema, gameHooksSchema, gddSchema, guidedQuestionsSchema } from "../core/schemas";
+import {
+  assetCandidatesSchema,
+  classificationSchema,
+  confirmedAssetsSchema,
+  designBriefSchema,
+  gameConfigSchema,
+  gameHooksSchema,
+  gddSchema,
+  guidedQuestionsSchema,
+  matureGameBriefSchema,
+  revisionAnalysisSchema
+} from "../core/schemas";
 import type {
+  AssetCandidate,
+  AssetCandidates,
   AssetPack,
+  ConfirmedAssets,
+  DesignBrief,
   DesignQuestion,
   GameConfig,
   GameHooks,
+  MatureGameBrief,
   MockProject,
   PlayFeedback,
   PublishRecord,
   ReferencePackageSummary,
+  RevisionAnalysis,
   TemplateFamily,
   UserMaterial,
   UserAnswer
@@ -29,6 +48,7 @@ import { createModelGateway, type GatewayResult } from "./modelGateway";
 import { createPromptForTask } from "./promptPack";
 import { createAgnesImageProvider } from "./agnesImageProvider";
 import { runDynamicVerification } from "./verificationBench";
+import { getReferenceGamePattern } from "./referenceGamePatterns";
 
 export interface GeneratePlayableInput {
   idea: string;
@@ -39,6 +59,9 @@ export interface GeneratePlayableInput {
   model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
   referencePackageSummary?: ReferencePackageSummary;
   userMaterials?: UserMaterial[];
+  designBrief?: DesignBrief;
+  confirmedAssets?: ConfirmedAssets;
+  revisionHistory?: RevisionAnalysis[];
 }
 
 export interface GenerateGuidedQuestionsInput {
@@ -46,6 +69,28 @@ export interface GenerateGuidedQuestionsInput {
   templateFamily: TemplateFamily;
   projectId?: string;
   model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
+  designBrief?: DesignBrief;
+  referencePackageSummary?: ReferencePackageSummary;
+  userMaterials?: UserMaterial[];
+  previousAnswers?: UserAnswer[];
+}
+
+export interface GenerateDesignBriefInput {
+  idea: string;
+  templateFamily: TemplateFamily;
+  model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
+  referencePackageSummary?: ReferencePackageSummary;
+  userMaterials?: UserMaterial[];
+}
+
+export interface GenerateAssetCandidatesInput extends GenerateDesignBriefInput {
+  designBrief?: DesignBrief;
+}
+
+export interface GenerateRevisionAnalysisInput extends GenerateDesignBriefInput {
+  followup: string;
+  designBrief?: DesignBrief;
+  previousAnswers?: UserAnswer[];
 }
 
 export interface GenerationServiceOptions {
@@ -68,9 +113,26 @@ type GenerationModelTask =
   | GatewayResult<unknown>
   | GatewayResult<ReturnType<typeof classificationSchema.parse>>
   | GatewayResult<ReturnType<typeof guidedQuestionsSchema.parse>>
+  | GatewayResult<ReturnType<typeof designBriefSchema.parse>>
+  | GatewayResult<ReturnType<typeof assetCandidatesSchema.parse>>
+  | GatewayResult<ReturnType<typeof confirmedAssetsSchema.parse>>
+  | GatewayResult<ReturnType<typeof revisionAnalysisSchema.parse>>
   | GatewayResult<ReturnType<typeof gddSchema.parse>>
+  | GatewayResult<ReturnType<typeof matureGameBriefSchema.parse>>
   | GatewayResult<ReturnType<typeof gameConfigSchema.parse>>
   | GatewayResult<ReturnType<typeof gameHooksSchema.parse>>;
+
+const generatedAssetCandidatesSchema = assetCandidatesSchema.transform(
+  (value): AssetCandidates =>
+    withCandidatePreviews({
+      candidates: value.candidates.map((candidate) => ({
+        ...candidate,
+        previewUrl: candidate.previewUrl ?? "",
+        fileUrl: candidate.fileUrl ?? "",
+        source: candidate.source ?? "generated"
+      }))
+    })
+);
 
 export function createGenerationService(options: GenerationServiceOptions = {}) {
   const env = readRuntimeEnv();
@@ -99,6 +161,27 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
   });
 
   return {
+    async generateDesignBrief(input: GenerateDesignBriefInput) {
+      const fallback = createFallbackDesignBrief(input);
+      const useRealModel = (input.model ?? "deepseek-v4-flash") === "deepseek-v4-flash";
+      const provider = useRealModel ? "deepseek" : "mock";
+      const model = useRealModel ? "deepseek-v4-flash" : "mock-designer";
+      const task = await gateway.runModelTask({
+        taskType: "llm.design_brief",
+        provider,
+        model,
+        prompt: createPromptForTask("llm.design_brief", input as unknown as Record<string, unknown>),
+        schema: designBriefSchema,
+        preprocess: (raw) => normalizeDesignBrief(raw, fallback),
+        fallback
+      });
+      return {
+        designBrief: task.output,
+        modelTask: task,
+        fallbackUsed: task.status === "fallback"
+      };
+    },
+
     async generateGuidedQuestions(input: GenerateGuidedQuestionsInput) {
       const fallbackQuestions = createGuidedQuestions(input.idea);
       const useRealModel = (input.model ?? "deepseek-v4-flash") === "deepseek-v4-flash";
@@ -112,6 +195,10 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           idea: input.idea,
           templateFamily: input.templateFamily,
           projectId: input.projectId,
+          designBrief: input.designBrief,
+          referencePackageSummary: input.referencePackageSummary,
+          userMaterials: input.userMaterials,
+          previousAnswers: input.previousAnswers,
           designGuardrails: [
             "Only ask questions that can affect a first playable 2D game.",
             "Prefer controls, win condition, fail condition, visual style, target duration.",
@@ -125,6 +212,55 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
 
       return {
         questions: task.output.questions,
+        modelTask: task,
+        fallbackUsed: task.status === "fallback"
+      };
+    },
+
+    async generateAssetCandidates(input: GenerateAssetCandidatesInput) {
+      const fallback = createFallbackAssetCandidates(input);
+      const useRealModel = (input.model ?? "deepseek-v4-flash") === "deepseek-v4-flash";
+      const provider = useRealModel ? "deepseek" : "mock";
+      const model = useRealModel ? "deepseek-v4-flash" : "mock-designer";
+      const task = await gateway.runModelTask({
+        taskType: "llm.asset_prompts",
+        provider,
+        model,
+        prompt: createPromptForTask("llm.asset_prompts", input as unknown as Record<string, unknown>),
+        schema: generatedAssetCandidatesSchema,
+        preprocess: (raw) => withCandidatePreviews(normalizeAssetCandidates(raw, fallback)),
+        fallback
+      });
+      const assetCandidates = task.output;
+      return {
+        assetCandidates,
+        confirmedAssets: confirmedAssetsSchema.parse({
+          assets: assetCandidates.candidates.map((candidate) => ({
+            ...candidate,
+            approvalStatus: "approved" as const
+          }))
+        }),
+        modelTask: task,
+        fallbackUsed: task.status === "fallback"
+      };
+    },
+
+    async generateRevisionAnalysis(input: GenerateRevisionAnalysisInput) {
+      const fallback = createFallbackRevisionAnalysis(input);
+      const useRealModel = (input.model ?? "deepseek-v4-flash") === "deepseek-v4-flash";
+      const provider = useRealModel ? "deepseek" : "mock";
+      const model = useRealModel ? "deepseek-v4-flash" : "mock-designer";
+      const task = await gateway.runModelTask({
+        taskType: "llm.revision_analysis",
+        provider,
+        model,
+        prompt: createPromptForTask("llm.revision_analysis", input as unknown as Record<string, unknown>),
+        schema: revisionAnalysisSchema,
+        preprocess: (raw) => normalizeRevisionAnalysis(raw, fallback),
+        fallback
+      });
+      return {
+        revisionAnalysis: task.output,
         modelTask: task,
         fallbackUsed: task.status === "fallback"
       };
@@ -151,6 +287,9 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         prompt: createPromptForTask("llm.classification", {
           idea: input.idea,
           answers: input.answers,
+          designBrief: input.designBrief,
+          confirmedAssets: input.confirmedAssets,
+          revisionHistory: input.revisionHistory,
           preferredTemplate: input.templateFamily,
           referencePackageSummary: input.referencePackageSummary
         }),
@@ -164,6 +303,30 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       modelTasks.push(classificationTask);
       trackFallback(classificationTask, fallbacksUsed);
 
+      const referencePattern = getReferenceGamePattern(classificationTask.output.templateFamily);
+      const fallbackMatureGameBrief = createFallbackMatureGameBrief(classificationTask.output.templateFamily);
+      const matureBriefTask = await gateway.runModelTask({
+        taskType: "llm.mature_game_brief",
+        provider,
+        model,
+        prompt: createPromptForTask("llm.mature_game_brief", {
+          idea: input.idea,
+          answers: input.answers,
+          designBrief: input.designBrief,
+          confirmedAssets: input.confirmedAssets,
+          revisionHistory: input.revisionHistory,
+          classification: classificationTask.output,
+          referencePattern,
+          referencePackageSummary: input.referencePackageSummary,
+          userMaterials: input.userMaterials
+        }),
+        schema: matureGameBriefSchema,
+        preprocess: (raw) => normalizeMatureGameBrief(raw, fallbackMatureGameBrief),
+        fallback: fallbackMatureGameBrief
+      });
+      modelTasks.push(matureBriefTask);
+      trackFallback(matureBriefTask, fallbacksUsed);
+
       const fallbackGdd = extractArtifactContent(mockProject, "gdd.json");
       const parsedFallbackGdd = gddSchema.parse(fallbackGdd);
       const gddTask = await gateway.runModelTask({
@@ -173,7 +336,11 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         prompt: createPromptForTask("llm.gdd", {
           idea: input.idea,
           answers: input.answers,
+          designBrief: input.designBrief,
+          confirmedAssets: input.confirmedAssets,
+          revisionHistory: input.revisionHistory,
           classification: classificationTask.output,
+          matureGameBrief: matureBriefTask.output,
           referencePackageSummary: input.referencePackageSummary
         }),
         schema: gddSchema,
@@ -202,7 +369,10 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       );
       const assetPack: AssetPack = {
         versionId: "v1",
-        assets: applyUserMaterials(generatedAssets, input.userMaterials ?? [])
+        assets: applyConfirmedAssets(
+          applyUserMaterials(generatedAssets, input.userMaterials ?? []),
+          input.confirmedAssets
+        )
       };
 
       const fallbackConfig = {
@@ -216,7 +386,11 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         prompt: createPromptForTask("llm.game_config", {
           idea: input.idea,
           answers: input.answers,
+          designBrief: input.designBrief,
+          confirmedAssets: input.confirmedAssets,
+          revisionHistory: input.revisionHistory,
           classification: classificationTask.output,
+          matureGameBrief: matureBriefTask.output,
           gdd: gddTask.output,
           assetPack,
           referencePackageSummary: input.referencePackageSummary
@@ -237,8 +411,12 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         prompt: createPromptForTask("llm.game_hooks", {
           idea: input.idea,
           answers: input.answers,
+          designBrief: input.designBrief,
+          confirmedAssets: input.confirmedAssets,
+          revisionHistory: input.revisionHistory,
           classification: classificationTask.output,
           gdd: gddTask.output,
+          matureGameBrief: matureBriefTask.output,
           gameConfig,
           referencePackageSummary: input.referencePackageSummary
         }),
@@ -270,6 +448,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         idea: input.idea,
         title: gameConfig.title,
         classification: classificationTask.output,
+        matureGameBrief: matureBriefTask.output,
         assetRequirements,
         assetStyleGuide,
         assetPack,
@@ -300,7 +479,8 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
                 }
               ]
             : []
-        );
+        )
+        .concat(createCreativeArtifacts(input));
 
       const project: MockProject = {
         ...mockProject,
@@ -345,6 +525,266 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       };
     }
   };
+}
+
+function createFallbackDesignBrief(input: GenerateDesignBriefInput): DesignBrief {
+  const reference = input.referencePackageSummary
+    ? [`参考 ${input.referencePackageSummary.packageName} 的玩法节奏和素材风格。`]
+    : ["没有上传参考包，按用户创意建立第一版玩法。"];
+  return {
+    coreGameplay:
+      input.templateFamily === "platformer"
+        ? "平台跳跃、收集和躲避构成第一版核心循环。"
+        : "俯视角移动、躲避危险和收集目标构成第一版核心循环。",
+    playerGoal: "完成收集目标并避免失败条件。",
+    referenceTakeaways: reference,
+    risks: ["第一阶段只生成配置驱动的 2D Phaser 小游戏，不生成引擎生命周期代码。"],
+    questionFocus: ["玩法目标", "角色和障碍", "视觉风格", "音效氛围", "关卡节奏"],
+    developerPrompt: `Use the ${input.templateFamily} template to create a first playable game from: ${input.idea}`
+  };
+}
+
+function normalizeDesignBrief(raw: unknown, fallback: DesignBrief): DesignBrief {
+  const value = asRecord(raw);
+  return {
+    coreGameplay: normalizeString(value.coreGameplay, fallback.coreGameplay),
+    playerGoal: normalizeString(value.playerGoal, fallback.playerGoal),
+    referenceTakeaways: normalizeStringArray(value.referenceTakeaways, fallback.referenceTakeaways),
+    risks: normalizeStringArray(value.risks, fallback.risks),
+    questionFocus: normalizeStringArray(value.questionFocus, fallback.questionFocus),
+    developerPrompt: normalizeString(value.developerPrompt, fallback.developerPrompt)
+  };
+}
+
+function createFallbackMatureGameBrief(templateFamily: TemplateFamily): MatureGameBrief {
+  return createMatureGameBrief(templateFamily);
+}
+
+function normalizeMatureGameBrief(raw: unknown, fallback: MatureGameBrief): MatureGameBrief {
+  const value = asRecord(raw);
+  return {
+    referencePatternId: normalizeString(value.referencePatternId, fallback.referencePatternId),
+    coreLoop: normalizeStringArray(value.coreLoop, fallback.coreLoop),
+    firstThirtySeconds: normalizeStringArray(value.firstThirtySeconds, fallback.firstThirtySeconds),
+    visualTheme: normalizeString(value.visualTheme, fallback.visualTheme),
+    feedbackChecklist: normalizeStringArray(value.feedbackChecklist, fallback.feedbackChecklist),
+    difficultyCurve: normalizeStringArray(value.difficultyCurve, fallback.difficultyCurve),
+    gameFeelMoments: normalizeStringArray(value.gameFeelMoments, fallback.gameFeelMoments)
+  };
+}
+
+function createFallbackAssetCandidates(input: GenerateAssetCandidatesInput): AssetCandidates {
+  const brief = input.designBrief ?? createFallbackDesignBrief(input);
+  const commonStyle = brief.developerPrompt.includes("cat") || input.idea.includes("猫") ? "cute sci-fi" : "arcade sci-fi";
+  return withCandidatePreviews({
+    candidates: [
+      createCandidate("background", "world.background", "image", "背景", `${brief.developerPrompt}; background environment`, commonStyle, "游戏背景", ["image/*"]),
+      createCandidate("player", "player.ship", "image", "主角", `${brief.developerPrompt}; player character sprite`, commonStyle, "玩家角色", ["image/*"]),
+      createCandidate("hazard", "hazard.asteroid", "image", "危险物", `${brief.developerPrompt}; hazard obstacle sprite`, commonStyle, "失败危险物", ["image/*"]),
+      createCandidate("collectible", "item.collectible", "image", "收集物", `${brief.developerPrompt}; collectible reward item`, commonStyle, "得分道具", ["image/*"]),
+      createCandidate("bgm", "bgm.loop", "bgm", "BGM", `${brief.developerPrompt}; looping background music`, "synth arcade", "背景音乐", ["audio/*"]),
+      createCandidate("sfx", "sfx.collect", "sfx", "收集音效", `${brief.developerPrompt}; collect sound effect`, "bright chime", "收集反馈", ["audio/*"])
+    ]
+  });
+}
+
+function createCandidate(
+  slot: AssetCandidate["slot"],
+  assetKey: string,
+  type: AssetCandidate["type"],
+  label: string,
+  prompt: string,
+  style: string,
+  purpose: string,
+  acceptedFileTypes: string[]
+): AssetCandidate {
+  return {
+    slot,
+    assetKey,
+    type,
+    label,
+    prompt,
+    style,
+    purpose,
+    acceptedFileTypes,
+    previewUrl: "",
+    fileUrl: "",
+    source: "generated"
+  };
+}
+
+function normalizeAssetCandidates(raw: unknown, fallback: AssetCandidates): AssetCandidates {
+  const value = asRecord(raw);
+  const rawCandidates = Array.isArray(value.candidates) ? value.candidates : [];
+  const candidates = rawCandidates
+    .map((item, index) => normalizeAssetCandidate(item, fallback.candidates[index]))
+    .filter((item): item is AssetCandidate => Boolean(item));
+  return { candidates: candidates.length > 0 ? candidates : fallback.candidates };
+}
+
+function normalizeAssetCandidate(raw: unknown, fallback?: AssetCandidate): AssetCandidate | null {
+  const value = asRecord(raw);
+  const slot = normalizeEnum(value.slot, fallback?.slot ?? "player", [
+    "player",
+    "background",
+    "hazard",
+    "collectible",
+    "cover",
+    "bgm",
+    "sfx"
+  ]);
+  const type = normalizeEnum(value.type, fallback?.type ?? (slot === "bgm" ? "bgm" : slot === "sfx" ? "sfx" : "image"), [
+    "image",
+    "sfx",
+    "bgm",
+    "effect",
+    "ui",
+    "build"
+  ]);
+  const assetKey = normalizeString(value.assetKey, fallback?.assetKey ?? assetKeyForSlot(slot));
+  const label = normalizeString(value.label, fallback?.label ?? slot);
+  const prompt = normalizeString(value.prompt, fallback?.prompt ?? label);
+  if (!assetKey || !prompt) return null;
+  return {
+    slot,
+    assetKey,
+    type,
+    label,
+    prompt,
+    style: normalizeString(value.style, fallback?.style ?? "arcade"),
+    purpose: normalizeString(value.purpose, fallback?.purpose ?? label),
+    acceptedFileTypes: normalizeStringArray(value.acceptedFileTypes, fallback?.acceptedFileTypes ?? acceptedTypesFor(type)),
+    previewUrl: normalizeString(value.previewUrl, fallback?.previewUrl ?? ""),
+    fileUrl: normalizeString(value.fileUrl, fallback?.fileUrl ?? ""),
+    source: normalizeEnum(value.source, fallback?.source ?? "generated", ["mock", "preset", "uploaded", "generated", "library"])
+  };
+}
+
+function withCandidatePreviews(assetCandidates: AssetCandidates): AssetCandidates {
+  return {
+    candidates: assetCandidates.candidates.map((candidate) => {
+      const previewUrl = candidate.previewUrl || createCandidatePreviewUrl(candidate);
+      return {
+        ...candidate,
+        previewUrl,
+        fileUrl: candidate.fileUrl || previewUrl,
+        source: candidate.source || "generated",
+        approvalStatus: candidate.approvalStatus ?? "pending"
+      };
+    })
+  };
+}
+
+function createCandidatePreviewUrl(candidate: AssetCandidate): string {
+  if (candidate.type === "sfx" || candidate.type === "bgm") {
+    return `data:application/json;charset=utf-8,${encodeURIComponent(
+      JSON.stringify({ kind: candidate.type, assetKey: candidate.assetKey, prompt: candidate.prompt })
+    )}`;
+  }
+  const color = candidate.slot === "hazard" ? "#fb7185" : candidate.slot === "collectible" ? "#facc15" : "#22d3ee";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 160 100"><rect width="160" height="100" rx="12" fill="#101828"/><circle cx="80" cy="45" r="24" fill="${color}"/><text x="80" y="86" text-anchor="middle" font-family="Arial" font-size="12" fill="#fff">${escapeXml(candidate.label)}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function escapeXml(text: string): string {
+  return text.replace(/[<>&'"]/g, (char) => {
+    if (char === "<") return "&lt;";
+    if (char === ">") return "&gt;";
+    if (char === "&") return "&amp;";
+    if (char === "'") return "&apos;";
+    return "&quot;";
+  });
+}
+
+function createFallbackRevisionAnalysis(input: GenerateRevisionAnalysisInput): RevisionAnalysis {
+  return {
+    understoodChange: `理解追加需求：${input.followup}`,
+    updatedDeveloperPrompt: `${input.designBrief?.developerPrompt ?? input.idea}\nRevision: ${input.followup}`,
+    confirmationQuestions: [
+      {
+        id: "revision_confirm",
+        label: "修改确认",
+        prompt: "这个追加需求是否直接应用到下一版游戏？",
+        inputType: "single_choice",
+        options: ["直接应用", "再细化一下"],
+        defaultAnswer: "直接应用",
+        required: true
+      }
+    ],
+    affectedAssets: [],
+    risks: []
+  };
+}
+
+function normalizeRevisionAnalysis(raw: unknown, fallback: RevisionAnalysis): RevisionAnalysis {
+  const value = asRecord(raw);
+  const rawQuestions = Array.isArray(value.confirmationQuestions) ? value.confirmationQuestions : [];
+  return {
+    understoodChange: normalizeString(value.understoodChange, fallback.understoodChange),
+    updatedDeveloperPrompt: normalizeString(value.updatedDeveloperPrompt, fallback.updatedDeveloperPrompt),
+    confirmationQuestions: rawQuestions
+      .map((item, index) => normalizeDesignQuestion(item, fallback.confirmationQuestions[index], index))
+      .filter((item): item is DesignQuestion => Boolean(item)),
+    affectedAssets: normalizeStringArray(value.affectedAssets, fallback.affectedAssets),
+    risks: normalizeStringArray(value.risks, fallback.risks)
+  };
+}
+
+function assetKeyForSlot(slot: AssetCandidate["slot"]): string {
+  if (slot === "background") return "world.background";
+  if (slot === "hazard") return "hazard.asteroid";
+  if (slot === "collectible") return "item.collectible";
+  if (slot === "bgm") return "bgm.loop";
+  if (slot === "sfx") return "sfx.collect";
+  if (slot === "cover") return "cover.main";
+  return "player.ship";
+}
+
+function acceptedTypesFor(type: AssetCandidate["type"]): string[] {
+  if (type === "sfx" || type === "bgm") return ["audio/*"];
+  if (type === "effect") return ["application/json"];
+  return ["image/*"];
+}
+
+function createCreativeArtifacts(input: GeneratePlayableInput) {
+  const artifacts = [];
+  if (input.designBrief) {
+    artifacts.push(
+      {
+        stage: "design-brief" as const,
+        fileName: "design-brief.json",
+        title: "Design Brief",
+        content: input.designBrief,
+        format: "json" as const
+      },
+      {
+        stage: "design-brief" as const,
+        fileName: "developer-prompt.md",
+        title: "Developer Prompt",
+        content: input.designBrief.developerPrompt,
+        format: "md" as const
+      }
+    );
+  }
+  if (input.confirmedAssets) {
+    artifacts.push({
+      stage: "confirmed-assets" as const,
+      fileName: "confirmed-assets.json",
+      title: "Confirmed Assets",
+      content: input.confirmedAssets,
+      format: "json" as const
+    });
+  }
+  if (input.revisionHistory && input.revisionHistory.length > 0) {
+    artifacts.push({
+      stage: "iteration-report" as const,
+      fileName: "revision-analysis.json",
+      title: "Revision Analysis",
+      content: input.revisionHistory,
+      format: "json" as const
+    });
+  }
+  return artifacts;
 }
 
 function normalizeGuidedQuestions(raw: unknown, fallbackQuestions: DesignQuestion[], idea = "") {
@@ -453,46 +893,7 @@ function normalizeGameConfig(raw: unknown, fallback: GameConfig): GameConfig {
 }
 
 function createFallbackGameHooks(config: GameConfig): GameHooks {
-  return {
-    enemyRules: {
-      movement: config.gameplay.enemyBehavior === "wave" ? "wave" : config.gameplay.enemyBehavior === "chase" ? "chase" : "patrol",
-      speed: config.templateFamily === "platformer" ? 120 : 150,
-      waveIntervalMs: config.gameplay.enemyBehavior === "wave" ? 1400 : 0
-    },
-    collectibleRules: {
-      placement: config.templateFamily === "grid_logic" ? "grid" : config.templateFamily === "platformer" ? "arc" : "line",
-      value: 1,
-      respawn: false
-    },
-    winCondition: {
-      mode: config.gameplay.objectiveMode,
-      target: config.level.winScore
-    },
-    failCondition: {
-      mode: config.templateFamily === "tower_defense" ? "base_destroyed" : "hit_hazard",
-      lives: 1
-    },
-    numberTuning: {
-      playerSpeed: config.templateFamily === "platformer" ? 210 : 250,
-      jumpVelocity: config.templateFamily === "platformer" ? 430 : 0,
-      hazardSpeed: config.templateFamily === "platformer" ? 90 : 130
-    },
-    levelLayout: {
-      platforms:
-        config.templateFamily === "platformer"
-          ? [
-              { x: 480, y: 510, width: 920, height: 28 },
-              { x: 360, y: 390, width: 180, height: 20 },
-              { x: 680, y: 290, width: 180, height: 20 }
-            ]
-          : [],
-      lanes: [
-        { y: 170, speed: 120, count: Math.max(1, Math.ceil(config.level.hazards / 2)) },
-        { y: 320, speed: 150, count: Math.max(1, Math.floor(config.level.hazards / 2)) }
-      ],
-      grid: { columns: 8, rows: 6 }
-    }
-  };
+  return createGameHooks(config);
 }
 
 function normalizeGameHooks(raw: unknown, fallback: GameHooks): GameHooks {
@@ -503,6 +904,12 @@ function normalizeGameHooks(raw: unknown, fallback: GameHooks): GameHooks {
   const failCondition = asRecord(value.failCondition);
   const numberTuning = asRecord(value.numberTuning);
   const levelLayout = asRecord(value.levelLayout);
+  const levelFlow = asRecord(value.levelFlow);
+  const collisionRules = asRecord(value.collisionRules);
+  const feedbackRules = asRecord(value.feedbackRules);
+  const spawnRules = asRecord(value.spawnRules);
+  const visualLayerRules = asRecord(value.visualLayerRules);
+  const difficultyRules = asRecord(value.difficultyRules);
   return {
     enemyRules: {
       movement: normalizeEnum(enemyRules.movement, fallback.enemyRules.movement, ["static", "patrol", "chase", "wave"]),
@@ -550,6 +957,87 @@ function normalizeGameHooks(raw: unknown, fallback: GameHooks): GameHooks {
         columns: normalizeNumber(asRecord(levelLayout.grid).columns, fallback.levelLayout.grid.columns),
         rows: normalizeNumber(asRecord(levelLayout.grid).rows, fallback.levelLayout.grid.rows)
       }
+    },
+    levelFlow: {
+      spawnPoint: normalizePoint(levelFlow.spawnPoint, fallback.levelFlow?.spawnPoint ?? { x: 120, y: 300 }),
+      safeZones: normalizeRectArray(levelFlow.safeZones, fallback.levelFlow?.safeZones ?? []),
+      finishZone: levelFlow.finishZone
+        ? normalizeRect(levelFlow.finishZone, fallback.levelFlow?.finishZone ?? { x: 820, y: 430, width: 64, height: 110 })
+        : fallback.levelFlow?.finishZone,
+      cameraIntent: normalizeString(levelFlow.cameraIntent, fallback.levelFlow?.cameraIntent ?? "keep gameplay readable"),
+      tutorialBeats: normalizeStringArray(levelFlow.tutorialBeats, fallback.levelFlow?.tutorialBeats ?? [])
+    },
+    collisionRules: {
+      collisionRadius: clampNumber(
+        normalizeNumber(collisionRules.collisionRadius, fallback.collisionRules?.collisionRadius ?? 12),
+        1,
+        96
+      ),
+      invulnerabilityMs: clampNumber(
+        normalizeNumber(collisionRules.invulnerabilityMs, fallback.collisionRules?.invulnerabilityMs ?? 520),
+        0,
+        3000
+      ),
+      knockbackForce: clampNumber(
+        normalizeNumber(collisionRules.knockbackForce, fallback.collisionRules?.knockbackForce ?? 160),
+        0,
+        800
+      )
+    },
+    feedbackRules: {
+      particleCount: clampNumber(
+        normalizeNumber(feedbackRules.particleCount, fallback.feedbackRules?.particleCount ?? 18),
+        1,
+        48
+      ),
+      screenShakeIntensity: clampNumber(
+        normalizeNumber(feedbackRules.screenShakeIntensity, fallback.feedbackRules?.screenShakeIntensity ?? 0.012),
+        0,
+        0.06
+      ),
+      collectBurstCount: clampNumber(
+        normalizeNumber(feedbackRules.collectBurstCount, fallback.feedbackRules?.collectBurstCount ?? 12),
+        1,
+        36
+      ),
+      floatingScore:
+        typeof feedbackRules.floatingScore === "boolean"
+          ? feedbackRules.floatingScore
+          : fallback.feedbackRules?.floatingScore,
+      comboText:
+        typeof feedbackRules.comboText === "boolean"
+          ? feedbackRules.comboText
+          : fallback.feedbackRules?.comboText,
+      audioCueKeys: normalizeStringArray(feedbackRules.audioCueKeys, fallback.feedbackRules?.audioCueKeys ?? [])
+    },
+    spawnRules: {
+      hazardIntervalMs: clampNumber(
+        normalizeNumber(spawnRules.hazardIntervalMs, fallback.spawnRules?.hazardIntervalMs ?? 1100),
+        100,
+        6000
+      ),
+      maxActiveHazards: clampNumber(
+        normalizeNumber(spawnRules.maxActiveHazards, fallback.spawnRules?.maxActiveHazards ?? 6),
+        1,
+        24
+      )
+    },
+    visualLayerRules: {
+      backgroundTreatment: normalizeString(
+        visualLayerRules.backgroundTreatment,
+        fallback.visualLayerRules?.backgroundTreatment ?? "parallax depth"
+      ),
+      foregroundProps: normalizeStringArray(visualLayerRules.foregroundProps, fallback.visualLayerRules?.foregroundProps ?? []),
+      uiBadgeStyle: normalizeString(visualLayerRules.uiBadgeStyle, fallback.visualLayerRules?.uiBadgeStyle ?? "readable HUD")
+    },
+    difficultyRules: {
+      hazardRamp: normalizeString(difficultyRules.hazardRamp, fallback.difficultyRules?.hazardRamp ?? "gentle ramp"),
+      enemyPacing: normalizeString(difficultyRules.enemyPacing, fallback.difficultyRules?.enemyPacing ?? "readable pressure"),
+      collectibleSpacing: normalizeString(
+        difficultyRules.collectibleSpacing,
+        fallback.difficultyRules?.collectibleSpacing ?? "guided reward path"
+      ),
+      checkpointPolicy: normalizeString(difficultyRules.checkpointPolicy, fallback.difficultyRules?.checkpointPolicy ?? "short retry")
     }
   };
 }
@@ -657,6 +1145,27 @@ function normalizeRectArray(
   return items.length > 0 ? items : fallback;
 }
 
+function normalizeRect(
+  value: unknown,
+  fallback: { x: number; y: number; width: number; height: number }
+): { x: number; y: number; width: number; height: number } {
+  const record = asRecord(value);
+  return {
+    x: normalizeNumber(record.x, fallback.x),
+    y: normalizeNumber(record.y, fallback.y),
+    width: normalizeNumber(record.width, fallback.width),
+    height: normalizeNumber(record.height, fallback.height)
+  };
+}
+
+function normalizePoint(value: unknown, fallback: { x: number; y: number }): { x: number; y: number } {
+  const record = asRecord(value);
+  return {
+    x: normalizeNumber(record.x, fallback.x),
+    y: normalizeNumber(record.y, fallback.y)
+  };
+}
+
 function normalizeLaneArray(
   value: unknown,
   fallback: GameHooks["levelLayout"]["lanes"]
@@ -682,6 +1191,10 @@ function normalizeNumber(value: unknown, fallback: number): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function normalizeString(value: unknown, fallback: string): string {
@@ -801,6 +1314,57 @@ function applyUserMaterials(
   });
 }
 
+function applyConfirmedAssets(
+  assets: AssetPack["assets"],
+  confirmedAssets?: ConfirmedAssets
+): AssetPack["assets"] {
+  if (!confirmedAssets || confirmedAssets.assets.length === 0) return assets;
+  const availableKeys = new Set(assets.map((asset) => asset.assetKey));
+  const candidateByKey = new Map(
+    confirmedAssets.assets
+      .map((candidate) => [resolveConfirmedAssetKey(candidate, availableKeys), candidate] as const)
+      .filter(([assetKey]) => Boolean(assetKey))
+  );
+  return assets.map((asset) => {
+    const candidate = candidateByKey.get(asset.assetKey);
+    if (!candidate) return asset;
+    return {
+      ...asset,
+      prompt: candidate.prompt || asset.prompt,
+      style: candidate.style || asset.style,
+      purpose: candidate.purpose || asset.purpose,
+      status: candidate.source === "uploaded" ? "uploaded" : "generated",
+      source: candidate.source,
+      generationMode: candidate.source === "uploaded" ? "uploaded" : "model",
+      copyrightStatus: candidate.source === "uploaded" ? "user_provided" : "generated",
+      fileUrl: candidate.fileUrl || asset.fileUrl,
+      previewUrl: candidate.previewUrl || asset.previewUrl,
+      provider: candidate.source === "uploaded" ? "uploaded" : "confirmed-candidate",
+      model: "asset-candidates-v1",
+      generationParams: {
+        ...asset.generationParams,
+        slot: candidate.slot,
+        candidateLabel: candidate.label
+      },
+      approvalStatus: "approved"
+    };
+  });
+}
+
+function resolveConfirmedAssetKey(candidate: AssetCandidate, availableKeys: Set<string>): string {
+  if (availableKeys.has(candidate.assetKey)) return candidate.assetKey;
+  const fallbackKeys: Record<AssetCandidate["slot"], string[]> = {
+    player: ["player.hero", "player.ship", "player.cursor", "player.tower", "player.panel"],
+    background: ["world.background", "cover.main", "world.tiles", "world.path"],
+    hazard: ["hazard.enemy", "hazard.spike", "hazard.block", "hazard.timer", "hazard.asteroid"],
+    collectible: ["item.collectible"],
+    cover: ["cover.main", "world.background"],
+    bgm: ["bgm.loop"],
+    sfx: ["sfx.collect", "sfx.hit", "sfx.win", "sfx.lose"]
+  };
+  return fallbackKeys[candidate.slot].find((assetKey) => availableKeys.has(assetKey)) ?? candidate.assetKey;
+}
+
 function resolveUserMaterialAssetKey(material: UserMaterial, availableKeys: Set<string>): string {
   if (availableKeys.has(material.assetKey)) return material.assetKey;
   const slot = material.slot ?? inferUserMaterialSlot(material.assetKey);
@@ -809,7 +1373,9 @@ function resolveUserMaterialAssetKey(material: UserMaterial, availableKeys: Set<
     background: ["world.background", "cover.main", "world.tiles", "world.path"],
     hazard: ["hazard.enemy", "hazard.spike", "hazard.block", "hazard.timer"],
     collectible: ["item.collectible"],
-    cover: ["cover.main", "world.background"]
+    cover: ["cover.main", "world.background"],
+    bgm: ["bgm.loop"],
+    sfx: ["sfx.collect", "sfx.hit", "sfx.win", "sfx.lose"]
   };
   return fallbackKeys[slot].find((assetKey) => availableKeys.has(assetKey)) ?? material.assetKey;
 }

@@ -16,6 +16,13 @@ export interface IdeaDialogModel {
   canGenerate: boolean;
 }
 
+export interface IdeaDialogActionState {
+  canGenerate: boolean;
+  isPreparingAssets: boolean;
+  buttonLabel: string;
+  statusLabel: string;
+}
+
 export function buildIdeaDialogModel(session: ConversationSession): IdeaDialogModel {
   const turns: IdeaDialogTurn[] = [
     {
@@ -63,5 +70,44 @@ export function buildIdeaDialogModel(session: ConversationSession): IdeaDialogMo
     answeredCount: session.answers.length,
     totalQuestions: session.questions.length,
     canGenerate: true
+  };
+}
+
+export function readIdeaDialogActionState(input: {
+  session: ConversationSession;
+  hasDesignBrief: boolean;
+  hasAssetCandidates: boolean;
+  hasConfirmedAssets: boolean;
+  creationPhase: string;
+}): IdeaDialogActionState {
+  const hasAnsweredQuestions = input.session.answers.length >= input.session.questions.length;
+  const isPreparingAssets =
+    hasAnsweredQuestions &&
+    input.hasDesignBrief &&
+    (!input.hasAssetCandidates || !input.hasConfirmedAssets) &&
+    input.creationPhase !== "cooking" &&
+    input.creationPhase !== "ready";
+  const canGenerate =
+    hasAnsweredQuestions &&
+    ["chatting", "ai_thinking", "guided_questions", "asset_review", "ready_to_generate", "revision", "ready"].includes(input.creationPhase);
+
+  if (isPreparingAssets) {
+    return {
+      canGenerate,
+      isPreparingAssets: true,
+      buttonLabel: "生成游戏",
+      statusLabel: "AI 正在生成素材提示词，不影响生成游戏"
+    };
+  }
+
+  return {
+    canGenerate,
+    isPreparingAssets: false,
+    buttonLabel: canGenerate ? "生成游戏" : "发送",
+    statusLabel: canGenerate
+      ? input.hasDesignBrief
+        ? "信息已补齐，可以生成游戏"
+        : "信息已补齐，可用本地兜底方案生成游戏"
+      : ""
   };
 }

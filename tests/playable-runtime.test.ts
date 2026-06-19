@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   collectPlayableItem,
+  createFeedbackRules,
+  createPlayableRules,
   createPlayableRuntimeState,
   hitPlayableHazard,
   restartPlayableRuntime,
@@ -15,6 +17,89 @@ describe("playable runtime state", () => {
     expect(state.phase).toBe("idle");
     expect(playing.phase).toBe("playing");
     expect(playing.startedAt).toBe("2026-06-17T00:00:00.000Z");
+  });
+
+  it("derives playable rules from game hooks and clamps invalid values", () => {
+    const rules = createPlayableRules({
+      configWinScore: 6,
+      hookWinTarget: 4,
+      collectibleValue: 2,
+      hookLives: 3
+    });
+
+    expect(rules).toEqual({
+      winScore: 4,
+      collectibleValue: 2,
+      lives: 3
+    });
+
+    expect(createPlayableRules({ configWinScore: 0, collectibleValue: -1, hookLives: 0 })).toEqual({
+      winScore: 1,
+      collectibleValue: 1,
+      lives: 1
+    });
+  });
+
+  it("derives feedback rules from game hooks and clamps unsafe values", () => {
+    const rules = createFeedbackRules({
+      collisionRadius: 18,
+      invulnerabilityMs: 600,
+      knockbackForce: 220,
+      particleCount: 24,
+      screenShakeIntensity: 0.02,
+      collectBurstCount: 12
+    });
+
+    expect(rules).toEqual({
+      collisionRadius: 18,
+      invulnerabilityMs: 600,
+      knockbackForce: 220,
+      particleCount: 24,
+      screenShakeIntensity: 0.02,
+      collectBurstCount: 12
+    });
+
+    expect(createFeedbackRules({ collisionRadius: -10, particleCount: 99 })).toEqual({
+      collisionRadius: 1,
+      invulnerabilityMs: 450,
+      knockbackForce: 160,
+      particleCount: 48,
+      screenShakeIntensity: 0.012,
+      collectBurstCount: 12
+    });
+  });
+
+  it("uses collectible value and hook win target for scoring", () => {
+    const rules = createPlayableRules({
+      configWinScore: 6,
+      hookWinTarget: 4,
+      collectibleValue: 2
+    });
+    let state = startPlayableRuntime(createPlayableRuntimeState(), rules, "start");
+
+    state = collectPlayableItem(state, rules.winScore, rules.collectibleValue, "collect-1");
+    expect(state.phase).toBe("playing");
+    expect(state.score).toBe(2);
+
+    state = collectPlayableItem(state, rules.winScore, rules.collectibleValue, "win");
+    expect(state.phase).toBe("won");
+    expect(state.score).toBe(4);
+  });
+
+  it("uses hook lives before entering the lost state", () => {
+    const rules = createPlayableRules({
+      configWinScore: 6,
+      hookLives: 2
+    });
+    let state = startPlayableRuntime(createPlayableRuntimeState(), rules, "start");
+
+    state = hitPlayableHazard(state, "first-hit");
+    expect(state.phase).toBe("playing");
+    expect(state.lives).toBe(1);
+
+    state = hitPlayableHazard(state, "second-hit");
+    expect(state.phase).toBe("lost");
+    expect(state.result).toBe("lost");
   });
 
   it("wins when collected score reaches the win score and can restart", () => {

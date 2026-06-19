@@ -67,6 +67,24 @@ describe("studio chat message layout", () => {
     expect(messages.some((message) => message.content.includes("让失败后能马上重开"))).toBe(true);
   });
 
+  it("deduplicates repeated follow-up submissions in the chat stream", () => {
+    const project = runMockPipeline("做一个跳跃小游戏");
+    const repeated = "已上传素材，替换 主角:ball01.png";
+    const messages = buildStudioChatMessages({
+      idea: "做一个跳跃小游戏",
+      project,
+      messages: getMessages("zh-CN"),
+      phase: "revision",
+      followups: [
+        { id: "followup-1", content: repeated, createdAt: "2026-06-19T00:00:00.000Z" },
+        { id: "followup-2", content: repeated, createdAt: "2026-06-19T00:00:01.000Z" },
+        { id: "followup-3", content: repeated, createdAt: "2026-06-19T00:00:02.000Z" }
+      ]
+    });
+
+    expect(messages.filter((message) => message.content === repeated)).toHaveLength(1);
+  });
+
   it("shows the current guided question and then the user's answer as chat turns", () => {
     const project = runMockPipeline("做一个飞船躲避陨石并收集星星的小游戏");
     const session = createConversationSession("做一个飞船躲避陨石并收集星星的小游戏");

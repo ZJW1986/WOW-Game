@@ -10,6 +10,14 @@ export function createPromptForTask(
 ): string {
   const payload = JSON.stringify(input, null, 2);
   const taskInstruction: Record<PromptTaskType, string> = {
+    "llm.design_brief": [
+      "Task: llm.design_brief.",
+      "Act as a professional 2D game designer before asking the player questions.",
+      "Analyze the idea, uploaded reference summary, user materials, target template, and phase-1 constraints.",
+      "Produce a practical developer prompt that can drive the later GDD, asset prompts, config, and hooks.",
+      'Return exactly this JSON shape: {"coreGameplay":"...","playerGoal":"...","referenceTakeaways":["..."],"risks":["..."],"questionFocus":["gameplay","character","visual","audio","pacing"],"developerPrompt":"..."}.',
+      "developerPrompt must be specific enough to generate a first playable Phaser template game."
+    ].join("\n"),
     "llm.classification": [
       "Task: llm.classification.",
       "Choose a Physics-First templateFamily.",
@@ -19,7 +27,9 @@ export function createPromptForTask(
     ].join("\n"),
     "llm.guided_questions": [
       "Task: llm.guided_questions.",
-      "Generate 3 to 5 concise design questions.",
+      "Generate exactly 5 concise design questions using designBrief, previousAnswers, userMaterials, and referencePackageSummary when present.",
+      "The 5 questions must cover these five slots exactly once: win goal, core controls/action, fail condition, character/enemy/collectible identity, and combined visual style/audio mood/level pacing.",
+      "Each question must help the player make a concrete design decision for a first playable 2D game.",
       'inputType must be "single_choice", "multi_choice", "short_text", or "number".',
       'Return exactly this JSON shape: {"questions":[{"id":"goal","label":"Goal","prompt":"...","inputType":"short_text","options":[],"defaultAnswer":"...","required":true}]}'
     ].join("\n"),
@@ -29,6 +39,14 @@ export function createPromptForTask(
       'Return exactly this JSON shape: {"concept":"...","loop":["..."],"entities":["..."],"level":{"width":960,"height":540,"collectibles":6,"hazards":4,"winScore":6},"numbers":{"playerSpeed":260},"implementationRoute":"..."}.',
       "loop and entities must be string arrays.",
       "level must contain numeric width, height, collectibles, hazards, and winScore."
+    ].join("\n"),
+    "llm.mature_game_brief": [
+      "Task: llm.mature_game_brief.",
+      "Use referencePattern, designBrief, user idea, user materials, and template constraints to create a more mature first playable plan.",
+      "Do not copy commercial games, names, levels, code, or assets. Use only reusable game design patterns.",
+      "Focus on the first 30 seconds, visual depth, feedback, difficulty curve, and concrete game-feel moments.",
+      'Return exactly this JSON shape: {"referencePatternId":"pattern-platformer-first-run","coreLoop":["..."],"firstThirtySeconds":["..."],"visualTheme":"...","feedbackChecklist":["..."],"difficultyCurve":["..."],"gameFeelMoments":["..."]}.',
+      "firstThirtySeconds must include goal, reward, risk, and outcome beats."
     ].join("\n"),
     "llm.game_config": [
       "Task: llm.game_config.",
@@ -42,8 +60,21 @@ export function createPromptForTask(
       "Task: llm.game_hooks.",
       "Create config-only hook parameters for the locked Phaser template.",
       "Do not output JavaScript or TypeScript.",
-      'Return exactly this JSON shape: {"enemyRules":{"movement":"patrol","speed":120,"waveIntervalMs":0},"collectibleRules":{"placement":"arc","value":1,"respawn":false},"winCondition":{"mode":"collect_score","target":6},"failCondition":{"mode":"hit_hazard","lives":1},"numberTuning":{"playerSpeed":250,"jumpVelocity":430,"hazardSpeed":120},"levelLayout":{"platforms":[{"x":480,"y":510,"width":920,"height":28}],"lanes":[{"y":150,"speed":95,"count":3}],"grid":{"columns":0,"rows":0}}}.',
+      'Return exactly this JSON shape: {"enemyRules":{"movement":"patrol","speed":120,"waveIntervalMs":0},"collectibleRules":{"placement":"arc","value":1,"respawn":false},"winCondition":{"mode":"collect_score","target":6},"failCondition":{"mode":"hit_hazard","lives":1},"numberTuning":{"playerSpeed":250,"jumpVelocity":430,"hazardSpeed":120},"levelLayout":{"platforms":[{"x":480,"y":510,"width":920,"height":28}],"lanes":[{"y":150,"speed":95,"count":3}],"grid":{"columns":0,"rows":0}},"collisionRules":{"collisionRadius":12,"invulnerabilityMs":520,"knockbackForce":160},"feedbackRules":{"particleCount":18,"screenShakeIntensity":0.012,"collectBurstCount":12},"spawnRules":{"hazardIntervalMs":900,"maxActiveHazards":6}}.',
       'Allowed movement values: "static", "patrol", "chase", "wave". Do not include code strings.'
+    ].join("\n"),
+    "llm.asset_prompts": [
+      "Task: llm.asset_prompts.",
+      "Create confirmable asset candidates from designBrief, GDD, referencePackageSummary, and template constraints.",
+      "Return asset candidates for background, player, hazard, collectible, BGM, and SFX when relevant.",
+      "Do not reference uploaded ZIP paths as final runtime asset keys. Use stable WOW Game asset keys.",
+      'Return exactly this JSON shape: {"candidates":[{"slot":"player","assetKey":"player.ship","type":"image","label":"...","prompt":"...","style":"...","purpose":"...","acceptedFileTypes":["image/*"]}]}'
+    ].join("\n"),
+    "llm.revision_analysis": [
+      "Task: llm.revision_analysis.",
+      "Analyze a player follow-up before changing the game.",
+      "Explain the understood change, update the developer prompt, ask confirmation questions when needed, and list affected assets.",
+      'Return exactly this JSON shape: {"understoodChange":"...","updatedDeveloperPrompt":"...","confirmationQuestions":[{"id":"restart","label":"...","prompt":"...","inputType":"single_choice","options":["..."],"defaultAnswer":"...","required":true}],"affectedAssets":["sfx.hit"],"risks":["..."]}.'
     ].join("\n"),
     "image.asset": [
       "Task: image.asset.",

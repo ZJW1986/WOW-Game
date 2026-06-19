@@ -1,4 +1,13 @@
-import type { ReferencePackageSummary, TemplateFamily, UploadedPackageArtifacts, UserAnswer } from "../core/types";
+import type {
+  ConfirmedAssets,
+  DesignBrief,
+  ReferencePackageSummary,
+  RevisionAnalysis,
+  TemplateFamily,
+  UploadedPackageArtifacts,
+  UserAnswer,
+  UserMaterial
+} from "../core/types";
 import type { StartModelId } from "../core/start";
 import { createPublishRecord, runMockPipeline } from "../core/pipeline";
 import { createGenerationService, type GenerationServiceOptions } from "./generationService";
@@ -233,6 +242,94 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       }
     }
 
+    if (request.method === "POST" && request.path === "/api/design-brief") {
+      try {
+        const service = createGenerationService({
+          deepseekApiKey: env.DEEPSEEK_API_KEY,
+          deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
+          fetcher: options.fetcher
+        });
+        const referencePackageSummary = await readReferencePackageSummary(
+          store,
+          optionalString(request.body.referencePackageId),
+          optionalString(request.body.referenceVersionId)
+        );
+        const result = await service.generateDesignBrief({
+          idea: requireString(request.body.idea, "idea"),
+          templateFamily: parseTemplateFamily(request.body.templateFamily),
+          model: parseModel(request.body.model),
+          referencePackageSummary,
+          userMaterials: parseUserMaterials(request.body.userMaterials)
+        });
+        return { status: 200, body: result as unknown as Record<string, any> };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/asset-candidates") {
+      try {
+        const service = createGenerationService({
+          deepseekApiKey: env.DEEPSEEK_API_KEY,
+          deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
+          fetcher: options.fetcher
+        });
+        const referencePackageSummary = await readReferencePackageSummary(
+          store,
+          optionalString(request.body.referencePackageId),
+          optionalString(request.body.referenceVersionId)
+        );
+        const result = await service.generateAssetCandidates({
+          idea: requireString(request.body.idea, "idea"),
+          templateFamily: parseTemplateFamily(request.body.templateFamily),
+          model: parseModel(request.body.model),
+          designBrief: parseOptionalDesignBrief(request.body.designBrief),
+          referencePackageSummary,
+          userMaterials: parseUserMaterials(request.body.userMaterials)
+        });
+        return { status: 200, body: result as unknown as Record<string, any> };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/revision-analysis") {
+      try {
+        const service = createGenerationService({
+          deepseekApiKey: env.DEEPSEEK_API_KEY,
+          deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
+          fetcher: options.fetcher
+        });
+        const referencePackageSummary = await readReferencePackageSummary(
+          store,
+          optionalString(request.body.referencePackageId),
+          optionalString(request.body.referenceVersionId)
+        );
+        const result = await service.generateRevisionAnalysis({
+          idea: requireString(request.body.idea, "idea"),
+          followup: requireString(request.body.followup, "followup"),
+          templateFamily: parseTemplateFamily(request.body.templateFamily),
+          model: parseModel(request.body.model),
+          designBrief: parseOptionalDesignBrief(request.body.designBrief),
+          referencePackageSummary,
+          userMaterials: parseUserMaterials(request.body.userMaterials),
+          previousAnswers: parseAnswers(request.body.previousAnswers)
+        });
+        return { status: 200, body: result as unknown as Record<string, any> };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
     if (request.method === "POST" && request.path === "/api/guided-questions") {
       try {
         const service = createGenerationService({
@@ -240,11 +337,20 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
           deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
           fetcher: options.fetcher
         });
+        const referencePackageSummary = await readReferencePackageSummary(
+          store,
+          optionalString(request.body.referencePackageId),
+          optionalString(request.body.referenceVersionId)
+        );
         const result = await service.generateGuidedQuestions({
           idea: requireString(request.body.idea, "idea"),
           templateFamily: parseTemplateFamily(request.body.templateFamily),
           projectId: optionalString(request.body.projectId),
-          model: parseModel(request.body.model)
+          model: parseModel(request.body.model),
+          designBrief: parseOptionalDesignBrief(request.body.designBrief),
+          referencePackageSummary,
+          userMaterials: parseUserMaterials(request.body.userMaterials),
+          previousAnswers: parseAnswers(request.body.previousAnswers)
         });
         return { status: 200, body: result as unknown as Record<string, any> };
       } catch (error) {
@@ -279,7 +385,10 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
         model: parseModel(request.body.model),
         referencePackageSummary,
-        userMaterials: parseUserMaterials(request.body.userMaterials)
+        userMaterials: parseUserMaterials(request.body.userMaterials),
+        designBrief: parseOptionalDesignBrief(request.body.designBrief),
+        confirmedAssets: parseOptionalConfirmedAssets(request.body.confirmedAssets),
+        revisionHistory: parseRevisionHistory(request.body.revisionHistory)
       });
       if (referencePackageId && referenceVersionId && !referencePackageSummary) {
         result.fallbacksUsed.push("reference_package_missing");
@@ -445,7 +554,9 @@ function parseUserMaterials(value: unknown) {
         material.slot === "background" ||
         material.slot === "hazard" ||
         material.slot === "collectible" ||
-        material.slot === "cover"
+        material.slot === "cover" ||
+        material.slot === "bgm" ||
+        material.slot === "sfx"
           ? material.slot
           : undefined,
       fileName: material.fileName,
@@ -453,6 +564,110 @@ function parseUserMaterials(value: unknown) {
       previewUrl: typeof material.previewUrl === "string" ? material.previewUrl : undefined,
       mimeType: material.mimeType
     }));
+}
+
+function parseOptionalDesignBrief(value: unknown): DesignBrief | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    coreGameplay: optionalString(value.coreGameplay) ?? "",
+    playerGoal: optionalString(value.playerGoal) ?? "",
+    referenceTakeaways: parseStringArray(value.referenceTakeaways),
+    risks: parseStringArray(value.risks),
+    questionFocus: parseStringArray(value.questionFocus),
+    developerPrompt: optionalString(value.developerPrompt) ?? ""
+  };
+}
+
+function parseOptionalConfirmedAssets(value: unknown): ConfirmedAssets | undefined {
+  if (!isRecord(value) || !Array.isArray(value.assets)) return undefined;
+  return {
+    assets: value.assets
+      .filter(isRecord)
+      .map((asset) => ({
+        slot: parseAssetSlot(asset.slot),
+        assetKey: optionalString(asset.assetKey) ?? "",
+        type: parseAssetType(asset.type),
+        label: optionalString(asset.label) ?? "",
+        prompt: optionalString(asset.prompt) ?? "",
+        style: optionalString(asset.style) ?? "",
+        purpose: optionalString(asset.purpose) ?? "",
+        acceptedFileTypes: parseStringArray(asset.acceptedFileTypes),
+        previewUrl: optionalString(asset.previewUrl) ?? "",
+        fileUrl: optionalString(asset.fileUrl) ?? "",
+        source: parseAssetSource(asset.source),
+        approvalStatus:
+          asset.approvalStatus === "pending" ||
+          asset.approvalStatus === "approved" ||
+          asset.approvalStatus === "rejected"
+            ? asset.approvalStatus
+            : "approved"
+      }))
+      .filter((asset) => asset.assetKey && asset.prompt)
+  };
+}
+
+function parseRevisionHistory(value: unknown): RevisionAnalysis[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).map((item) => ({
+    understoodChange: optionalString(item.understoodChange) ?? "",
+    updatedDeveloperPrompt: optionalString(item.updatedDeveloperPrompt) ?? "",
+    confirmationQuestions: Array.isArray(item.confirmationQuestions)
+      ? item.confirmationQuestions.filter(isRecord).map((question, index) => ({
+          id: optionalString(question.id) ?? `revision_${index + 1}`,
+          label: optionalString(question.label) ?? "修改确认",
+          prompt: optionalString(question.prompt) ?? "",
+          inputType:
+            question.inputType === "single_choice" ||
+            question.inputType === "multi_choice" ||
+            question.inputType === "short_text" ||
+            question.inputType === "number"
+              ? question.inputType
+              : "short_text",
+          options: parseStringArray(question.options),
+          defaultAnswer: optionalString(question.defaultAnswer) ?? "",
+          required: typeof question.required === "boolean" ? question.required : true
+        }))
+      : [],
+    affectedAssets: parseStringArray(item.affectedAssets),
+    risks: parseStringArray(item.risks)
+  }));
+}
+
+function parseStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function parseAssetSlot(value: unknown): ConfirmedAssets["assets"][number]["slot"] {
+  if (
+    value === "player" ||
+    value === "background" ||
+    value === "hazard" ||
+    value === "collectible" ||
+    value === "cover" ||
+    value === "bgm" ||
+    value === "sfx"
+  ) {
+    return value;
+  }
+  return "player";
+}
+
+function parseAssetType(value: unknown): ConfirmedAssets["assets"][number]["type"] {
+  if (value === "image" || value === "sfx" || value === "bgm" || value === "effect" || value === "ui" || value === "build") {
+    return value;
+  }
+  return "image";
+}
+
+function parseAssetSource(value: unknown): ConfirmedAssets["assets"][number]["source"] {
+  if (value === "mock" || value === "preset" || value === "uploaded" || value === "generated" || value === "library") {
+    return value;
+  }
+  return "generated";
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null;
 }
 
 function readRuntimeEnv(): Record<string, string | undefined> {

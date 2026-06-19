@@ -17,10 +17,14 @@ export interface StoredVersion {
 export interface ModelTaskRequest {
   taskType:
     | "llm.classification"
+    | "llm.design_brief"
     | "llm.guided_questions"
     | "llm.gdd"
+    | "llm.mature_game_brief"
     | "llm.game_config"
     | "llm.game_hooks"
+    | "llm.asset_prompts"
+    | "llm.revision_analysis"
     | "image.asset"
     | "audio.sfx"
     | "audio.bgm"

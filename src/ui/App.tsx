@@ -9,6 +9,7 @@
   Gamepad2,
   ImageIcon,
   Library,
+  Music2,
   Pencil,
   Plus,
   RefreshCcw,
@@ -36,19 +37,25 @@ import { runMockPipeline } from "../core/pipeline";
 import {
   createStartGameDraft,
   templateOptions,
-  type StartGameDraft
+  type StartGameDraft,
+  type StartUploadedMaterial
 } from "../core/start";
 import type {
+  AssetCandidates,
+  ConfirmedAssets,
+  DesignBrief,
   AssetRequirement,
   ConversationSession,
   MockProject,
   PipelineArtifact,
   ReferencePackageSummary,
+  RevisionAnalysis,
   TemplateFamily,
+  UserMaterial,
   UserMaterialSlot
 } from "../core/types";
 import { getMessages, type Locale } from "./i18n";
-import { buildIdeaDialogModel } from "./ideaDialogModel";
+import { buildIdeaDialogModel, readIdeaDialogActionState } from "./ideaDialogModel";
 import { PhaserPreview } from "./PhaserPreview";
 import {
   buildGenerationIdea,
@@ -58,8 +65,11 @@ import {
 } from "./studioChat";
 import { createMediaGateway } from "../services/mediaGateway";
 import {
+  requestAssetCandidates,
+  requestDesignBrief,
   requestPlayableGeneration,
   requestGuidedQuestions,
+  requestRevisionAnalysis,
   replacePackageAsset,
   requestPlayableProject,
   submitPlayableFeedback,
@@ -74,10 +84,22 @@ const rightTabs = [
 ] as const;
 
 type RightTab = (typeof rightTabs)[number]["id"];
-type CreationPhase = "chatting" | "ready_to_generate" | "revision" | "cooking" | "ready" | "failed";
+type CreationPhase =
+  | "chatting"
+  | "ai_thinking"
+  | "guided_questions"
+  | "asset_review"
+  | "ready_to_generate"
+  | "revision"
+  | "revision_thinking"
+  | "cooking"
+  | "ready"
+  | "playable_ready"
+  | "failed";
 type AppPage = "create" | "play" | "projects" | "idea_dialog" | "studio";
 type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
 type GuidedQuestionStatus = "idle" | "loading" | "ready" | "fallback";
+type AssetCandidateStatus = "idle" | "loading" | "ready" | "failed";
 type GenerationNoticeTone = "working" | "success" | "fallback" | "error";
 
 interface GenerationNotice {
@@ -156,6 +178,7 @@ function getBrowserBaseUrl(): string {
 function addFollowup(current: StudioFollowup[], content: string): StudioFollowup[] {
   const trimmed = content.trim();
   if (!trimmed) return current;
+  if (current.some((item) => item.content.trim() === trimmed)) return current;
   return [
     ...current,
     {
@@ -233,25 +256,84 @@ export function App() {
   const [generationNotice, setGenerationNotice] = useState<GenerationNotice | null>(null);
   const [uploadedPackageMessage, setUploadedPackageMessage] = useState("");
   const [referencePackage, setReferencePackage] = useState<ReferencePackageSummary | null>(null);
+  const [designBrief, setDesignBrief] = useState<DesignBrief | null>(null);
+  const [assetCandidates, setAssetCandidates] = useState<AssetCandidates | null>(null);
+  const [confirmedAssets, setConfirmedAssets] = useState<ConfirmedAssets | null>(null);
+  const [assetCandidateStatus, setAssetCandidateStatus] = useState<AssetCandidateStatus>("idle");
+  const [revisionHistory, setRevisionHistory] = useState<RevisionAnalysis[]>([]);
   const [shareOpen, setShareOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const activeDraftRef = useRef(activeDraft);
+  const revisionSubmittingRef = useRef(false);
   const fallbackProject = useMemo(() => runMockPipeline(idea), [idea]);
   const project = generatedProject ?? fallbackProject;
   const playRoute = getPlayRoute();
   const hasAnsweredGuidedQuestions = session.answers.length >= session.questions.length;
   const canGeneratePlayable =
     hasAnsweredGuidedQuestions &&
-    (creationPhase === "ready_to_generate" || creationPhase === "revision" || creationPhase === "ready");
+    (creationPhase === "chatting" ||
+      creationPhase === "ai_thinking" ||
+      creationPhase === "guided_questions" ||
+      creationPhase === "asset_review" ||
+      creationPhase === "ready_to_generate" ||
+      creationPhase === "revision" ||
+      creationPhase === "ready");
+  const ideaDialogActionState = readIdeaDialogActionState({
+    session,
+    hasDesignBrief: Boolean(designBrief),
+    hasAssetCandidates: Boolean(assetCandidates),
+    hasConfirmedAssets: Boolean(confirmedAssets),
+    creationPhase
+  });
 
-  const submitFollowup = () => {
+  useEffect(() => {
+    activeDraftRef.current = activeDraft;
+  }, [activeDraft]);
+
+  const addUserMaterials = async (files: File[], preferredSlot?: UserMaterialSlot) => {
+    const draft = activeDraftRef.current;
+    const nextMaterials = await filesToUserMaterials(files, draft.templateFamily, preferredSlot);
+    if (nextMaterials.length === 0) return;
+    const mergedMaterials = [...draft.uploadedMaterials, ...nextMaterials];
+    setActiveDraft({
+      ...draft,
+      uploadedFileNames: mergedMaterials.map((material) => material.fileName),
+      uploadedMaterials: mergedMaterials
+    });
+    if (generatedProject) {
+      setGeneratedProject({
+        ...generatedProject,
+        assetPack: {
+          ...generatedProject.assetPack,
+          assets: applyUserMaterialsToAssetPack(generatedProject.assetPack.assets, nextMaterials)
+        }
+      });
+      setGenerationNotice({
+        tone: "success",
+        title: "素材已应用",
+        detail: "上传素材已写入当前试玩 asset-pack，可直接重新开始试玩。"
+      });
+    }
+    setRevisionText((current) => {
+      if (current.trim()) return current;
+      const summary = nextMaterials
+        .map((material) => `${materialSlotLabels[material.slot ?? "player"]}:${material.fileName}`)
+        .join("，");
+      return `已上传素材，替换 ${summary}`;
+    });
+  };
+
+  const submitFollowup = async () => {
+    if (revisionSubmittingRef.current) return;
     if (!revisionText.trim()) return;
+    const followupText = revisionText.trim();
     const nextQuestion = session.questions.find(
       (question) => !session.answers.some((answer) => answer.questionId === question.id)
     );
     if (nextQuestion) {
-      setSession(answerDesignQuestion(session, nextQuestion.id, revisionText.trim()));
+      setSession(answerDesignQuestion(session, nextQuestion.id, followupText));
       setRevisionText("");
       window.requestAnimationFrame(() => {
         chatScrollRef.current?.scrollTo({
@@ -261,10 +343,62 @@ export function App() {
       });
       return;
     }
-    const nextFollowups = addFollowup(followups, revisionText);
+    revisionSubmittingRef.current = true;
+    const nextFollowups = addFollowup(followups, followupText);
+    if (nextFollowups === followups) {
+      setRevisionText("");
+      revisionSubmittingRef.current = false;
+      return;
+    }
     setFollowups(nextFollowups);
     const nextIdea = buildGenerationIdea(idea, nextFollowups);
     setIdea(nextIdea);
+    setCreationPhase("revision_thinking");
+    setGenerationNotice({
+      tone: "working",
+      title: "AI 正在理解追加需求",
+      detail: "DeepSeek 会先分析你的补充，再更新开发提示词和确认问题。"
+    });
+    let revisionAnalysis: RevisionAnalysis | null = null;
+    try {
+      const result = await requestRevisionAnalysis({
+        idea,
+        followup: followupText,
+        templateFamily: activeDraft.templateFamily,
+        model: activeDraft.model,
+        designBrief: designBrief ?? undefined,
+        referencePackageId: referencePackage?.projectId,
+        referenceVersionId: referencePackage?.versionId,
+        userMaterials: activeDraft.uploadedMaterials.map((material) => ({
+          assetKey: material.assetKey,
+          slot: material.slot,
+          fileName: material.fileName,
+          fileUrl: material.fileUrl,
+          previewUrl: material.previewUrl,
+          mimeType: material.mimeType
+        })),
+        previousAnswers: session.answers
+      });
+      revisionAnalysis = result.revisionAnalysis;
+      setRevisionHistory((current) => [...current, result.revisionAnalysis]);
+      setDesignBrief((current) =>
+        current
+          ? {
+              ...current,
+              developerPrompt: result.revisionAnalysis.updatedDeveloperPrompt
+            }
+          : current
+      );
+    } catch {
+      revisionAnalysis = {
+        understoodChange: `理解追加需求：${followupText}`,
+        updatedDeveloperPrompt: `${designBrief?.developerPrompt ?? idea}\nRevision: ${followupText}`,
+        confirmationQuestions: [],
+        affectedAssets: [],
+        risks: ["追加需求分析接口回退为本地记录。"]
+      };
+      setRevisionHistory((current) => [...current, revisionAnalysis as RevisionAnalysis]);
+    }
     setSession((current) => ({
       ...current,
       idea: nextIdea,
@@ -274,7 +408,16 @@ export function App() {
           id: `user-followup-${Date.now()}`,
           role: "user",
           stage: current.stage,
-          content: revisionText.trim(),
+          content: followupText,
+          createdAt: new Date().toISOString()
+        },
+        {
+          id: `assistant-revision-${Date.now()}`,
+          role: "assistant",
+          stage: current.stage,
+          content: revisionAnalysis
+            ? `${revisionAnalysis.understoodChange}\n${revisionAnalysis.updatedDeveloperPrompt}`
+            : "AI 已记录追加需求，等待重新生成。",
           createdAt: new Date().toISOString()
         }
       ]
@@ -283,6 +426,9 @@ export function App() {
     setGeneratedProject(null);
     setGenerationResult(null);
     setGenerationNotice(null);
+    setAssetCandidates(null);
+    setConfirmedAssets(null);
+    setAssetCandidateStatus("idle");
     setCreationPhase("revision");
     window.requestAnimationFrame(() => {
       chatScrollRef.current?.scrollTo({
@@ -290,12 +436,13 @@ export function App() {
         behavior: "smooth"
       });
     });
+    revisionSubmittingRef.current = false;
   };
 
   useEffect(() => {
     if (
       (page !== "studio" && page !== "idea_dialog") ||
-      creationPhase !== "chatting" ||
+      !["chatting", "guided_questions", "asset_review"].includes(creationPhase) ||
       !hasAnsweredGuidedQuestions
     ) {
       return;
@@ -323,6 +470,9 @@ export function App() {
         model: "deepseek-v4-flash",
         referencePackageId: referencePackage?.projectId,
         referenceVersionId: referencePackage?.versionId,
+        designBrief: designBrief ?? undefined,
+        confirmedAssets: confirmedAssets ?? undefined,
+        revisionHistory,
         userMaterials: activeDraft.uploadedMaterials.map((material) => ({
           assetKey: material.assetKey,
           slot: material.slot,
@@ -331,7 +481,7 @@ export function App() {
           previewUrl: material.previewUrl,
           mimeType: material.mimeType
         }))
-      })) as GenerationResult;
+      }, undefined, { timeoutMs: 8000 })) as GenerationResult;
       setGenerationResult(result);
       setGeneratedProject(result.project);
       setCreationPhase("ready");
@@ -355,6 +505,9 @@ export function App() {
         projectId: "project-local-fallback",
         baseUrl: getBrowserBaseUrl(),
         model: "mock-designer",
+        designBrief: designBrief ?? undefined,
+        confirmedAssets: confirmedAssets ?? undefined,
+        revisionHistory,
         userMaterials: activeDraft.uploadedMaterials.map((material) => ({
           assetKey: material.assetKey,
           slot: material.slot,
@@ -369,7 +522,7 @@ export function App() {
       setCreationPhase("ready");
       setActiveTab("preview");
       setGenerationNotice({
-        tone: "error",
+        tone: "fallback",
         title: t.notices.errorTitle,
         detail: `${readGenerationError(error)}${t.notices.errorDetailSuffix}`
       });
@@ -392,12 +545,42 @@ export function App() {
     model: StartGameDraft["model"]
   ) => {
     setGuidedQuestionStatus("loading");
+    setCreationPhase("ai_thinking");
+    let nextDesignBrief: DesignBrief | null = null;
     try {
+      const briefResult = await requestDesignBrief({
+        idea: nextIdea,
+        templateFamily,
+        model,
+        referencePackageId: referencePackage?.projectId,
+        referenceVersionId: referencePackage?.versionId,
+        userMaterials: activeDraft.uploadedMaterials.map((material) => ({
+          assetKey: material.assetKey,
+          slot: material.slot,
+          fileName: material.fileName,
+          fileUrl: material.fileUrl,
+          previewUrl: material.previewUrl,
+          mimeType: material.mimeType
+        }))
+      });
+      nextDesignBrief = briefResult.designBrief;
+      setDesignBrief(briefResult.designBrief);
       const result = await requestGuidedQuestions({
         idea: nextIdea,
         templateFamily,
         model,
-        projectId: `project-${Date.now()}`
+        projectId: `project-${Date.now()}`,
+        designBrief: briefResult.designBrief,
+        referencePackageId: referencePackage?.projectId,
+        referenceVersionId: referencePackage?.versionId,
+        userMaterials: activeDraft.uploadedMaterials.map((material) => ({
+          assetKey: material.assetKey,
+          slot: material.slot,
+          fileName: material.fileName,
+          fileUrl: material.fileUrl,
+          previewUrl: material.previewUrl,
+          mimeType: material.mimeType
+        }))
       });
       setSession((current) => {
         if (current.idea !== nextIdea || current.answers.length > 0) return current;
@@ -407,8 +590,41 @@ export function App() {
         });
       });
       setGuidedQuestionStatus(result.fallbackUsed ? "fallback" : "ready");
+      setCreationPhase((current) =>
+        current === "cooking" || current === "ready" || current === "playable_ready" ? current : "guided_questions"
+      );
     } catch {
       setGuidedQuestionStatus("fallback");
+      setCreationPhase((current) =>
+        current === "cooking" || current === "ready" || current === "playable_ready" ? current : "chatting"
+      );
+    }
+    if (nextDesignBrief) {
+      try {
+        setAssetCandidateStatus("loading");
+        const assetResult = await requestAssetCandidates({
+          idea: nextIdea,
+          templateFamily,
+          model,
+          designBrief: nextDesignBrief,
+          referencePackageId: referencePackage?.projectId,
+          referenceVersionId: referencePackage?.versionId,
+          userMaterials: activeDraft.uploadedMaterials.map((material) => ({
+            assetKey: material.assetKey,
+            slot: material.slot,
+            fileName: material.fileName,
+            fileUrl: material.fileUrl,
+            previewUrl: material.previewUrl,
+            mimeType: material.mimeType
+          }))
+        });
+        setAssetCandidates(assetResult.assetCandidates);
+        setAssetCandidateStatus("ready");
+      } catch {
+        setAssetCandidates(null);
+        setConfirmedAssets(null);
+        setAssetCandidateStatus("failed");
+      }
     }
   };
 
@@ -425,6 +641,11 @@ export function App() {
     setGenerationNotice(null);
     setRevisionText("");
     setFollowups([]);
+    setDesignBrief(null);
+    setAssetCandidates(null);
+    setConfirmedAssets(null);
+    setAssetCandidateStatus("idle");
+    setRevisionHistory([]);
     setCreationPhase("chatting");
     setActiveTab("preview");
     setPage("idea_dialog");
@@ -444,6 +665,11 @@ export function App() {
     setGenerationNotice(null);
     setRevisionText("");
     setFollowups([]);
+    setDesignBrief(null);
+    setAssetCandidates(null);
+    setConfirmedAssets(null);
+    setAssetCandidateStatus("idle");
+    setRevisionHistory([]);
     setCreationPhase(nextProject ? "ready" : "chatting");
     setActiveTab("preview");
     setPage("studio");
@@ -592,11 +818,13 @@ export function App() {
     return (
       <IdeaDialogPage
         session={session}
-        statusLabel={readGuidedQuestionStatus(guidedQuestionStatus, t.ideaDialog)}
+        statusLabel={ideaDialogActionState.statusLabel || readGuidedQuestionStatus(guidedQuestionStatus, t.ideaDialog)}
         messages={t}
         draft={activeDraft}
         revisionText={revisionText}
         canGenerate={canGeneratePlayable}
+        isPreparingAssets={ideaDialogActionState.isPreparingAssets}
+        actionLabel={ideaDialogActionState.buttonLabel}
         isGenerating={creationPhase === "cooking"}
         onRevisionTextChange={setRevisionText}
         onAnswer={answerCurrentDialogQuestion}
@@ -684,8 +912,31 @@ export function App() {
                 messages: t,
                 phase: creationPhase,
                 session,
-                referencePackageName: referencePackage?.packageName
+                referencePackageName: referencePackage?.packageName,
+                designBrief,
+                revisionHistory,
+                assetCandidates,
+                assetCandidateStatus
               })}
+              onConfirmAssets={(candidates) => {
+                setConfirmedAssets({
+                  assets: candidates.candidates.map((candidate) => ({
+                    ...candidate,
+                    approvalStatus: "approved"
+                  }))
+                });
+              }}
+              onConfirmAsset={(candidate) => {
+                setConfirmedAssets((current) => ({
+                  assets: [
+                    ...(current?.assets.filter((asset) => asset.slot !== candidate.slot) ?? []),
+                    { ...candidate, approvalStatus: "approved" }
+                  ]
+                }));
+              }}
+              onUploadAsset={async (slot, files) => {
+                await addUserMaterials(files, slot);
+              }}
             />
           </div>
           <PromptDock
@@ -694,9 +945,11 @@ export function App() {
             modelStatusLabel={readGuidedQuestionStatus(guidedQuestionStatus, t.ideaDialog)}
             canGenerate={canGeneratePlayable}
             isGenerating={creationPhase === "cooking"}
+            isSubmittingRevision={creationPhase === "revision_thinking"}
             onGenerate={startResourceGeneration}
             onIdeaChange={setRevisionText}
             onSubmitRevision={submitFollowup}
+            onUploadMaterials={addUserMaterials}
           />
         </aside>
 
@@ -792,10 +1045,12 @@ const materialSlotLabels: Record<UserMaterialSlot, string> = {
   player: "角色",
   hazard: "敌人/障碍",
   collectible: "收集物",
-  cover: "封面"
+  cover: "封面",
+  bgm: "BGM",
+  sfx: "音效"
 };
 
-const materialSlotOptions: UserMaterialSlot[] = ["background", "player", "hazard", "collectible", "cover"];
+const materialSlotOptions: UserMaterialSlot[] = ["background", "player", "hazard", "collectible", "cover", "bgm", "sfx"];
 
 function resolveMaterialAssetKey(slot: UserMaterialSlot, templateFamily: TemplateFamily): string {
   const map: Record<TemplateFamily, Record<UserMaterialSlot, string>> = {
@@ -804,38 +1059,129 @@ function resolveMaterialAssetKey(slot: UserMaterialSlot, templateFamily: Templat
       player: "player.hero",
       hazard: "hazard.spike",
       collectible: "item.collectible",
-      cover: "cover.main"
+      cover: "cover.main",
+      bgm: "bgm.loop",
+      sfx: "sfx.collect"
     },
     top_down: {
       background: "world.background",
       player: "player.ship",
       hazard: "hazard.enemy",
       collectible: "item.collectible",
-      cover: "cover.main"
+      cover: "cover.main",
+      bgm: "bgm.loop",
+      sfx: "sfx.collect"
     },
     grid_logic: {
       background: "world.tiles",
       player: "player.cursor",
       hazard: "hazard.block",
       collectible: "item.collectible",
-      cover: "cover.main"
+      cover: "cover.main",
+      bgm: "bgm.loop",
+      sfx: "sfx.collect"
     },
     tower_defense: {
       background: "world.path",
       player: "player.tower",
       hazard: "hazard.enemy",
       collectible: "item.collectible",
-      cover: "cover.main"
+      cover: "cover.main",
+      bgm: "bgm.loop",
+      sfx: "sfx.collect"
     },
     ui_heavy: {
       background: "world.background",
       player: "player.panel",
       hazard: "hazard.timer",
       collectible: "item.collectible",
-      cover: "cover.main"
+      cover: "cover.main",
+      bgm: "bgm.loop",
+      sfx: "sfx.collect"
     }
   };
   return map[templateFamily][slot];
+}
+
+async function filesToUserMaterials(
+  files: File[],
+  templateFamily: TemplateFamily,
+  preferredSlot?: UserMaterialSlot
+): Promise<StartUploadedMaterial[]> {
+  const supportedFiles = files.filter((file) => file.type.startsWith("image/") || file.type.startsWith("audio/"));
+  const materials = await Promise.all(
+    supportedFiles.map(async (file, index) => {
+      const slot = preferredSlot ?? inferMaterialSlotFromFile(file, index);
+      const fileUrl = await readFileAsDataUrl(file);
+      return {
+        id: `${file.name}-${file.lastModified}-${index}`,
+        assetKey: resolveMaterialAssetKey(slot, templateFamily),
+        slot,
+        fileName: file.name,
+        fileUrl,
+        previewUrl: fileUrl,
+        mimeType: file.type || fallbackMimeType(file)
+      };
+    })
+  );
+  return materials;
+}
+
+function inferMaterialSlotFromFile(file: File, index: number): UserMaterialSlot {
+  if (file.type.startsWith("audio/")) {
+    const lower = file.name.toLowerCase();
+    return lower.includes("bgm") || lower.includes("loop") || lower.includes("music") ? "bgm" : "sfx";
+  }
+  if (index === 0) return "background";
+  if (index === 1) return "player";
+  if (index === 2) return "hazard";
+  return "collectible";
+}
+
+function fallbackMimeType(file: File): string {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  return lower.endsWith(".png") ? "image/png" : "application/octet-stream";
+}
+
+function applyUserMaterialsToAssetPack(
+  assets: AssetRequirement[],
+  userMaterials: UserMaterial[]
+): AssetRequirement[] {
+  const materialsByKey = new Map(userMaterials.map((material) => [material.assetKey, material]));
+  return assets.map((asset) => {
+    const material = materialsByKey.get(asset.assetKey);
+    if (!material) return asset;
+    if (!isMaterialCompatibleWithAsset(asset, material)) return asset;
+    return {
+      ...asset,
+      status: "uploaded",
+      source: "uploaded",
+      generationMode: "uploaded",
+      copyrightStatus: "user_provided",
+      fileUrl: material.fileUrl,
+      previewUrl: material.previewUrl ?? material.fileUrl,
+      provider: "uploaded",
+      model: "user-file",
+      approvalStatus: "approved",
+      generationParams: {
+        ...asset.generationParams,
+        fileName: material.fileName,
+        slot: material.slot ?? ""
+      },
+      error: undefined
+    };
+  });
+}
+
+function isMaterialCompatibleWithAsset(asset: AssetRequirement, material: UserMaterial): boolean {
+  if (asset.type === "image" || asset.type === "ui") return material.mimeType.startsWith("image/");
+  if (asset.type === "sfx" || asset.type === "bgm") return material.mimeType.startsWith("audio/");
+  return false;
 }
 
 function createReferencePackageSummary(payload: Record<string, any>): ReferencePackageSummary {
@@ -985,23 +1331,7 @@ function StartPage({
                   accept="image/*,audio/*,.png,.jpg,.jpeg,.webp,.gif,.mp3,.wav,.ogg,.m4a"
                   onChange={async (event) => {
                     const files = Array.from(event.target.files ?? []);
-                    const materials = await Promise.all(
-                      files
-                        .filter((file) => file.type.startsWith("image/"))
-                        .map(async (file, index) => {
-                          const slot: UserMaterialSlot = index === 0 ? "background" : "player";
-                          const fileUrl = await readFileAsDataUrl(file);
-                          return {
-                            id: `${file.name}-${file.lastModified}-${index}`,
-                            fileName: file.name,
-                            fileUrl,
-                            previewUrl: fileUrl,
-                            mimeType: file.type || "image/png",
-                            slot,
-                            assetKey: resolveMaterialAssetKey(slot, draft.templateFamily)
-                          };
-                        })
-                    );
+                    const materials = await filesToUserMaterials(files, draft.templateFamily);
                     updateDraft({
                       uploadedFileNames: files.map((file) => file.name),
                       uploadedMaterials: materials
@@ -1095,6 +1425,8 @@ function IdeaDialogPage({
   draft,
   revisionText,
   canGenerate,
+  isPreparingAssets,
+  actionLabel,
   isGenerating,
   onRevisionTextChange,
   onAnswer,
@@ -1107,6 +1439,8 @@ function IdeaDialogPage({
   draft: StartGameDraft;
   revisionText: string;
   canGenerate: boolean;
+  isPreparingAssets: boolean;
+  actionLabel: string;
   isGenerating: boolean;
   onRevisionTextChange: (value: string) => void;
   onAnswer: (value: string) => void;
@@ -1213,7 +1547,7 @@ function IdeaDialogPage({
                 onClick={canGenerate ? onGenerate : submitAnswer}
               >
                 {isGenerating ? <RefreshCcw size={18} /> : canGenerate ? <Wand2 size={18} /> : <Send size={18} />}
-                <span>{canGenerate ? messages.ideaDialog.generate : messages.ideaDialog.send}</span>
+                <span>{actionLabel}</span>
               </button>
             </div>
           </footer>
@@ -1916,13 +2250,31 @@ function UserPrompt({ text }: { text: string }) {
   return <div className="user-prompt">{text}</div>;
 }
 
-function StudioChatFlow({ messages }: { messages: StudioChatMessage[] }) {
+function StudioChatFlow({
+  messages,
+  onConfirmAssets,
+  onConfirmAsset,
+  onUploadAsset
+}: {
+  messages: StudioChatMessage[];
+  onConfirmAssets: (assetCandidates: AssetCandidates) => void;
+  onConfirmAsset: (assetCandidate: AssetCandidates["candidates"][number]) => void;
+  onUploadAsset: (slot: UserMaterialSlot, files: File[]) => Promise<void>;
+}) {
   return (
     <div className="studio-chat-flow" aria-label="AI 创作对话">
       {messages.map((message) => (
         <article key={message.id} className={`studio-chat-message ${message.role}`}>
           <span>{message.meta}</span>
           <p>{message.content}</p>
+          {message.assetCandidates ? (
+            <AssetCandidateReview
+              assetCandidates={message.assetCandidates}
+              onConfirm={() => onConfirmAssets(message.assetCandidates as AssetCandidates)}
+              onConfirmOne={onConfirmAsset}
+              onUploadAsset={onUploadAsset}
+            />
+          ) : null}
         </article>
       ))}
     </div>
@@ -1935,18 +2287,23 @@ function PromptDock({
   modelStatusLabel,
   canGenerate,
   isGenerating,
+  isSubmittingRevision,
   onGenerate,
   onIdeaChange,
   onSubmitRevision
+  ,
+  onUploadMaterials
 }: {
   messages: ReturnType<typeof getMessages>;
   revisionText: string;
   modelStatusLabel: string;
   canGenerate: boolean;
   isGenerating: boolean;
+  isSubmittingRevision: boolean;
   onGenerate: () => void;
   onIdeaChange: (idea: string) => void;
   onSubmitRevision: () => void;
+  onUploadMaterials: (files: File[], preferredSlot?: UserMaterialSlot) => Promise<void>;
 }) {
   return (
     <div className="prompt-dock">
@@ -1961,11 +2318,34 @@ function PromptDock({
           {modelStatusLabel}
         </button>
         <div className="tool-icons">
-          <ImageIcon size={16} />
+          <label title="上传图片素材">
+            <ImageIcon size={16} />
+            <input
+              type="file"
+              accept="image/*,.png,.jpg,.jpeg,.webp,.gif"
+              multiple
+              onChange={async (event) => {
+                await onUploadMaterials(Array.from(event.target.files ?? []));
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
+          <label title="上传音频素材">
+            <Music2 size={16} />
+            <input
+              type="file"
+              accept="audio/*,.mp3,.wav,.ogg,.m4a"
+              multiple
+              onChange={async (event) => {
+                await onUploadMaterials(Array.from(event.target.files ?? []));
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
           <Wand2 size={16} />
           <RefreshCcw size={16} />
         </div>
-        <button className="dock-action" onClick={onSubmitRevision} disabled={!revisionText.trim()}>
+        <button className="dock-action" onClick={onSubmitRevision} disabled={!revisionText.trim() || isSubmittingRevision}>
           {messages.prompt.sendFollowup}
         </button>
         <button
@@ -1978,6 +2358,66 @@ function PromptDock({
         </button>
       </div>
     </div>
+  );
+}
+
+function AssetCandidateReview({
+  assetCandidates,
+  onConfirm,
+  onConfirmOne,
+  onUploadAsset
+}: {
+  assetCandidates: AssetCandidates;
+  onConfirm: () => void;
+  onConfirmOne: (assetCandidate: AssetCandidates["candidates"][number]) => void;
+  onUploadAsset: (slot: UserMaterialSlot, files: File[]) => Promise<void>;
+}) {
+  return (
+    <section className="asset-candidate-review">
+      <div className="asset-candidate-header">
+        <span>素材确认</span>
+        <strong>AI 已生成首版素材提示词和占位预览</strong>
+        <button type="button" onClick={onConfirm}>
+          确认素材方向
+        </button>
+      </div>
+      <div className="asset-candidate-grid">
+        {assetCandidates.candidates.map((candidate) => (
+          <article className="asset-candidate-card" key={`${candidate.slot}-${candidate.assetKey}`}>
+            {candidate.type === "image" || candidate.type === "ui" ? (
+              <img src={candidate.previewUrl} alt={candidate.label} />
+            ) : (
+              <div className="asset-audio-preview">
+                <Zap size={20} />
+                <span>{candidate.type.toUpperCase()}</span>
+              </div>
+            )}
+            <div>
+              <span>{candidate.slot}</span>
+              <strong>{candidate.label}</strong>
+              <p>{candidate.prompt}</p>
+              <div className="asset-candidate-actions">
+                <button type="button" onClick={() => onConfirmOne(candidate)}>
+                  确认此素材
+                </button>
+                <label>
+                  <Upload size={13} />
+                  上传替换
+                  <input
+                    type="file"
+                    accept={candidate.acceptedFileTypes.join(",")}
+                    onChange={async (event) => {
+                      await onUploadAsset(candidate.slot, Array.from(event.target.files ?? []));
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -2216,7 +2656,31 @@ function AssetWorkspace({
         </div>
         {selectedAsset && <AssetInspector asset={selectedAsset} messages={messages} />}
       </div>
-      {referencePackage ? <ReferenceAssetPanel referencePackage={referencePackage} /> : null}
+      {referencePackage ? (
+        <ReferenceAssetPanel
+          referencePackage={referencePackage}
+          onAdopt={(file) => {
+            const target = assets.find((asset) => matchesReferenceFileSlot(asset.type, file.type));
+            if (!target) return;
+            updateAsset({
+              ...target,
+              status: "uploaded",
+              source: "uploaded",
+              generationMode: "uploaded",
+              copyrightStatus: "user_provided",
+              fileUrl: `/api/uploads/${referencePackage.projectId}/${referencePackage.versionId}/files/${encodeURIComponent(file.path)}`,
+              previewUrl: `/api/uploads/${referencePackage.projectId}/${referencePackage.versionId}/files/${encodeURIComponent(file.path)}`,
+              provider: "reference-package",
+              model: "adopted-reference",
+              generationParams: {
+                ...target.generationParams,
+                referencePath: file.path
+              },
+              approvalStatus: "approved"
+            });
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2226,7 +2690,19 @@ function readReferencePackageArtifact(project: MockProject): ReferencePackageSum
   return artifact?.content ? (artifact.content as ReferencePackageSummary) : null;
 }
 
-function ReferenceAssetPanel({ referencePackage }: { referencePackage: ReferencePackageSummary }) {
+function matchesReferenceFileSlot(assetType: AssetRequirement["type"], fileType: ReferencePackageSummary["images"][number]["type"]) {
+  if (fileType === "image") return assetType === "image" || assetType === "ui";
+  if (fileType === "audio") return assetType === "sfx" || assetType === "bgm";
+  return false;
+}
+
+function ReferenceAssetPanel({
+  referencePackage,
+  onAdopt
+}: {
+  referencePackage: ReferencePackageSummary;
+  onAdopt?: (file: ReferencePackageSummary["images"][number]) => void;
+}) {
   const files = [
     ...referencePackage.images.map((file) => ({ ...file, group: "图片" })),
     ...referencePackage.audio.map((file) => ({ ...file, group: "音频" })),
@@ -2248,6 +2724,11 @@ function ReferenceAssetPanel({ referencePackage }: { referencePackage: Reference
             <span>{file.group}</span>
             <strong>{file.path}</strong>
             <em>{Math.ceil(file.size / 1024)} KB</em>
+            {onAdopt && (file.type === "image" || file.type === "audio") ? (
+              <button type="button" onClick={() => onAdopt(file)}>
+                采用为新素材
+              </button>
+            ) : null}
           </div>
         ))}
       </div>

@@ -2,6 +2,8 @@ import { useEffect, useId, useRef } from "react";
 import type { AssetPack, GameConfig, GameHooks } from "../core/types";
 import {
   collectPlayableItem,
+  createFeedbackRules,
+  createPlayableRules,
   createPlayableRuntimeState,
   hitPlayableHazard,
   restartPlayableRuntime,
@@ -27,8 +29,18 @@ export function PhaserPreview({
 
   useEffect(() => {
     let disposed = false;
-    const audio = createDemoAudio();
     const runtimeAssets = selectPreviewRuntimeAssets(assetPack);
+    const audio = createDemoAudio(runtimeAssets);
+    const feedbackRules = createFeedbackRules({
+      ...gameHooks?.collisionRules,
+      ...gameHooks?.feedbackRules
+    });
+    const rules = createPlayableRules({
+      configWinScore: config.level.winScore,
+      hookWinTarget: gameHooks?.winCondition.target,
+      collectibleValue: gameHooks?.collectibleRules.value,
+      hookLives: gameHooks?.failCondition.lives
+    });
 
     async function mountGame() {
       const Phaser = await import("phaser");
@@ -43,8 +55,10 @@ export function PhaserPreview({
         private flash!: Phaser.GameObjects.Rectangle;
         private collectibles: Array<Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle> = [];
         private hazards: Array<Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle> = [];
+        private finishGate?: Phaser.GameObjects.Rectangle;
         private overlay?: Phaser.GameObjects.Container;
         private worldObjects: Phaser.GameObjects.GameObject[] = [];
+        private lastHitAt = 0;
 
         constructor() {
           super("DemoScene");
@@ -92,7 +106,7 @@ export function PhaserPreview({
           }
 
           this.collectibles = this.collectibles.filter((item) => {
-            if (Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), item.getBounds())) {
+            if (isNear(this.player, item, feedbackRules.collisionRadius)) {
               this.collectItem(item, Phaser);
               return false;
             }
@@ -101,10 +115,13 @@ export function PhaserPreview({
 
           for (const hazard of this.hazards) {
             this.updateHazardBehavior(hazard);
-            if (Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), hazard.getBounds())) {
+            if (isNear(this.player, hazard, feedbackRules.collisionRadius)) {
               this.hitHazard(Phaser);
               break;
             }
+          }
+          if (this.finishGate && isNear(this.player, this.finishGate, 42)) {
+            this.reachFinish(Phaser);
           }
         }
 
@@ -119,7 +136,7 @@ export function PhaserPreview({
         }
 
         private startGame(Phaser: typeof import("phaser")) {
-          this.runtimeState = startPlayableRuntime(this.runtimeState);
+          this.runtimeState = startPlayableRuntime(this.runtimeState, rules);
           this.overlay?.destroy(true);
           this.overlay = undefined;
           this.clearWorld();
@@ -140,6 +157,7 @@ export function PhaserPreview({
               ? this.add.image(480, 270, "generated-background").setDisplaySize(960, 540).setAlpha(0.45)
               : this.add.rectangle(0, 0, 960, 540, 0x17212f).setOrigin(0)
           );
+          this.createVisualDepth();
           this.addWorldObject(this.add.text(24, 20, config.title, {
             color: "#f6f8fb",
             fontFamily: "Arial",
@@ -163,7 +181,8 @@ export function PhaserPreview({
             fontSize: "12px"
           }));
 
-          this.player = this.createRuntimeImage(120, 300, "generated-player", 44, 44, 0x5eead4);
+          const spawn = gameHooks?.levelFlow?.spawnPoint ?? { x: 120, y: 300 };
+          this.player = this.createRuntimeImage(spawn.x, spawn.y, "generated-player", 44, 44, 0x5eead4);
           this.addWorldObject(this.player);
           this.physics.add.existing(this.player);
           const body = this.player.body as Phaser.Physics.Arcade.Body;
@@ -186,6 +205,7 @@ export function PhaserPreview({
               this.addWorldObject(tile);
             }
             this.physics.add.collider(this.player, platforms);
+            this.createFinishGate();
           }
 
           this.createCollectibles(Phaser);
@@ -195,28 +215,94 @@ export function PhaserPreview({
         private collectItem(item: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle, Phaser: typeof import("phaser")) {
           item.destroy();
           this.worldObjects = this.worldObjects.filter((object) => object !== item);
-          this.runtimeState = collectPlayableItem(this.runtimeState, config.level.winScore);
+          this.runtimeState = collectPlayableItem(this.runtimeState, rules.winScore, rules.collectibleValue);
           audio.playCollect();
-          this.burst(item.x, item.y, 0xfacc15, Phaser);
+          this.floatText(item.x, item.y - 28, `+${rules.collectibleValue}`, "#facc15");
+          this.burst(item.x, item.y, 0xfacc15, Phaser, feedbackRules.collectBurstCount);
           this.updateHud();
           if (this.runtimeState.phase === "won") {
             audio.playWin();
             this.stopPlayer();
             this.status.setText("胜利！目标已完成。");
             this.cameras.main.flash(360, 58, 255, 210);
-            this.burst(this.player.x, this.player.y, 0x5eead4, Phaser, 28);
+            this.burst(this.player.x, this.player.y, 0x5eead4, Phaser, feedbackRules.particleCount);
             this.showEndScreen("won");
           }
         }
 
+        private reachFinish(Phaser: typeof import("phaser")) {
+          if (this.runtimeState.phase !== "playing") return;
+          this.runtimeState = collectPlayableItem(this.runtimeState, rules.winScore, rules.winScore);
+          audio.playWin();
+          this.stopPlayer();
+          this.status.setText("胜利！抵达终点。");
+          this.floatText(this.player.x, this.player.y - 40, "FINISH", "#45f6c8");
+          this.burst(this.player.x, this.player.y, 0x5eead4, Phaser, feedbackRules.particleCount);
+          this.showEndScreen("won");
+        }
+
+        private createVisualDepth() {
+          const treatment = gameHooks?.visualLayerRules?.backgroundTreatment ?? "";
+          if (!treatment.includes("parallax")) return;
+          const far = this.add.rectangle(710, 94, 260, 46, 0x164e63, 0.26).setDepth(0);
+          const mid = this.add.rectangle(230, 132, 210, 34, 0x0f766e, 0.18).setDepth(0);
+          this.addWorldObject(far);
+          this.addWorldObject(mid);
+          this.tweens.add({ targets: far, x: 690, duration: 4200, yoyo: true, repeat: -1 });
+          this.tweens.add({ targets: mid, x: 250, duration: 3600, yoyo: true, repeat: -1 });
+        }
+
+        private createFinishGate() {
+          const finish = gameHooks?.levelFlow?.finishZone;
+          if (!finish) return;
+          this.finishGate = this.add
+            .rectangle(finish.x, finish.y, finish.width, finish.height, 0x45f6c8, 0.18)
+            .setStrokeStyle(2, 0x45f6c8);
+          this.addWorldObject(this.finishGate);
+          this.addWorldObject(this.add.text(finish.x, finish.y - finish.height / 2 - 18, "GOAL", {
+            color: "#45f6c8",
+            fontFamily: "Arial",
+            fontSize: "12px",
+            fontStyle: "bold"
+          }).setOrigin(0.5));
+        }
+
+        private floatText(x: number, y: number, text: string, color: string) {
+          if (!gameHooks?.feedbackRules?.floatingScore) return;
+          const label = this.add.text(x, y, text, {
+            color,
+            fontFamily: "Arial",
+            fontSize: "16px",
+            fontStyle: "bold"
+          }).setOrigin(0.5).setDepth(12);
+          this.tweens.add({
+            targets: label,
+            y: y - 32,
+            alpha: 0,
+            duration: 620,
+            ease: Phaser.Math.Easing.Cubic.Out,
+            onComplete: () => label.destroy()
+          });
+        }
+
         private hitHazard(Phaser: typeof import("phaser")) {
           if (this.runtimeState.phase !== "playing") return;
+          const now = this.time.now;
+          if (now - this.lastHitAt < feedbackRules.invulnerabilityMs) return;
+          this.lastHitAt = now;
           this.runtimeState = hitPlayableHazard(this.runtimeState);
           audio.playHit();
+          this.applyKnockback();
+          if (this.runtimeState.phase === "playing") {
+            this.status.setText(`受伤！剩余生命 ${this.runtimeState.lives}`);
+            this.burst(this.player.x, this.player.y, 0xffb020, Phaser, feedbackRules.particleCount);
+            this.updateHud();
+            return;
+          }
           audio.playLose();
           this.stopPlayer();
           this.status.setText("失败！碰到了危险物。");
-          this.cameras.main.shake(180, 0.012);
+          this.cameras.main.shake(180, feedbackRules.screenShakeIntensity);
           this.flash.setFillStyle(0xff315a, 0.34);
           this.tweens.add({
             targets: this.flash,
@@ -224,13 +310,28 @@ export function PhaserPreview({
             duration: 260,
             onComplete: () => this.flash.setAlpha(0)
           });
-          this.burst(this.player.x, this.player.y, 0xfb7185, Phaser, 18);
+          this.burst(this.player.x, this.player.y, 0xfb7185, Phaser, feedbackRules.particleCount);
           this.showEndScreen("lost");
+        }
+
+        private applyKnockback() {
+          const body = this.player.body as Phaser.Physics.Arcade.Body | undefined;
+          if (!body || feedbackRules.knockbackForce <= 0) return;
+          const xDirection = this.player.x > 480 ? 1 : -1;
+          body.setVelocity(xDirection * feedbackRules.knockbackForce, -feedbackRules.knockbackForce * 0.45);
+          this.tweens.add({
+            targets: this.player,
+            alpha: { from: 0.35, to: 1 },
+            duration: Math.max(120, feedbackRules.invulnerabilityMs / 4),
+            repeat: 2,
+            yoyo: true
+          });
         }
 
         private createCollectibles(Phaser: typeof import("phaser")) {
           const placement = gameHooks?.collectibleRules.placement ?? (config.templateFamily === "platformer" ? "arc" : "line");
-          for (let index = 0; index < config.level.collectibles; index += 1) {
+          const count = Math.max(1, config.level.collectibles);
+          for (let index = 0; index < count; index += 1) {
             const x = placement === "grid" ? 230 + (index % 4) * 110 : 230 + index * 95;
             const y =
               placement === "grid"
@@ -238,11 +339,11 @@ export function PhaserPreview({
                 : placement === "arc" || config.templateFamily === "platformer"
                   ? 330 - (index % 3) * 70
                   : 150 + (index % 3) * 90;
-            const star = this.createRuntimeImage(x, y, "generated-collectible", 26, 26, 0xfacc15);
-            this.collectibles.push(star);
-            this.addWorldObject(star);
+            const item = this.createRuntimeImage(x, y, "generated-collectible", 26, 26, 0xfacc15);
+            this.collectibles.push(item);
+            this.addWorldObject(item);
             this.tweens.add({
-              targets: star,
+              targets: item,
               angle: 360,
               scale: { from: 0.9, to: 1.18 },
               duration: 1600,
@@ -255,7 +356,7 @@ export function PhaserPreview({
 
         private createHazards(Phaser: typeof import("phaser")) {
           const hookMovement = gameHooks?.enemyRules.movement;
-          const hookLanes = gameHooks?.levelLayout.lanes ?? [];
+          const hookLanes = expandHookLanes(gameHooks, config.level.hazards);
           for (let index = 0; index < config.level.hazards; index += 1) {
             const lane = hookLanes.length > 0 ? hookLanes[index % hookLanes.length] : undefined;
             const x =
@@ -268,10 +369,10 @@ export function PhaserPreview({
               lane
                 ? lane.y
                 : config.gameplay.spawnPattern === "lanes" || config.gameplay.spawnPattern === "waves"
-                ? 150 + (index % 3) * 95
-                : config.templateFamily === "platformer"
-                  ? 480
-                  : 250 + (index % 2) * 110;
+                  ? 150 + (index % 3) * 95
+                  : config.templateFamily === "platformer"
+                    ? 480
+                    : 250 + (index % 2) * 110;
             const hazard = this.createRuntimeImage(x, y, "generated-hazard", 34, 34, 0xfb7185);
             this.hazards.push(hazard);
             this.addWorldObject(hazard);
@@ -395,7 +496,7 @@ export function PhaserPreview({
             fontSize: "34px",
             fontStyle: "bold"
           }).setOrigin(0.5));
-          this.overlay.add(this.add.text(480, 218, won ? "目标完成，可以分享给朋友试玩。" : "碰到了危险物，换条路线再试。", {
+          this.overlay.add(this.add.text(480, 218, won ? "目标完成，可以分享给好友试玩。" : "碰到了危险物，换条路线再试。", {
             align: "center",
             color: "#e8fbff",
             fixedWidth: 450,
@@ -413,7 +514,7 @@ export function PhaserPreview({
         }
 
         private updateHud() {
-          this.scoreText?.setText(`得分 ${this.runtimeState.score}/${config.level.winScore} | ${assetPackSummary(assetPack)}`);
+          this.scoreText?.setText(`得分 ${this.runtimeState.score}/${rules.winScore} | 生命 ${this.runtimeState.lives} | ${assetPackSummary(assetPack)}`);
         }
 
         private stopPlayer() {
@@ -425,6 +526,7 @@ export function PhaserPreview({
         private clearWorld() {
           this.collectibles = [];
           this.hazards = [];
+          this.finishGate = undefined;
           for (const object of this.worldObjects) {
             object.destroy();
           }
@@ -476,7 +578,7 @@ export function PhaserPreview({
       gameRef.current?.destroy(true);
       gameRef.current = null;
     };
-  }, [assetPack, compact, config, containerId]);
+  }, [assetPack, compact, config, containerId, gameHooks]);
 
   return (
     <div
@@ -487,6 +589,11 @@ export function PhaserPreview({
       onPointerDown={(event) => event.currentTarget.focus()}
     />
   );
+}
+
+function expandHookLanes(gameHooks: GameHooks | undefined, fallbackCount: number) {
+  const lanes = gameHooks?.levelLayout.lanes ?? [];
+  return lanes.flatMap((lane) => Array.from({ length: Math.max(1, Math.round(lane.count || 1)) }, () => lane)).slice(0, Math.max(1, fallbackCount));
 }
 
 function assetPackSummary(assetPack?: AssetPack): string {
@@ -508,9 +615,26 @@ function loadImage(scene: import("phaser").Scene, key: string, url?: string) {
   scene.load.image(key, url);
 }
 
-function createDemoAudio() {
+function isNear(
+  a: { getBounds: () => { x: number; y: number; width: number; height: number } },
+  b: { getBounds: () => { x: number; y: number; width: number; height: number } },
+  extraRadius: number
+): boolean {
+  const aBounds = a.getBounds();
+  const bBounds = b.getBounds();
+  return !(
+    aBounds.x + aBounds.width + extraRadius < bBounds.x ||
+    bBounds.x + bBounds.width < aBounds.x - extraRadius ||
+    aBounds.y + aBounds.height + extraRadius < bBounds.y ||
+    bBounds.y + bBounds.height < aBounds.y - extraRadius
+  );
+}
+
+function createDemoAudio(runtimeAssets: ReturnType<typeof selectPreviewRuntimeAssets>) {
   let context: AudioContext | undefined;
   let bgmTimer: number | undefined;
+  let bgmElement: HTMLAudioElement | undefined;
+  const sfxElements = new Map<string, HTMLAudioElement>();
 
   const ensureContext = () => {
     context ??= new AudioContext();
@@ -533,6 +657,13 @@ function createDemoAudio() {
 
   return {
     startBgm() {
+      if (runtimeAssets.bgm) {
+        bgmElement ??= createAudioElement(runtimeAssets.bgm, true);
+        void bgmElement.play().catch(() => {
+          bgmElement = undefined;
+        });
+        if (bgmElement) return;
+      }
       const audioContext = ensureContext();
       if (bgmTimer !== undefined) return;
       const playLoop = () => {
@@ -545,18 +676,22 @@ function createDemoAudio() {
       bgmTimer = window.setInterval(playLoop, 1300);
     },
     playCollect() {
+      if (playUploadedAudio("collect", runtimeAssets.sfx.collect, sfxElements)) return;
       tone(660, 0.08, "triangle", 0.08);
       window.setTimeout(() => tone(880, 0.1, "triangle", 0.06), 70);
     },
     playHit() {
+      if (playUploadedAudio("hit", runtimeAssets.sfx.hit, sfxElements)) return;
       tone(130, 0.14, "sawtooth", 0.09);
     },
     playWin() {
+      if (playUploadedAudio("win", runtimeAssets.sfx.win, sfxElements)) return;
       [523, 659, 784, 1046].forEach((frequency, index) => {
         window.setTimeout(() => tone(frequency, 0.13, "triangle", 0.07), index * 95);
       });
     },
     playLose() {
+      if (playUploadedAudio("lose", runtimeAssets.sfx.lose, sfxElements)) return;
       [220, 175, 130].forEach((frequency, index) => {
         window.setTimeout(() => tone(frequency, 0.16, "sawtooth", 0.055), index * 110);
       });
@@ -564,10 +699,30 @@ function createDemoAudio() {
     stop() {
       if (bgmTimer !== undefined) {
         window.clearInterval(bgmTimer);
+        bgmTimer = undefined;
       }
-      bgmTimer = undefined;
+      bgmElement?.pause();
+      bgmElement = undefined;
+      for (const element of sfxElements.values()) element.pause();
+      sfxElements.clear();
       void context?.close();
       context = undefined;
     }
   };
+}
+
+function createAudioElement(url: string, loop: boolean): HTMLAudioElement {
+  const element = new Audio(url);
+  element.loop = loop;
+  element.volume = loop ? 0.28 : 0.65;
+  return element;
+}
+
+function playUploadedAudio(key: string, url: string | undefined, cache: Map<string, HTMLAudioElement>): boolean {
+  if (!url) return false;
+  const element = cache.get(key) ?? createAudioElement(url, false);
+  cache.set(key, element);
+  element.currentTime = 0;
+  void element.play().catch(() => undefined);
+  return true;
 }

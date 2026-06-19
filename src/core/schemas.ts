@@ -36,6 +36,25 @@ export const guidedQuestionsSchema = z.object({
   questions: z.array(designQuestionSchema).min(3).max(5)
 });
 
+export const designBriefSchema = z.object({
+  coreGameplay: z.string(),
+  playerGoal: z.string(),
+  referenceTakeaways: z.array(z.string()),
+  risks: z.array(z.string()),
+  questionFocus: z.array(z.string()),
+  developerPrompt: z.string()
+});
+
+export const matureGameBriefSchema = z.object({
+  referencePatternId: z.string(),
+  coreLoop: z.array(z.string()),
+  firstThirtySeconds: z.array(z.string()),
+  visualTheme: z.string(),
+  feedbackChecklist: z.array(z.string()),
+  difficultyCurve: z.array(z.string()),
+  gameFeelMoments: z.array(z.string())
+});
+
 export const gddSchema = z.object({
   concept: z.string(),
   loop: z.array(z.string()),
@@ -78,6 +97,41 @@ export const assetRequirementSchema = z.object({
 });
 
 export const assetRequirementsSchema = z.array(assetRequirementSchema);
+
+export const assetCandidateSchema = z.object({
+  slot: z.enum(["player", "background", "hazard", "collectible", "cover", "bgm", "sfx"]),
+  assetKey: z.string(),
+  type: z.enum(["image", "sfx", "bgm", "effect", "ui", "build"]),
+  label: z.string(),
+  prompt: z.string(),
+  style: z.string(),
+  purpose: z.string(),
+  acceptedFileTypes: z.array(z.string()),
+  previewUrl: z.string().optional(),
+  fileUrl: z.string().optional(),
+  source: z.enum(["mock", "preset", "uploaded", "generated", "library"]).optional(),
+  approvalStatus: z.enum(["pending", "approved", "rejected"]).optional()
+});
+
+export const assetCandidatesSchema = z.object({
+  candidates: z.array(assetCandidateSchema).min(1)
+});
+
+export const confirmedAssetsSchema = z.object({
+  assets: z.array(assetCandidateSchema.extend({
+    previewUrl: z.string(),
+    fileUrl: z.string(),
+    source: z.enum(["mock", "preset", "uploaded", "generated", "library"])
+  }))
+});
+
+export const revisionAnalysisSchema = z.object({
+  understoodChange: z.string(),
+  updatedDeveloperPrompt: z.string(),
+  confirmationQuestions: z.array(designQuestionSchema),
+  affectedAssets: z.array(z.string()),
+  risks: z.array(z.string())
+});
 
 export const assetStyleGuideSchema = z.object({
   visualStyle: z.string(),
@@ -160,14 +214,52 @@ export const gameHooksSchema = z.object({
     platforms: z.array(z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })),
     lanes: z.array(z.object({ y: z.number(), speed: z.number(), count: z.number() })),
     grid: z.object({ columns: z.number(), rows: z.number() })
-  })
+  }),
+  levelFlow: z.object({
+    spawnPoint: z.object({ x: z.number(), y: z.number() }),
+    safeZones: z.array(z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })),
+    finishZone: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).optional(),
+    cameraIntent: z.string(),
+    tutorialBeats: z.array(z.string())
+  }).optional(),
+  collisionRules: z.object({
+    collisionRadius: z.number(),
+    invulnerabilityMs: z.number(),
+    knockbackForce: z.number()
+  }).optional(),
+  feedbackRules: z.object({
+    particleCount: z.number(),
+    screenShakeIntensity: z.number(),
+    collectBurstCount: z.number(),
+    floatingScore: z.boolean().optional(),
+    comboText: z.boolean().optional(),
+    audioCueKeys: z.array(z.string()).optional()
+  }).optional(),
+  spawnRules: z.object({
+    hazardIntervalMs: z.number(),
+    maxActiveHazards: z.number()
+  }).optional(),
+  visualLayerRules: z.object({
+    backgroundTreatment: z.string(),
+    foregroundProps: z.array(z.string()),
+    uiBadgeStyle: z.string()
+  }).optional(),
+  difficultyRules: z.object({
+    hazardRamp: z.string(),
+    enemyPacing: z.string(),
+    collectibleSpacing: z.string(),
+    checkpointPolicy: z.string()
+  }).optional()
 });
 
 export const qaReportSchema = z.object({
   scores: z.object({
     buildHealth: z.number(),
     visualUsability: z.number(),
-    intentAlignment: z.number()
+    intentAlignment: z.number(),
+    firstThirtySeconds: z.number().optional(),
+    visualDepth: z.number().optional(),
+    gameFeel: z.number().optional()
   }),
   checks: z.array(z.string()),
   debugProtocolEntries: z.array(z.string()),
@@ -200,9 +292,13 @@ export const iterationReportSchema = z.object({
 export const artifactSchemas = {
   "idea-intake": ideaIntakeSchema,
   "guided-questions": guidedQuestionsSchema,
+  "design-brief": designBriefSchema,
   classification: classificationSchema,
+  "mature-game-brief": matureGameBriefSchema,
   gdd: gddSchema,
   "asset-requirements": assetRequirementsSchema,
+  "asset-candidates": assetCandidatesSchema,
+  "confirmed-assets": confirmedAssetsSchema,
   "asset-style-guide": assetStyleGuideSchema,
   "asset-pack": assetPackSchema,
   "game-config": gameConfigSchema,

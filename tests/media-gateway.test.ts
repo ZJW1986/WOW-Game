@@ -137,9 +137,13 @@ describe("project asset protocol", () => {
 
   it("accepts matching uploaded files and rejects mismatched file types", () => {
     const imageRequirement = createAssetRequirements("top_down")[0];
+    const audioRequirement = createAssetRequirements("top_down").find((asset) => asset.assetKey === "sfx.hit");
+    if (!audioRequirement) throw new Error("missing sfx.hit fixture");
 
     expect(validateProjectAssetUpload(imageRequirement, "cover.png").success).toBe(true);
     expect(validateProjectAssetUpload(imageRequirement, "cover.mp3").success).toBe(false);
+    expect(validateProjectAssetUpload(audioRequirement, "hit.wav").success).toBe(true);
+    expect(validateProjectAssetUpload(audioRequirement, "hit.png").success).toBe(false);
   });
 
   it("reports duplicate asset keys as build blockers", () => {

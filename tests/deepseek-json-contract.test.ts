@@ -34,6 +34,26 @@ describe("DeepSeek JSON contract", () => {
     expect(containsMojibake(`${classificationPrompt}\n${gddPrompt}\n${configPrompt}\n${hooksPrompt}`)).toBe(false);
   });
 
+  it("requires guided questions to cover the full professional design decision set", () => {
+    const prompt = createPromptForTask("llm.guided_questions", {
+      idea: "做一个太空猫躲避陨石收集鱼干的小游戏",
+      templateFamily: "top_down",
+      designBrief: {
+        coreGameplay: "俯视角躲避和收集",
+        playerGoal: "收集鱼干并避开陨石",
+        developerPrompt: "生成第一版可玩 Phaser 小游戏"
+      }
+    });
+
+    expect(prompt).toContain("Generate exactly 5");
+    expect(prompt).toContain("win goal");
+    expect(prompt).toContain("core controls/action");
+    expect(prompt).toContain("fail condition");
+    expect(prompt).toContain("character/enemy/collectible identity");
+    expect(prompt).toContain("visual style/audio mood/level pacing");
+    expect(containsMojibake(prompt)).toBe(false);
+  });
+
   it("accepts fenced JSON content returned by the chat model", async () => {
     const executor = createDeepSeekExecutor({
       apiKey: "test-key",

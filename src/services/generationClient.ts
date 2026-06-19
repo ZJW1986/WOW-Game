@@ -1,4 +1,13 @@
-import type { DesignQuestion, UserAnswer, TemplateFamily, UserMaterial } from "../core/types";
+import type {
+  AssetCandidates,
+  ConfirmedAssets,
+  DesignBrief,
+  DesignQuestion,
+  RevisionAnalysis,
+  UserAnswer,
+  TemplateFamily,
+  UserMaterial
+} from "../core/types";
 import type { StartModelId } from "../core/start";
 
 export interface PlayableGenerationRequest {
@@ -11,6 +20,9 @@ export interface PlayableGenerationRequest {
   referencePackageId?: string;
   referenceVersionId?: string;
   userMaterials?: UserMaterial[];
+  designBrief?: DesignBrief;
+  confirmedAssets?: ConfirmedAssets;
+  revisionHistory?: RevisionAnalysis[];
 }
 
 export interface UploadPlayablePackageRequest {
@@ -26,6 +38,30 @@ export interface GuidedQuestionsRequest {
   templateFamily: TemplateFamily;
   projectId?: string;
   model: StartModelId;
+  designBrief?: DesignBrief;
+  referencePackageId?: string;
+  referenceVersionId?: string;
+  userMaterials?: UserMaterial[];
+  previousAnswers?: UserAnswer[];
+}
+
+export interface DesignBriefRequest {
+  idea: string;
+  templateFamily: TemplateFamily;
+  model: StartModelId;
+  referencePackageId?: string;
+  referenceVersionId?: string;
+  userMaterials?: UserMaterial[];
+}
+
+export interface AssetCandidatesRequest extends DesignBriefRequest {
+  designBrief?: DesignBrief;
+}
+
+export interface RevisionAnalysisRequest extends DesignBriefRequest {
+  followup: string;
+  designBrief?: DesignBrief;
+  previousAnswers?: UserAnswer[];
 }
 
 type BrowserFetcher = typeof fetch;
@@ -152,6 +188,86 @@ export async function uploadPlayablePackage(
     throw new Error(`Upload request failed: ${readError(payload, response)}`);
   }
   return payload;
+}
+
+export async function requestDesignBrief(
+  input: DesignBriefRequest,
+  fetcher: BrowserFetcher = fetch
+): Promise<{
+  designBrief: DesignBrief;
+  modelTask: Record<string, any>;
+  fallbackUsed: boolean;
+}> {
+  const response = await fetcher("/api/design-brief", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Design brief request failed: ${readError(payload, response)}`);
+  }
+  return payload as {
+    designBrief: DesignBrief;
+    modelTask: Record<string, any>;
+    fallbackUsed: boolean;
+  };
+}
+
+export async function requestAssetCandidates(
+  input: AssetCandidatesRequest,
+  fetcher: BrowserFetcher = fetch
+): Promise<{
+  assetCandidates: AssetCandidates;
+  confirmedAssets: ConfirmedAssets;
+  modelTask: Record<string, any>;
+  fallbackUsed: boolean;
+}> {
+  const response = await fetcher("/api/asset-candidates", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Asset candidates request failed: ${readError(payload, response)}`);
+  }
+  return payload as {
+    assetCandidates: AssetCandidates;
+    confirmedAssets: ConfirmedAssets;
+    modelTask: Record<string, any>;
+    fallbackUsed: boolean;
+  };
+}
+
+export async function requestRevisionAnalysis(
+  input: RevisionAnalysisRequest,
+  fetcher: BrowserFetcher = fetch
+): Promise<{
+  revisionAnalysis: RevisionAnalysis;
+  modelTask: Record<string, any>;
+  fallbackUsed: boolean;
+}> {
+  const response = await fetcher("/api/revision-analysis", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Revision analysis request failed: ${readError(payload, response)}`);
+  }
+  return payload as {
+    revisionAnalysis: RevisionAnalysis;
+    modelTask: Record<string, any>;
+    fallbackUsed: boolean;
+  };
 }
 
 export async function requestPackageEditPlan(

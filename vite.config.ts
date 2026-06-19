@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { createGenerationApiHandler } from "./src/services/generationApi";
 import { createDemoServerConfig } from "./src/services/demoServerConfig";
 import { createPlayableStore } from "./src/services/playableStore";
+import { isWowGameApiPath } from "./src/services/apiRoutes";
 
 export default defineConfig(({ mode }) => {
   const nodeProcess = globalThis as {
@@ -46,15 +47,7 @@ export default defineConfig(({ mode }) => {
           });
           server.middlewares.use("/api", async (req: any, res: any, next: () => void) => {
             const url = req.url ?? "";
-            if (
-              !url.startsWith("/generate-playable") &&
-              !url.startsWith("/guided-questions") &&
-              !url.startsWith("/upload-package") &&
-              !url.startsWith("/package-edit-plan") &&
-              !url.startsWith("/replace-package-asset") &&
-              !url.startsWith("/uploads/") &&
-              !url.startsWith("/play/")
-            ) {
+            if (!isWowGameApiPath(url)) {
               next();
               return;
             }

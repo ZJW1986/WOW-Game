@@ -29,6 +29,8 @@ describe("standard artifact pipeline", () => {
       "idea-intake.json",
       "idea-intake.md",
       "classification.json",
+      "mature-game-brief.json",
+      "mature-game-brief.md",
       "gdd.json",
       "gdd.md",
       "asset-style-guide.json",

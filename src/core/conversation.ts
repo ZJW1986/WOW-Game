@@ -29,7 +29,7 @@ export function createConversationSession(
       turn(
         "system",
         "idea_intake",
-        `WOW Game 会把创意转成标准游戏生产产物。推荐模板：${options.preferredTemplate ?? "auto"}`
+        `WOW Game 会把创意转换成标准游戏生产产物。推荐模板：${options.preferredTemplate ?? "auto"}`
       ),
       turn("user", "idea_intake", idea),
       turn(
@@ -87,121 +87,141 @@ export function createGuidedQuestions(idea: string, preferredTemplate?: Template
   const templateFamily = preferredTemplate ?? classifyIdea(idea).templateFamily;
   const familyQuestions: Record<TemplateFamily, DesignQuestion[]> = {
     platformer: [
-      choiceQuestion("jump_feel", "跳跃手感", "横版关卡里，玩家跳跃应该偏轻快、精准，还是带一点惯性？", [
-        "轻快精准",
-        "有惯性和挑战",
-        "更适合新手"
-      ], "轻快精准"),
-      choiceQuestion("level_route", "关卡路线", "第一版更像连续平台冲刺，还是收集金币后到达终点？", [
-        "连续平台冲刺",
-        "收集后到终点",
-        "避开尖刺到终点"
-      ], "收集后到终点")
+      choiceQuestion(
+        "core_action",
+        "核心操作",
+        "平台关卡里，玩家最重要的操作体验是什么？",
+        ["轻快精准跳跃", "带惯性的挑战跳跃", "新手友好的低难度跳跃"],
+        "轻快精准跳跃"
+      ),
+      choiceQuestion(
+        "character_enemy_item",
+        "角色与道具",
+        "主角、危险物和收集物分别是什么？",
+        ["冒险者 / 尖刺 / 金币", "机器人 / 激光 / 电池", "小动物 / 陷阱 / 宝石"],
+        "冒险者 / 尖刺 / 金币"
+      )
     ],
     top_down: [
-      choiceQuestion("movement_style", "移动方式", "俯视角里，玩家主要是自由移动躲避，还是带冲刺技能穿越危险区？", [
-        "自由移动躲避",
-        "带冲刺技能",
-        "边移动边收集"
-      ], "自由移动躲避"),
-      choiceQuestion("enemy_pressure", "敌人压力", "危险物应该静态分布、巡逻移动，还是主动追踪玩家？", [
-        "静态分布",
-        "巡逻移动",
-        "主动追踪"
-      ], "主动追踪")
+      choiceQuestion(
+        "core_action",
+        "核心操作",
+        "俯视角里，玩家主要通过什么动作获得乐趣？",
+        ["自由移动躲避", "冲刺穿越危险区", "边移动边收集奖励"],
+        "自由移动躲避"
+      ),
+      choiceQuestion(
+        "character_enemy_item",
+        "角色与道具",
+        "主角、敌人或障碍、收集物分别是什么？",
+        ["飞船 / 陨石 / 星星", "太空猫 / 陨石 / 鱼干", "探险者 / 机器人 / 能量核心"],
+        "飞船 / 陨石 / 星星"
+      )
     ],
     grid_logic: [
-      choiceQuestion("rule_goal", "解谜目标", "格子玩法的目标是推箱到位、点亮所有格子，还是有限步数收集？", [
-        "推箱到位",
-        "点亮所有格子",
-        "有限步数收集"
-      ], "有限步数收集"),
-      choiceQuestion("move_limit", "步数限制", "第一版是否需要步数限制来制造解谜压力？", [
-        "需要 20 步限制",
-        "需要 30 步限制",
-        "暂时不限制"
-      ], "需要 30 步限制")
+      choiceQuestion(
+        "core_action",
+        "核心规则",
+        "格子玩法的核心解法是什么？",
+        ["推箱到位", "点亮所有格子", "有限步数收集目标"],
+        "有限步数收集目标"
+      ),
+      choiceQuestion(
+        "character_enemy_item",
+        "棋子与目标",
+        "玩家棋子、阻碍格和目标物分别是什么？",
+        ["光标 / 墙块 / 宝石", "机器人 / 箱子 / 出口", "魔法师 / 封印 / 符文"],
+        "光标 / 墙块 / 宝石"
+      )
     ],
     tower_defense: [
-      choiceQuestion("tower_types", "防御塔类型", "第一版需要哪些防御塔差异：快速、范围、减速，还是先只做一种？", [
-        "快速塔+范围塔",
-        "快速塔+减速塔",
-        "先只做一种基础塔"
-      ], "快速塔+范围塔"),
-      choiceQuestion("wave_pressure", "波次压力", "敌人波次应该是少量高血量，还是大量低血量？", [
-        "少量高血量",
-        "大量低血量",
-        "混合波次"
-      ], "混合波次")
+      choiceQuestion(
+        "core_action",
+        "防守方式",
+        "第一版希望玩家主要做哪种防守决策？",
+        ["放置快速塔和范围塔", "放置快速塔和减速塔", "先只做一种基础塔"],
+        "放置快速塔和范围塔"
+      ),
+      choiceQuestion(
+        "character_enemy_item",
+        "防御元素",
+        "防御塔、敌人和奖励资源分别是什么？",
+        ["炮塔 / 小怪 / 水晶", "弓塔 / 史莱姆 / 金币", "激光塔 / 无人机 / 能量"],
+        "炮塔 / 小怪 / 水晶"
+      )
     ],
     ui_heavy: [
-      choiceQuestion("choice_loop", "选择循环", "核心选择是卡牌组合、资源经营，还是剧情分支？", [
-        "卡牌组合",
-        "资源经营",
-        "剧情分支"
-      ], "卡牌组合"),
-      {
-        id: "round_goal",
-        label: "回合目标",
-        prompt: "每回合玩家要达成什么目标才算推进？",
-        inputType: "short_text",
-        defaultAnswer: "选择最优卡牌组合并让资源保持正增长",
-        required: true
-      }
+      choiceQuestion(
+        "core_action",
+        "选择循环",
+        "核心选择是卡牌组合、资源经营，还是剧情分支？",
+        ["卡牌组合", "资源经营", "剧情分支"],
+        "卡牌组合"
+      ),
+      choiceQuestion(
+        "character_enemy_item",
+        "界面元素",
+        "玩家主要管理哪些角色、资源或压力指标？",
+        ["英雄卡 / 能量 / 倒计时", "商店 / 金币 / 顾客耐心", "角色关系 / 线索 / 风险值"],
+        "英雄卡 / 能量 / 倒计时"
+      )
     ]
   };
 
-  const sharedQuestions = createSharedGuidedQuestions(templateFamily);
-  return [sharedQuestions[0], ...familyQuestions[templateFamily], sharedQuestions[1]];
+  return [
+    sharedQuestion("goal", templateFamily),
+    familyQuestions[templateFamily][0],
+    sharedQuestion("failure", templateFamily),
+    familyQuestions[templateFamily][1],
+    sharedQuestion("style_audio_pacing", templateFamily)
+  ];
 }
 
-function createSharedGuidedQuestions(templateFamily: TemplateFamily): DesignQuestion[] {
-  return [
-    {
+function sharedQuestion(id: "goal" | "failure" | "style_audio_pacing", templateFamily: TemplateFamily): DesignQuestion {
+  if (id === "goal") {
+    return {
       id: "goal",
       label: "胜利目标",
-      prompt: "玩家怎样算赢？",
+      prompt: "玩家怎样才算赢？请用一句话说明第一版的胜利目标。",
       inputType: "short_text",
       defaultAnswer:
         templateFamily === "platformer"
-          ? "到达终点并收集 6 枚金币"
+          ? "收集 6 枚金币并到达终点"
           : templateFamily === "tower_defense"
             ? "守住基地并击退 3 波敌人"
             : templateFamily === "grid_logic"
-              ? "在限制步数内完成目标状态"
-              : "收集 6 颗星星并避开所有危险物",
+              ? "在有限步数内完成目标状态"
+              : "收集 6 个目标物并避开所有危险物",
       required: true
-    },
-    {
+    };
+  }
+  if (id === "failure") {
+    return {
       id: "failure",
       label: "失败条件",
-      prompt: "玩家怎样会失败？",
+      prompt: "玩家遇到什么情况会失败？",
       inputType: "short_text",
       defaultAnswer:
         templateFamily === "tower_defense"
           ? "敌人突破基地生命值"
           : "碰到危险物或生命值耗尽",
       required: true
-    },
-    {
-      id: "style",
-      label: "美术风格",
-      prompt: "画面应该是什么风格？",
-      inputType: "single_choice",
-      options: ["霓虹科幻", "森林童话", "像素街机", "极简几何"],
-      defaultAnswer: "霓虹科幻",
-      required: true
-    },
-    {
-      id: "duration",
-      label: "单局时长",
-      prompt: "第一版试玩应该持续多久？",
-      inputType: "single_choice",
-      options: ["30 秒", "60 秒", "90 秒"],
-      defaultAnswer: "60 秒",
-      required: true
-    }
-  ];
+    };
+  }
+  return {
+    id: "style_audio_pacing",
+    label: "视听与节奏",
+    prompt: "画面风格、音效氛围和第一关节奏希望是什么？",
+    inputType: "single_choice",
+    options: [
+      "霓虹科幻 / 电子音效 / 30 秒快速上手",
+      "森林童话 / 轻快音效 / 60 秒渐进挑战",
+      "像素街机 / 复古音效 / 90 秒高压挑战",
+      "极简几何 / 清脆音效 / 45 秒专注体验"
+    ],
+    defaultAnswer: "霓虹科幻 / 电子音效 / 30 秒快速上手",
+    required: true
+  };
 }
 
 function choiceQuestion(

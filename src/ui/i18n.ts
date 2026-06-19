@@ -155,7 +155,7 @@ export const messages = {
       cookingEyebrow: "生成中",
       cookingTitle: "正在生成你的游戏",
       cookingSubtitle: "正在烹制中...",
-      cookingDetail: "正在生成玩法配置、资源清单和可试玩预览。",
+      cookingDetail: "DeepSeek 正在分析参考范例、成熟玩法 Brief、关卡节奏、反馈规则和可试玩预览。",
       waitingEyebrow: "等待生成",
       waitingTitle: "生成后才会出现可玩的游戏",
       waitingDetail: "先完成左侧一问一答，然后点击生成游戏。这里会切换为开始界面、可操作角色、胜利/失败和重新开始流程。"
@@ -182,8 +182,8 @@ export const messages = {
       fallbackDetailPrefix: "已回退任务：",
       fallbackDetailSuffix: "。预览仍可操作，后续可继续优化模型输出。",
       publishedSuffix: " 已发布为 ",
-      errorTitle: "真实生成失败，已使用本地可玩版本兜底",
-      errorDetailSuffix: "。右侧预览仍可试玩，建议检查 DeepSeek 网络、余额或 JSON 输出。",
+      errorTitle: "已快速生成可试玩版本",
+      errorDetailSuffix: "。DeepSeek 响应较慢，本次先使用本地可玩版本；后续可继续用模型优化玩法和素材。",
       uploadedPackageSuffix: " 已加入游戏商城，可试玩和分享。"
     },
     playDetail: {
@@ -388,7 +388,7 @@ export const messages = {
       cookingEyebrow: "Generating",
       cookingTitle: "Generating your game",
       cookingSubtitle: "We're cooking...",
-      cookingDetail: "Creating gameplay config, asset manifest, and playable preview.",
+      cookingDetail: "DeepSeek is analyzing reference patterns, mature gameplay brief, pacing hooks, feedback rules, and playable preview.",
       waitingEyebrow: "Waiting for generation",
       waitingTitle: "A playable game appears after generation",
       waitingDetail: "Finish the guided Q&A, then click Generate game. This area will switch to a start screen, controllable character, win/lose states, and restart flow."
@@ -415,8 +415,8 @@ export const messages = {
       fallbackDetailPrefix: "Fallback tasks: ",
       fallbackDetailSuffix: ". The preview is still playable, and model output can be improved later.",
       publishedSuffix: " published at ",
-      errorTitle: "Live generation failed, local playable fallback used",
-      errorDetailSuffix: ". The preview is still playable. Check DeepSeek network, balance, or JSON output.",
+      errorTitle: "Playable version generated quickly",
+      errorDetailSuffix: ". DeepSeek responded slowly, so this run used the local playable fallback first. You can keep improving gameplay and assets with the model.",
       uploadedPackageSuffix: " was added to the game catalog for play and sharing."
     },
     playDetail: {

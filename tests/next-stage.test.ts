@@ -44,7 +44,7 @@ describe("conversation flow", () => {
     let session = createConversationSession("做一个霓虹飞船躲避陨石并收集星星的小游戏");
 
     expect(session.stage).toBe("guided_questions");
-    expect(session.questions).toHaveLength(4);
+    expect(session.questions).toHaveLength(5);
     expect(session.turns.at(-1)?.role).toBe("assistant");
 
     for (const question of session.questions) {
