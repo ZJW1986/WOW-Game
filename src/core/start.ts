@@ -20,6 +20,13 @@ export interface StartUploadedMaterial {
   assetKey: string;
 }
 
+export interface StartTemplateTile {
+  templateFamily: TemplateFamily;
+  icon: string;
+  shortLabel: string;
+  hint: string;
+}
+
 export const modelOptions: Array<{ id: StartModelId; label: string; description: string }> = [
   {
     id: "deepseek-v4-flash",
@@ -45,6 +52,16 @@ export const templateOptions: Array<{ id: TemplateFamily; label: string; descrip
   { id: "tower_defense", label: "塔防", description: "路线、防守、波次、炮塔" },
   { id: "ui_heavy", label: "经营/卡牌", description: "菜单、卡牌、养成、对话" }
 ];
+
+export function createStartTemplateTiles(): StartTemplateTile[] {
+  return [
+    { templateFamily: "top_down", icon: "TD", shortLabel: "俯视角", hint: "躲避收集" },
+    { templateFamily: "platformer", icon: "JP", shortLabel: "平台跳跃", hint: "跳跃闯关" },
+    { templateFamily: "grid_logic", icon: "GR", shortLabel: "格子解谜", hint: "推演解题" },
+    { templateFamily: "tower_defense", icon: "DF", shortLabel: "塔防", hint: "路线防守" },
+    { templateFamily: "ui_heavy", icon: "UI", shortLabel: "经营卡牌", hint: "养成决策" }
+  ];
+}
 
 export function createStartGameDraft(input: {
   idea: string;

@@ -31,7 +31,7 @@ const TEMPLATE_SKILLS: Record<TemplateFamily, TemplateSkill> = {
   }),
   top_down: templateSkill("top_down", {
     requiredMechanics: ["free movement", "arena bounds", "collectibles", "chase hazards"],
-    supportedControls: ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"],
+    supportedControls: ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"],
     winModes: ["collect_score", "survive_timer"],
     failModes: ["hit_hazard"]
   }),

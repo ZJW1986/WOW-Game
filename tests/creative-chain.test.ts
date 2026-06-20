@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { createGenerationApiHandler } from "../src/services/generationApi";
+import { vi } from "vitest";
 import { createPromptForTask } from "../src/services/promptPack";
 
 function memoryStore() {
@@ -26,6 +27,69 @@ function designBriefFixture() {
     risks: ["第一版不复制原 ZIP 源码，只借鉴节奏和素材风格。"],
     questionFocus: ["玩法目标", "角色和障碍", "视觉风格", "音效氛围", "关卡节奏"],
     developerPrompt: "生成 top_down 模板小游戏：太空猫躲避陨石，收集鱼干，使用配置和素材协议实现。"
+  };
+}
+
+function confirmedAssetsFixture() {
+  return {
+    assets: [
+      {
+        slot: "background",
+        assetKey: "world.background",
+        type: "image",
+        label: "背景",
+        prompt: "background prompt",
+        style: "arcade",
+        purpose: "游戏背景",
+        acceptedFileTypes: ["image/*"],
+        previewUrl: "data:image/png;base64,bg",
+        fileUrl: "data:image/png;base64,bg",
+        source: "generated",
+        approvalStatus: "approved"
+      },
+      {
+        slot: "player",
+        assetKey: "player.ship",
+        type: "image",
+        label: "主角",
+        prompt: "player prompt",
+        style: "arcade",
+        purpose: "玩家角色",
+        acceptedFileTypes: ["image/*"],
+        previewUrl: "data:image/png;base64,player",
+        fileUrl: "data:image/png;base64,player",
+        source: "generated",
+        approvalStatus: "approved"
+      },
+      {
+        slot: "hazard",
+        assetKey: "hazard.enemy",
+        type: "image",
+        label: "危险物",
+        prompt: "hazard prompt",
+        style: "arcade",
+        purpose: "危险物",
+        acceptedFileTypes: ["image/*"],
+        previewUrl: "data:image/png;base64,hazard",
+        fileUrl: "data:image/png;base64,hazard",
+        source: "generated",
+        approvalStatus: "approved"
+      },
+      {
+        slot: "collectible",
+        assetKey: "item.collectible",
+        type: "image",
+        label: "收集物",
+        prompt: "collectible prompt",
+        style: "arcade",
+        purpose: "收集物",
+        acceptedFileTypes: ["image/*"],
+        previewUrl: "data:image/png;base64,item",
+        fileUrl: "data:image/png;base64,item",
+        source: "generated",
+        approvalStatus: "approved"
+      }
+    ]
   };
 }
 
@@ -229,10 +293,326 @@ describe("AI creative chain", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.body.assetCandidates.candidates).toHaveLength(5);
-    expect(response.body.assetCandidates.candidates[0].previewUrl).toContain("data:image/");
-    expect(response.body.assetCandidates.candidates.at(-1).previewUrl).toContain("data:application/json");
+    expect(response.body.assetCandidates.candidates).toHaveLength(4);
+    expect(response.body.assetCandidates.candidates.map((candidate: { slot: string }) => candidate.slot)).toEqual([
+      "background",
+      "player",
+      "hazard",
+      "collectible"
+    ]);
+    expect(response.body.assetCandidates.candidates.map((candidate: { assetKey: string }) => candidate.assetKey)).toEqual([
+      "world.background",
+      "player.ship",
+      "hazard.enemy",
+      "item.collectible"
+    ]);
+    expect(response.body.assetCandidates.candidates.every((candidate: { type: string }) => candidate.type === "image")).toBe(true);
+    expect(response.body.assetCandidates.candidates[0].previewUrl).toContain("/projects/asset-candidates/assets-");
     expect(response.body.confirmedAssets.assets.every((asset: { approvalStatus: string }) => asset.approvalStatus === "approved")).toBe(true);
+  });
+
+  it("uses DeepSeek image prompts to generate image candidate previews through Agnes", async () => {
+    const requests: Array<{ prompt?: string; size?: string }> = [];
+    const storeIO = memoryStore();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        headers: new Headers({ "content-type": "image/png" }),
+        arrayBuffer: async () => new Uint8Array([137, 80, 78, 71]).buffer
+      }))
+    );
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        DEEPSEEK_API_KEY: "server-key",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "agnes-key",
+        IMAGE_BASE_URL: "https://agnes.example"
+      },
+      storeIO,
+      fetcher: async ({ url, init }) => {
+        const body = JSON.parse(init.body);
+        if (String(url).includes("agnes.example")) {
+          requests.push(body);
+          return JSON.stringify({ data: [{ url: `https://cdn.example/${requests.length}.png` }] });
+        }
+        return JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  candidates: [
+                    {
+                      slot: "background",
+                      assetKey: "world.background",
+                      type: "image",
+                      label: "星空背景",
+                      prompt: "专业游戏背景图提示词：蓝紫色星云、清晰层次、2D 俯视角",
+                      style: "科幻",
+                      purpose: "游戏背景",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "player",
+                      assetKey: "player.ship",
+                      type: "image",
+                      label: "太空猫飞船",
+                      prompt: "专业角色素材提示词：透明背景太空猫飞船精灵",
+                      style: "可爱科幻",
+                      purpose: "玩家角色",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "hazard",
+                      assetKey: "hazard.enemy",
+                      type: "image",
+                      label: "陨石障碍",
+                      prompt: "专业障碍物提示词：红色边缘陨石",
+                      style: "街机",
+                      purpose: "危险物",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "collectible",
+                      assetKey: "item.collectible",
+                      type: "image",
+                      label: "鱼干能量",
+                      prompt: "专业收集物提示词：发光鱼干图标",
+                      style: "可爱",
+                      purpose: "得分道具",
+                      acceptedFileTypes: ["image/*"]
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "做一个太空猫躲避游戏",
+        templateFamily: "top_down",
+        model: "deepseek-v4-flash",
+        designBrief: designBriefFixture()
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(requests).toHaveLength(4);
+    expect(requests[0].prompt).toContain("专业游戏背景图提示词");
+    expect(response.body.assetCandidates.candidates[0].previewUrl).toContain(
+      "/projects/asset-candidates/assets-"
+    );
+    expect(response.body.assetCandidates.candidates[0].previewUrl).toContain(
+      "/assets/generated/original/world.background.png"
+    );
+    expect(response.body.assetCandidates.candidates[0].generationParams.originalRemoteUrl).toBe("https://cdn.example/1.png");
+    expect(response.body.assetCandidates.candidates[1].provider).toBe("agnes");
+    const saved = await storeIO.readBytes(
+      response.body.assetCandidates.candidates[0].previewUrl.replace(
+        "/projects/asset-candidates/",
+        "data-api-test/projects/asset-candidates/versions/"
+      ).replace("/assets/", "/assets/")
+    );
+    expect(saved).toBeTruthy();
+  });
+
+  it("rewrites generic English asset fallback into idea-specific Chinese core image candidates", async () => {
+    const requests: Array<{ prompt?: string }> = [];
+    const handler = createGenerationApiHandler({
+      env: {
+        DEEPSEEK_API_KEY: "server-key",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "agnes-key",
+        IMAGE_BASE_URL: "https://agnes.example"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ url, init }) => {
+        if (String(url).includes("agnes.example")) {
+          requests.push(JSON.parse(init.body));
+          return JSON.stringify({ data: [{ url: `https://cdn.example/${requests.length}.png` }] });
+        }
+        return JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  candidates: [
+                    {
+                      slot: "background",
+                      assetKey: "world.background",
+                      type: "image",
+                      label: "Sky Background",
+                      prompt: "A simple sky background for a platformer game",
+                      style: "test",
+                      purpose: "background",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "player",
+                      assetKey: "player.ship",
+                      type: "image",
+                      label: "Player Character",
+                      prompt: "A small blue square character",
+                      style: "test",
+                      purpose: "player",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "hazard",
+                      assetKey: "hazard.enemy",
+                      type: "image",
+                      label: "Spike Hazard",
+                      prompt: "A triangular spike shape",
+                      style: "test",
+                      purpose: "hazard",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "collectible",
+                      assetKey: "item.collectible",
+                      type: "image",
+                      label: "Coin Collectible",
+                      prompt: "A small coin",
+                      style: "test",
+                      purpose: "collectible",
+                      acceptedFileTypes: ["image/*"]
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "太空猫驾驶飞船躲避陨石，收集鱼干",
+        templateFamily: "top_down",
+        model: "deepseek-v4-flash",
+        designBrief: designBriefFixture()
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.assetCandidates.candidates.map((candidate: { label: string }) => candidate.label)).toEqual([
+      "太空背景",
+      "太空猫飞船",
+      "陨石危险物",
+      "鱼干收集物"
+    ]);
+    expect(response.body.assetCandidates.candidates.map((candidate: { prompt: string }) => candidate.prompt).join("\n")).toContain(
+      "太空猫驾驶飞船躲避陨石，收集鱼干"
+    );
+    expect(requests.map((request) => request.prompt).join("\n")).toContain("slot: player");
+    expect(new Set(requests.map((request) => request.prompt)).size).toBe(4);
+  });
+
+  it("marks asset candidates as failed when Agnes remote images cannot be localized", async () => {
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        DEEPSEEK_API_KEY: "server-key",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "agnes-key",
+        IMAGE_BASE_URL: "https://agnes.example"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ url }) => {
+        if (String(url).includes("agnes.example")) {
+          return JSON.stringify({ data: [{ url: "https://cdn.example/unreachable.png" }] });
+        }
+        return JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  candidates: [
+                    {
+                      slot: "background",
+                      assetKey: "world.background",
+                      type: "image",
+                      label: "星空背景",
+                      prompt: "专业游戏背景图提示词：蓝紫色星云",
+                      style: "科幻",
+                      purpose: "游戏背景",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "player",
+                      assetKey: "player.ship",
+                      type: "image",
+                      label: "太空猫飞船",
+                      prompt: "专业角色素材提示词：透明背景飞船",
+                      style: "可爱科幻",
+                      purpose: "玩家角色",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "hazard",
+                      assetKey: "hazard.enemy",
+                      type: "image",
+                      label: "陨石障碍",
+                      prompt: "专业障碍物提示词：红色边缘陨石",
+                      style: "街机",
+                      purpose: "危险物",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "collectible",
+                      assetKey: "item.collectible",
+                      type: "image",
+                      label: "鱼干能量",
+                      prompt: "专业收集物提示词：发光鱼干图标",
+                      style: "可爱",
+                      purpose: "得分道具",
+                      acceptedFileTypes: ["image/*"]
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        });
+      }
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 403,
+        headers: new Headers(),
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }))
+    );
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "做一个太空猫躲避游戏",
+        templateFamily: "top_down",
+        model: "deepseek-v4-flash",
+        designBrief: designBriefFixture()
+      }
+    });
+
+    expect(response.status).toBe(200);
+    const background = response.body.assetCandidates.candidates[0];
+    expect(background.fileUrl).toBe("");
+    expect(background.source).toBe("generated");
+    expect(background.error).toContain("Remote image could not be localized");
+    expect(response.body.confirmedAssets.assets).toHaveLength(0);
   });
 
   it("records revision analysis instead of silently appending follow-up text", async () => {
@@ -301,23 +681,7 @@ describe("AI creative chain", () => {
         projectId: "project-creative-chain",
         model: "mock-designer",
         designBrief: designBriefFixture(),
-        confirmedAssets: {
-          assets: [
-            {
-              slot: "player",
-              assetKey: "player.ship",
-              type: "image",
-              label: "太空猫飞船",
-              prompt: "透明背景太空猫飞船",
-              style: "可爱科幻",
-              purpose: "玩家角色",
-              acceptedFileTypes: ["image/*"],
-              previewUrl: "data:image/svg+xml,player",
-              fileUrl: "data:image/svg+xml,player",
-              source: "generated"
-            }
-          ]
-        },
+        confirmedAssets: confirmedAssetsFixture(),
         revisionHistory: [
           {
             understoodChange: "加强碰撞反馈",
@@ -350,3 +714,4 @@ describe("AI creative chain", () => {
     );
   });
 });
+

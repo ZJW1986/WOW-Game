@@ -18,12 +18,36 @@ export interface IdeaDialogModel {
 
 export interface IdeaDialogActionState {
   canGenerate: boolean;
+  canStartAssets: boolean;
   isPreparingAssets: boolean;
   buttonLabel: string;
   statusLabel: string;
 }
 
-export function buildIdeaDialogModel(session: ConversationSession): IdeaDialogModel {
+export interface IdeaDialogCopy {
+  readyForAssets: string;
+  generateAssets: string;
+  generate: string;
+  send: string;
+  statusConfirmAssets: string;
+  statusGenerateAssetsNext: string;
+  statusCoreAssetsConfirmed: string;
+}
+
+const defaultIdeaDialogCopy: IdeaDialogCopy = {
+  readyForAssets: "Information is complete. Generate assets first, then confirm materials before building the playable game.",
+  generateAssets: "Generate assets",
+  generate: "Generate game",
+  send: "Send",
+  statusConfirmAssets: "Confirm background, player, hazard, and collectible before generating the game.",
+  statusGenerateAssetsNext: "Questions are complete. Generate core assets next.",
+  statusCoreAssetsConfirmed: "Core assets confirmed. Generate the playable build."
+};
+
+export function buildIdeaDialogModel(
+  session: ConversationSession,
+  copy: IdeaDialogCopy = defaultIdeaDialogCopy
+): IdeaDialogModel {
   const turns: IdeaDialogTurn[] = [
     {
       id: "idea",
@@ -62,7 +86,7 @@ export function buildIdeaDialogModel(session: ConversationSession): IdeaDialogMo
   turns.push({
     id: "ready",
     role: "assistant",
-    content: "信息已经补齐，可以开始生成首版游戏。"
+    content: copy.readyForAssets
   });
 
   return {
@@ -79,35 +103,65 @@ export function readIdeaDialogActionState(input: {
   hasAssetCandidates: boolean;
   hasConfirmedAssets: boolean;
   creationPhase: string;
+  copy?: IdeaDialogCopy;
 }): IdeaDialogActionState {
+  const copy = input.copy ?? defaultIdeaDialogCopy;
   const hasAnsweredQuestions = input.session.answers.length >= input.session.questions.length;
   const isPreparingAssets =
     hasAnsweredQuestions &&
     input.hasDesignBrief &&
-    (!input.hasAssetCandidates || !input.hasConfirmedAssets) &&
+    input.hasAssetCandidates &&
+    !input.hasConfirmedAssets &&
     input.creationPhase !== "cooking" &&
     input.creationPhase !== "ready";
+
+  const canStartAssets =
+    hasAnsweredQuestions &&
+    input.hasDesignBrief &&
+    !input.hasAssetCandidates &&
+    ["chatting", "guided_questions", "asset_review", "revision"].includes(input.creationPhase);
+
   const canGenerate =
     hasAnsweredQuestions &&
-    ["chatting", "ai_thinking", "guided_questions", "asset_review", "ready_to_generate", "revision", "ready"].includes(input.creationPhase);
+    input.hasDesignBrief &&
+    input.hasConfirmedAssets &&
+    ["assets_confirmed", "ready"].includes(input.creationPhase);
 
   if (isPreparingAssets) {
     return {
-      canGenerate,
+      canGenerate: false,
+      canStartAssets: false,
       isPreparingAssets: true,
-      buttonLabel: "生成游戏",
-      statusLabel: "AI 正在生成素材提示词，不影响生成游戏"
+      buttonLabel: copy.generateAssets,
+      statusLabel: copy.statusConfirmAssets
+    };
+  }
+
+  if (canStartAssets) {
+    return {
+      canGenerate: false,
+      canStartAssets: true,
+      isPreparingAssets: false,
+      buttonLabel: copy.generateAssets,
+      statusLabel: copy.statusGenerateAssetsNext
+    };
+  }
+
+  if (canGenerate) {
+    return {
+      canGenerate: true,
+      canStartAssets: false,
+      isPreparingAssets: false,
+      buttonLabel: copy.generate,
+      statusLabel: copy.statusCoreAssetsConfirmed
     };
   }
 
   return {
-    canGenerate,
+    canGenerate: false,
+    canStartAssets: false,
     isPreparingAssets: false,
-    buttonLabel: canGenerate ? "生成游戏" : "发送",
-    statusLabel: canGenerate
-      ? input.hasDesignBrief
-        ? "信息已补齐，可以生成游戏"
-        : "信息已补齐，可用本地兜底方案生成游戏"
-      : ""
+    buttonLabel: copy.send,
+    statusLabel: ""
   };
 }

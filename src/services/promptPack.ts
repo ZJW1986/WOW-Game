@@ -28,7 +28,8 @@ export function createPromptForTask(
     "llm.guided_questions": [
       "Task: llm.guided_questions.",
       "Generate exactly 5 concise design questions using designBrief, previousAnswers, userMaterials, and referencePackageSummary when present.",
-      "The 5 questions must cover these five slots exactly once: win goal, core controls/action, fail condition, character/enemy/collectible identity, and combined visual style/audio mood/level pacing.",
+      "The 5 questions must cover these five required optimization slots exactly once: core gameplay goal, enemy/hazard behavior, level pacing, character/collectible identity, and reward/failure feedback.",
+      "Questions must be template-aware. Platformer should ask about platform rhythm, traps, reward path, and finish pressure. Top_down should ask about enemy pressure, dodge lanes, pickups, and wave escalation.",
       "Each question must help the player make a concrete design decision for a first playable 2D game.",
       'inputType must be "single_choice", "multi_choice", "short_text", or "number".',
       'Return exactly this JSON shape: {"questions":[{"id":"goal","label":"Goal","prompt":"...","inputType":"short_text","options":[],"defaultAnswer":"...","required":true}]}'
@@ -60,13 +61,38 @@ export function createPromptForTask(
       "Task: llm.game_hooks.",
       "Create config-only hook parameters for the locked Phaser template.",
       "Do not output JavaScript or TypeScript.",
-      'Return exactly this JSON shape: {"enemyRules":{"movement":"patrol","speed":120,"waveIntervalMs":0},"collectibleRules":{"placement":"arc","value":1,"respawn":false},"winCondition":{"mode":"collect_score","target":6},"failCondition":{"mode":"hit_hazard","lives":1},"numberTuning":{"playerSpeed":250,"jumpVelocity":430,"hazardSpeed":120},"levelLayout":{"platforms":[{"x":480,"y":510,"width":920,"height":28}],"lanes":[{"y":150,"speed":95,"count":3}],"grid":{"columns":0,"rows":0}},"collisionRules":{"collisionRadius":12,"invulnerabilityMs":520,"knockbackForce":160},"feedbackRules":{"particleCount":18,"screenShakeIntensity":0.012,"collectBurstCount":12},"spawnRules":{"hazardIntervalMs":900,"maxActiveHazards":6}}.',
-      'Allowed movement values: "static", "patrol", "chase", "wave". Do not include code strings.'
+      "Map designBrief, matureGameBrief, GDD, confirmedAssets, and gameConfig into concrete playable rules.",
+      "Do not use vague phrases. Every rule must be numeric or selected from the allowed enums.",
+      'Return exactly this JSON shape: {"enemyRules":{"movement":"patrol","speed":120,"waveIntervalMs":0},"collectibleRules":{"placement":"arc","value":1,"respawn":false},"winCondition":{"mode":"collect_score","target":6},"failCondition":{"mode":"hit_hazard","lives":1},"numberTuning":{"playerSpeed":250,"jumpVelocity":430,"hazardSpeed":120},"levelLayout":{"platforms":[{"x":480,"y":510,"width":920,"height":28}],"lanes":[{"y":150,"speed":95,"count":3}],"grid":{"columns":0,"rows":0}},"collisionRules":{"collisionRadius":12,"invulnerabilityMs":520,"knockbackForce":160},"feedbackRules":{"particleCount":18,"screenShakeIntensity":0.012,"collectBurstCount":12,"floatingScore":true,"comboText":true,"audioCueKeys":["sfx.collect","sfx.hit","sfx.win","sfx.lose"]},"spawnRules":{"hazardIntervalMs":900,"maxActiveHazards":6},"enemyArchetypes":[{"id":"chaser_1","type":"chaser","count":2,"speed":130,"spawnAfterMs":0,"laneY":260,"warningMs":300}],"attackRules":{"contactDamage":1,"dashDamage":0,"projectileSpeed":180,"projectileCooldownMs":1400,"explosionRadius":72,"explosionDelayMs":650,"warningMs":420},"stageGoals":[{"id":"teach","label":"Learn movement and collect the first reward","startsAtMs":0,"durationMs":5000,"objective":"learn_controls","target":1,"enemyMix":["patroller_1"],"rewardPacing":"slow"}],"impactRules":{"hitStopMs":80,"screenShakeIntensity":0.018,"explosionParticles":24,"knockbackForce":180,"invulnerabilityMs":650,"comboWindowMs":1800},"encounterTimeline":[{"atMs":5000,"trigger":"time","event":"spawn_wave","intensity":2,"message":"Hazard wave incoming"}]}.',
+      'Allowed movement values: "static", "patrol", "chase", "wave".',
+      'Allowed enemyArchetypes.type values: "chaser", "patroller", "charger", "shooter", "orbiter", "mine".',
+      'Allowed stage objective values: "learn_controls", "collect", "survive", "finale".',
+      'Allowed timeline event values: "spawn_wave", "spawn_mine", "projectile_burst", "reward_burst", "finale".',
+      "For top_down, include at least two enemy archetype types. For platformer, include patroller plus either charger or mine."
+    ].join("\n"),
+    "llm.gameplay_dsl": [
+      "Task: llm.gameplay_dsl.",
+      "Convert designBrief.developerPrompt, matureGameBrief, answers, gameConfig, gameHooks, and asset-pack into executable declarative gameplay rules.",
+      "Do not output JavaScript or TypeScript. Do not describe implementation in prose.",
+      "Every rule must use a declarative trigger and a whitelisted action.",
+      'Return exactly this JSON shape: {"version":"1","rules":[{"id":"score-wave","when":"score >= 3","do":"spawn_wave","enemyType":"charger","count":2,"message":"Enemy wave incoming"}]}.',
+      'Allowed when patterns: "timeMs >= 5000", "score >= 3".',
+      'Allowed do values: "spawn_wave", "spawn_mine", "projectile_burst", "reward_burst", "stage_change", "effect".',
+      'Allowed enemyType values: "chaser", "patroller", "charger", "shooter", "orbiter", "mine".',
+      'Allowed effect values: "screen_shake", "explosion", "collect_burst", "hit_flash".',
+      "For top_down, include at least one time-triggered pressure rule and one score-triggered reward or pressure rule.",
+      "For platformer, include at least one stage_change or reward_burst rule and one hazard pressure rule.",
+      "assetKey may only reference keys already present in asset-pack."
     ].join("\n"),
     "llm.asset_prompts": [
       "Task: llm.asset_prompts.",
       "Create confirmable asset candidates from designBrief, GDD, referencePackageSummary, and template constraints.",
-      "Return asset candidates for background, player, hazard, collectible, BGM, and SFX when relevant.",
+      "Return exactly four image asset candidates only: background, player, hazard, and collectible.",
+      "Do not create BGM, SFX, voice, audio, VFX, or effect candidates in this task.",
+      "Use these stable runtime keys: background=world.background, player=player.ship, hazard=hazard.enemy, collectible=item.collectible.",
+      "Each candidate prompt must be different and slot-specific. Include the user's idea, subject identity, composition, visual constraints, and negative constraints for that slot.",
+      "Never return generic placeholder concepts such as square, block, grid, default, test, platformer, sky background, player character, spike hazard, or coin collectible unless the user explicitly asked for them.",
+      "For sprite slots, request an isolated centered game sprite on solid chroma green background. For background, request a 16:9 scene and explicitly exclude foreground characters and UI text.",
       "Do not reference uploaded ZIP paths as final runtime asset keys. Use stable WOW Game asset keys.",
       'Return exactly this JSON shape: {"candidates":[{"slot":"player","assetKey":"player.ship","type":"image","label":"...","prompt":"...","style":"...","purpose":"...","acceptedFileTypes":["image/*"]}]}'
     ].join("\n"),

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGenerationApiHandler } from "../src/services/generationApi";
 import { zipSync, strToU8 } from "fflate";
+import sharp from "sharp";
 
 function memoryStore() {
   const writes = new Map<string, string>();
@@ -25,7 +26,135 @@ function zipBase64(files: Record<string, string>): string {
   return Buffer.from(zipped).toString("base64");
 }
 
+async function whiteBackgroundSpriteBytes(): Promise<ArrayBuffer> {
+  const svg = `
+    <svg width="96" height="96" xmlns="http://www.w3.org/2000/svg">
+      <rect width="96" height="96" fill="white"/>
+      <circle cx="48" cy="48" r="24" fill="#ff3355"/>
+    </svg>
+  `;
+  const buffer = await sharp(Buffer.from(svg)).png().toBuffer();
+  return toArrayBuffer(buffer);
+}
+
+async function backgroundBytes(): Promise<ArrayBuffer> {
+  const svg = `
+    <svg width="160" height="90" xmlns="http://www.w3.org/2000/svg">
+      <rect width="160" height="90" fill="#101828"/>
+      <circle cx="80" cy="45" r="28" fill="#22d3ee"/>
+    </svg>
+  `;
+  const buffer = await sharp(Buffer.from(svg)).jpeg().toBuffer();
+  return toArrayBuffer(buffer);
+}
+
+async function edgeTouchingSpriteBytes(): Promise<ArrayBuffer> {
+  const svg = `
+    <svg width="96" height="96" xmlns="http://www.w3.org/2000/svg">
+      <rect width="96" height="96" fill="white"/>
+      <circle cx="8" cy="48" r="24" fill="#ff7a18"/>
+    </svg>
+  `;
+  const buffer = await sharp(Buffer.from(svg)).png().toBuffer();
+  return toArrayBuffer(buffer);
+}
+
+function toArrayBuffer(buffer: Buffer): ArrayBuffer {
+  const arrayBuffer = new ArrayBuffer(buffer.byteLength);
+  new Uint8Array(arrayBuffer).set(buffer);
+  return arrayBuffer;
+}
+
+function confirmedAssetsFixture() {
+  return {
+    assets: [
+      {
+        slot: "background",
+        assetKey: "world.background",
+        type: "image",
+        label: "背景",
+        prompt: "background prompt",
+        style: "arcade",
+        purpose: "游戏背景",
+        acceptedFileTypes: ["image/*"],
+        previewUrl: "data:image/png;base64,bg",
+        fileUrl: "data:image/png;base64,bg",
+        source: "generated",
+        approvalStatus: "approved"
+      },
+      {
+        slot: "player",
+        assetKey: "player.ship",
+        type: "image",
+        label: "主角",
+        prompt: "player prompt",
+        style: "arcade",
+        purpose: "玩家角色",
+        acceptedFileTypes: ["image/*"],
+        previewUrl: "data:image/png;base64,player",
+        fileUrl: "data:image/png;base64,player",
+        source: "generated",
+        approvalStatus: "approved"
+      },
+      {
+        slot: "hazard",
+        assetKey: "hazard.enemy",
+        type: "image",
+        label: "危险物",
+        prompt: "hazard prompt",
+        style: "arcade",
+        purpose: "危险物",
+        acceptedFileTypes: ["image/*"],
+        previewUrl: "data:image/png;base64,hazard",
+        fileUrl: "data:image/png;base64,hazard",
+        source: "generated",
+        approvalStatus: "approved"
+      },
+      {
+        slot: "collectible",
+        assetKey: "item.collectible",
+        type: "image",
+        label: "收集物",
+        prompt: "collectible prompt",
+        style: "arcade",
+        purpose: "收集物",
+        acceptedFileTypes: ["image/*"],
+        previewUrl: "data:image/png;base64,item",
+        fileUrl: "data:image/png;base64,item",
+        source: "generated",
+        approvalStatus: "approved"
+      }
+    ]
+  };
+}
+
 describe("generation api handler", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("rejects playable generation before core assets are confirmed", async () => {
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test" },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/generate-playable",
+      body: {
+        idea: "做一个太空猫躲避陨石收集鱼干",
+        answers: [],
+        templateFamily: "top_down",
+        projectId: "project-without-confirmed-assets",
+        model: "mock-designer"
+      }
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("Core assets must be confirmed");
+  });
+
   it("generates a playable response through the backend-only DeepSeek boundary", async () => {
     const handler = createGenerationApiHandler({
       env: {
@@ -74,7 +203,8 @@ describe("generation api handler", () => {
         answers: [],
         templateFamily: "top_down",
         projectId: "project-api-1",
-        model: "deepseek-v4-flash"
+        model: "deepseek-v4-flash",
+        confirmedAssets: confirmedAssetsFixture()
       }
     });
 
@@ -124,7 +254,8 @@ describe("generation api handler", () => {
         answers: [],
         templateFamily: "top_down",
         projectId: "project-api-persisted",
-        model: "mock-designer"
+        model: "mock-designer",
+        confirmedAssets: confirmedAssetsFixture()
       }
     });
     const playResponse = await handler({
@@ -141,6 +272,567 @@ describe("generation api handler", () => {
     expect(playResponse.body.project.shareable).toBe(true);
     expect(playResponse.body.publishRecord.publicUrl).toBe(
       "https://wow-game.example/play/project-api-persisted/v1"
+    );
+  });
+
+  it("rejects remote confirmed image assets even when they are downloadable", async () => {
+    const remoteConfirmedAssets = confirmedAssetsFixture();
+    remoteConfirmedAssets.assets = remoteConfirmedAssets.assets.map((asset) => ({
+      ...asset,
+      fileUrl: `https://platform-outputs.agnes-ai.space/${asset.assetKey}.png`,
+      previewUrl: `https://platform-outputs.agnes-ai.space/${asset.assetKey}.png`,
+      provider: "agnes",
+      model: "agnes-image-2.1-flash"
+    }));
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test" },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/generate-playable",
+      body: {
+        idea: "make a neon spaceship dodge game",
+        answers: [],
+        templateFamily: "top_down",
+        projectId: "project-localized-assets",
+        model: "mock-designer",
+        confirmedAssets: remoteConfirmedAssets
+      }
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("Core assets must be localized");
+  });
+
+  it("rejects remote confirmed images when they cannot be localized", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 403,
+        headers: new Headers(),
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }))
+    );
+    const remoteConfirmedAssets = confirmedAssetsFixture();
+    remoteConfirmedAssets.assets = remoteConfirmedAssets.assets.map((asset) => ({
+      ...asset,
+      fileUrl: `https://platform-outputs.agnes-ai.space/${asset.assetKey}.png`,
+      previewUrl: `https://platform-outputs.agnes-ai.space/${asset.assetKey}.png`,
+      provider: "agnes",
+      model: "agnes-image-2.1-flash"
+    }));
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test" },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/generate-playable",
+      body: {
+        idea: "make a neon spaceship dodge game",
+        answers: [],
+        templateFamily: "top_down",
+        projectId: "project-unlocalized-assets",
+        model: "mock-designer",
+        confirmedAssets: remoteConfirmedAssets
+      }
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("Core assets must be localized");
+  });
+
+  it("rejects remote confirmed image urls before playable generation", async () => {
+    const remoteConfirmedAssets = confirmedAssetsFixture();
+    remoteConfirmedAssets.assets = remoteConfirmedAssets.assets.map((asset) => ({
+      ...asset,
+      fileUrl: `https://platform-outputs.agnes-ai.space/${asset.assetKey}.png`,
+      previewUrl: `https://platform-outputs.agnes-ai.space/${asset.assetKey}.png`,
+      provider: "agnes",
+      model: "agnes-image-2.1-flash"
+    }));
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test" },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/generate-playable",
+      body: {
+        idea: "make a neon spaceship dodge game",
+        answers: [],
+        templateFamily: "top_down",
+        projectId: "project-remote-assets-rejected",
+        model: "mock-designer",
+        confirmedAssets: remoteConfirmedAssets
+      }
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("Core assets must be localized");
+  });
+
+  it("normalizes drifting confirmed asset keys before saving the final asset-pack", async () => {
+    const driftingConfirmedAssets = confirmedAssetsFixture();
+    driftingConfirmedAssets.assets = driftingConfirmedAssets.assets.map((asset) =>
+      asset.slot === "hazard"
+        ? { ...asset, assetKey: "hazard.asteroid" }
+        : asset.slot === "player"
+          ? { ...asset, assetKey: "players.ship" }
+          : asset.slot === "background"
+            ? { ...asset, assetKey: "background.world.background" }
+            : asset
+    );
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test" },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/generate-playable",
+      body: {
+        idea: "make a neon spaceship dodge game",
+        answers: [],
+        templateFamily: "top_down",
+        projectId: "project-invalid-final-assets",
+        model: "mock-designer",
+        confirmedAssets: driftingConfirmedAssets
+      }
+    });
+
+    expect(response.status).toBe(200);
+    const hazard = response.body.project.assetPack.assets.find(
+      (asset: { assetKey: string }) => asset.assetKey === "hazard.enemy"
+    );
+    const player = response.body.project.assetPack.assets.find(
+      (asset: { assetKey: string }) => asset.assetKey === "player.ship"
+    );
+    const background = response.body.project.assetPack.assets.find(
+      (asset: { assetKey: string }) => asset.assetKey === "world.background"
+    );
+    expect(response.body.runtimeAssetReport.ready).toBe(true);
+    expect(background.fileUrl).toBe("data:image/png;base64,bg");
+    expect(player.fileUrl).toBe("data:image/png;base64,player");
+    expect(hazard.fileUrl).toBe("data:image/png;base64,hazard");
+    expect(hazard.generationParams.candidateLabel).toBeTruthy();
+  });
+
+  it("localizes Agnes sprite candidates as processed transparent PNGs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const isBackground = url.includes("background");
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": isBackground ? "image/jpeg" : "image/png" }),
+          arrayBuffer: async () => (isBackground ? backgroundBytes() : whiteBackgroundSpriteBytes())
+        };
+      })
+    );
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        DEEPSEEK_API_KEY: "server-key",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "image-key",
+        IMAGE_BASE_URL: "https://agnes.test",
+        IMAGE_ENDPOINT: "/v1/images/generations"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as { prompt?: string };
+        const prompt = body.prompt ?? "";
+        if (!prompt.includes("world.background")) {
+          expect(prompt).toContain("solid chroma");
+          expect(prompt).toContain("no shadow");
+          expect(prompt).toContain("no border");
+        }
+        const fileName = prompt.includes("world.background")
+          ? "background.jpg"
+          : prompt.includes("hazard.enemy")
+            ? "hazard.png"
+            : prompt.includes("item.collectible")
+              ? "collectible.png"
+              : "player.png";
+        return JSON.stringify({ data: [{ url: `https://assets.test/${fileName}` }] });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "make a neon spaceship dodge game",
+        templateFamily: "top_down",
+        model: "mock-designer"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    const player = response.body.assetCandidates.candidates.find(
+      (candidate: { slot: string }) => candidate.slot === "player"
+    );
+    expect(player.fileUrl).toContain(".cutout.png");
+    expect(player.previewUrl).toBe(player.fileUrl);
+    expect(player.validationStatus).toBe("passed");
+    expect(player.generationParams.cutoutApplied).toBe(true);
+    expect(player.generationParams.originalLibraryUrl).toContain("/original/");
+    expect(player.generationParams.processedLibraryUrl).toContain("/processed/");
+    expect(response.body.confirmedAssets.assets.some((asset: { fileUrl: string }) => asset.fileUrl === player.fileUrl)).toBe(true);
+  });
+
+  it("keeps edge-residue cutout sprites usable as warnings instead of blocking generation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const isBackground = url.includes("background");
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": isBackground ? "image/jpeg" : "image/png" }),
+          arrayBuffer: async () => (isBackground ? backgroundBytes() : edgeTouchingSpriteBytes())
+        };
+      })
+    );
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        DEEPSEEK_API_KEY: "server-key",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "image-key",
+        IMAGE_BASE_URL: "https://agnes.test",
+        IMAGE_ENDPOINT: "/v1/images/generations"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as { prompt?: string };
+        const prompt = body.prompt ?? "";
+        const fileName = prompt.includes("world.background")
+          ? "background.jpg"
+          : prompt.includes("hazard.enemy")
+            ? "hazard.png"
+            : prompt.includes("item.collectible")
+              ? "collectible.png"
+              : "player.png";
+        return JSON.stringify({ data: [{ url: `https://assets.test/${fileName}` }] });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "make a neon spaceship dodge game",
+        templateFamily: "top_down",
+        model: "mock-designer"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    const hazard = response.body.assetCandidates.candidates.find(
+      (candidate: { slot: string }) => candidate.slot === "hazard"
+    );
+    expect(hazard.fileUrl).toContain(".cutout.png");
+    expect(hazard.validationStatus).not.toBe("failed");
+    expect(hazard.error).toBeUndefined();
+    expect(response.body.confirmedAssets.assets.some((asset: { slot: string }) => asset.slot === "hazard")).toBe(true);
+  });
+
+  it("regenerates only one asset candidate slot", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "image/png" }),
+        arrayBuffer: async () => whiteBackgroundSpriteBytes()
+      }))
+    );
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        DEEPSEEK_API_KEY: "server-key",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "image-key",
+        IMAGE_BASE_URL: "https://agnes.test",
+        IMAGE_ENDPOINT: "/v1/images/generations"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as { prompt?: string };
+        expect(body.prompt).toContain("player only prompt");
+        return JSON.stringify({ data: [{ url: "https://assets.test/player-only.png" }] });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/regenerate-asset-candidate",
+      body: {
+        idea: "make a neon spaceship dodge game",
+        templateFamily: "top_down",
+        candidate: {
+          slot: "player",
+          assetKey: "player.ship",
+          type: "image",
+          label: "Player",
+          prompt: "player only prompt",
+          style: "arcade",
+          purpose: "player sprite",
+          acceptedFileTypes: ["image/*"],
+          previewUrl: "",
+          fileUrl: "",
+          source: "generated"
+        }
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.assetCandidate.slot).toBe("player");
+    expect(response.body.assetCandidate.fileUrl).toContain("player.ship.cutout.png");
+    expect(response.body.assetCandidate.validationStatus).toBe("passed");
+  });
+
+  it("returns final slot-specific prompts that match the Agnes prompt context", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": url.includes("background") ? "image/jpeg" : "image/png" }),
+        arrayBuffer: async () => (url.includes("background") ? backgroundBytes() : whiteBackgroundSpriteBytes())
+      }))
+    );
+    const agnesPrompts: string[] = [];
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        DEEPSEEK_API_KEY: "server-key",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "image-key",
+        IMAGE_BASE_URL: "https://agnes.test",
+        IMAGE_ENDPOINT: "/v1/images/generations"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ url, init }) => {
+        if (String(url).includes("agnes.test")) {
+          const body = JSON.parse(init.body) as { prompt?: string };
+          const prompt = body.prompt ?? "";
+          agnesPrompts.push(prompt);
+          const fileName = prompt.includes("world.background")
+            ? "background.jpg"
+            : prompt.includes("hazard.enemy")
+              ? "hazard.png"
+              : prompt.includes("item.collectible")
+                ? "collectible.png"
+                : "player.png";
+          return JSON.stringify({ data: [{ url: `https://assets.test/${fileName}` }] });
+        }
+        return JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  candidates: ["background", "player", "hazard", "collectible"].map((slot) => ({
+                    slot,
+                    assetKey:
+                      slot === "background"
+                        ? "world.background"
+                        : slot === "player"
+                          ? "player.ship"
+                          : slot === "hazard"
+                            ? "hazard.enemy"
+                            : "item.collectible",
+                    type: "image",
+                    label: `${slot} test`,
+                    prompt: "开发一个基于网格的翻转格子谜题游戏。初始网格为5x5，所有格子状态为暗色。",
+                    style: "test",
+                    purpose: "test",
+                    acceptedFileTypes: ["image/*"]
+                  }))
+                })
+              }
+            }
+          ]
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "太空猫驾驶飞船躲避陨石并收集鱼干",
+        templateFamily: "top_down",
+        model: "deepseek-v4-flash",
+        answers: [
+          { questionId: "role", value: "主角是太空猫飞船，危险物是陨石，收集物是鱼干。" }
+        ]
+      }
+    });
+
+    expect(response.status).toBe(200);
+    const prompts = response.body.assetCandidates.candidates.map((candidate: { prompt: string }) => candidate.prompt);
+    expect(new Set(prompts).size).toBe(4);
+    expect(prompts.every((prompt: string) => prompt.includes("太空猫驾驶飞船躲避陨石并收集鱼干"))).toBe(true);
+    for (const candidate of response.body.assetCandidates.candidates as Array<{ prompt: string; generationParams: Record<string, string> }>) {
+      expect(candidate.generationParams.finalPrompt).toBe(candidate.prompt);
+      expect(candidate.generationParams.modelPrompt).toContain("翻转格子");
+      expect(agnesPrompts.some((prompt) => prompt.includes(candidate.prompt))).toBe(true);
+    }
+  });
+
+  it("uses unique asset candidate URLs for separate generation batches", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": url.includes("background") ? "image/jpeg" : "image/png" }),
+        arrayBuffer: async () => (url.includes("background") ? backgroundBytes() : whiteBackgroundSpriteBytes())
+      }))
+    );
+    let requestCount = 0;
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "image-key",
+        IMAGE_BASE_URL: "https://agnes.test",
+        IMAGE_ENDPOINT: "/v1/images/generations"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ init }) => {
+        requestCount += 1;
+        const body = JSON.parse(init.body) as { prompt?: string };
+        const prompt = body.prompt ?? "";
+        const fileName = prompt.includes("world.background")
+          ? "background.jpg"
+          : prompt.includes("hazard.enemy")
+            ? "hazard.png"
+            : prompt.includes("item.collectible")
+              ? "collectible.png"
+              : "player.png";
+        return JSON.stringify({ data: [{ url: `https://assets.test/${requestCount}-${fileName}` }] });
+      }
+    });
+
+    const body = {
+      idea: "太空猫驾驶飞船躲避陨石并收集鱼干",
+      templateFamily: "top_down",
+      model: "mock-designer"
+    };
+    const first = await handler({ method: "POST", path: "/api/asset-candidates", body });
+    const second = await handler({ method: "POST", path: "/api/asset-candidates", body });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const firstUrls = first.body.assetCandidates.candidates.map((candidate: { fileUrl: string }) => candidate.fileUrl);
+    const secondUrls = second.body.assetCandidates.candidates.map((candidate: { fileUrl: string }) => candidate.fileUrl);
+    expect(firstUrls).not.toEqual(secondUrls);
+    expect(firstUrls.every((url: string) => url.includes("/asset-candidates/assets-"))).toBe(true);
+    expect(secondUrls.every((url: string) => url.includes("/asset-candidates/assets-"))).toBe(true);
+  });
+
+  it("processes uploaded replacement images through the cutout pipeline", async () => {
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test" },
+      storeIO: memoryStore()
+    });
+    const bytes = Buffer.from(await whiteBackgroundSpriteBytes()).toString("base64");
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/process-uploaded-material",
+      body: {
+        idea: "make a neon spaceship dodge game",
+        templateFamily: "top_down",
+        slot: "hazard",
+        assetKey: "hazard.enemy",
+        fileName: "asteroid.png",
+        fileBase64: bytes,
+        contentType: "image/png",
+        label: "Uploaded asteroid",
+        prompt: "uploaded asteroid",
+        style: "neon"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.assetCandidate.slot).toBe("hazard");
+    expect(response.body.assetCandidate.source).toBe("uploaded");
+    expect(response.body.assetCandidate.fileUrl).toContain(".cutout.png");
+    expect(response.body.assetCandidate.previewUrl).toBe(response.body.assetCandidate.fileUrl);
+    expect(response.body.assetCandidate.validationStatus).toBe("passed");
+    expect(response.body.assetCandidate.generationParams.cutoutApplied).toBe(true);
+  });
+
+  it("normalizes uploaded replacement keys to the runtime slot contract", async () => {
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test" },
+      storeIO: memoryStore()
+    });
+    const bytes = Buffer.from(await whiteBackgroundSpriteBytes()).toString("base64");
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/process-uploaded-material",
+      body: {
+        idea: "make a neon spaceship dodge game",
+        templateFamily: "top_down",
+        slot: "player",
+        assetKey: "players.ship",
+        fileName: "ship.png",
+        fileBase64: bytes,
+        contentType: "image/png",
+        label: "Uploaded ship",
+        prompt: "uploaded ship",
+        style: "neon"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.assetCandidate.assetKey).toBe("player.ship");
+    expect(response.body.assetCandidate.fileUrl).toContain("player.ship.cutout.png");
+  });
+
+  it("returns delivery reports and a playable director for generated games", async () => {
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-api-test", PUBLIC_BASE_URL: "https://wow-game.example" },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/generate-playable",
+      body: {
+        idea: "做一个飞船躲避陨石并收集星星的小游戏",
+        answers: [],
+        templateFamily: "top_down",
+        projectId: "project-delivery-report",
+        baseUrl: "https://wow-game.example",
+        model: "mock-designer",
+        confirmedAssets: confirmedAssetsFixture()
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.deliveryReady).toBe(true);
+    expect(response.body.runtimeAssetReport.ready).toBe(true);
+    expect(response.body.verificationReport.passed).toBe(true);
+    expect(response.body.project.artifacts.map((artifact: { fileName: string }) => artifact.fileName)).toEqual(
+      expect.arrayContaining([
+        "playable-director.json",
+        "runtime-asset-report.json",
+        "browser-verification-report.json"
+      ])
     );
   });
 
@@ -221,7 +913,8 @@ describe("generation api handler", () => {
         answers: [],
         templateFamily: "platformer",
         projectId: "project-api-feedback",
-        model: "mock-designer"
+        model: "mock-designer",
+        confirmedAssets: confirmedAssetsFixture()
       }
     });
     const feedbackResponse = await handler({
@@ -365,7 +1058,8 @@ describe("generation api handler", () => {
         projectId: "project-reference-generated",
         model: "deepseek-v4-flash",
         referencePackageId: uploadResponse.body.project.id,
-        referenceVersionId: "v1"
+        referenceVersionId: "v1",
+        confirmedAssets: confirmedAssetsFixture()
       }
     });
 
@@ -402,7 +1096,8 @@ describe("generation api handler", () => {
         projectId: "project-missing-reference",
         model: "mock-designer",
         referencePackageId: "missing-package",
-        referenceVersionId: "v1"
+        referenceVersionId: "v1",
+        confirmedAssets: confirmedAssetsFixture()
       }
     });
 

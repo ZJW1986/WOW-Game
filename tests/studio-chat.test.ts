@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runMockPipeline } from "../src/core/pipeline";
+import { answerDesignQuestion, createConversationSession } from "../src/core/conversation";
 import { getMessages } from "../src/ui/i18n";
-import { createConversationSession, answerDesignQuestion } from "../src/core/conversation";
 import { buildStudioChatMessages } from "../src/ui/studioChat";
 
 describe("studio chat message layout", () => {
@@ -11,7 +11,7 @@ describe("studio chat message layout", () => {
       idea: "做一个飞船躲避陨石并收集星星的小游戏",
       project,
       messages: getMessages("zh-CN"),
-      phase: "ready_to_generate",
+      phase: "ready",
       followups: [
         {
           id: "followup-1",
@@ -21,12 +21,7 @@ describe("studio chat message layout", () => {
       ]
     });
 
-    expect(messages.map((message) => message.role)).toEqual([
-      "assistant",
-      "user",
-      "user",
-      "assistant"
-    ]);
+    expect(messages.map((message) => message.role)).toEqual(["assistant", "user", "user", "assistant"]);
     expect(messages[1].content).toBe("做一个飞船躲避陨石并收集星星的小游戏");
     expect(messages[2].content).toBe("增加一个限时模式");
     expect(messages[3].content).toContain(project.gameConfig.playerGoal);
@@ -39,7 +34,7 @@ describe("studio chat message layout", () => {
       idea: "做一个飞船躲避陨石并收集星星的小游戏\n补充需求：增加一个限时模式",
       project,
       messages: getMessages("zh-CN"),
-      phase: "ready_to_generate",
+      phase: "chatting",
       followups: []
     });
 
@@ -69,7 +64,7 @@ describe("studio chat message layout", () => {
 
   it("deduplicates repeated follow-up submissions in the chat stream", () => {
     const project = runMockPipeline("做一个跳跃小游戏");
-    const repeated = "已上传素材，替换 主角:ball01.png";
+    const repeated = "已上传素材，替换主角: ball01.png";
     const messages = buildStudioChatMessages({
       idea: "做一个跳跃小游戏",
       project,
@@ -105,29 +100,9 @@ describe("studio chat message layout", () => {
     expect(messages.some((message) => message.role === "user" && message.content.includes("收集 8 颗星星"))).toBe(
       true
     );
-    expect(messages.some((message) => message.role === "assistant" && message.content === session.questions[1].prompt)).toBe(
-      true
-    );
-  });
-
-  it("announces readiness when all guided questions are answered", () => {
-    const project = runMockPipeline("生成一个飞机小游戏");
-    const session = createConversationSession("生成一个飞机小游戏");
-    const answered = session.questions.reduce(
-      (current, question) => answerDesignQuestion(current, question.id, question.defaultAnswer),
-      session
-    );
-    const messages = buildStudioChatMessages({
-      idea: session.idea,
-      project,
-      messages: getMessages("zh-CN"),
-      phase: "ready_to_generate",
-      followups: [],
-      session: answered
-    });
-
-    expect(messages.at(-1)?.content).toContain("可以开始生成首版游戏");
-    expect(messages.at(-1)?.content).toContain(project.gameConfig.playerGoal);
+    expect(
+      messages.some((message) => message.role === "assistant" && message.content === session.questions[1].prompt)
+    ).toBe(true);
   });
 
   it("shows uploaded zip reference as a separate system turn", () => {
@@ -141,6 +116,50 @@ describe("studio chat message layout", () => {
       referencePackageName: "飞机大战参考包"
     });
 
-    expect(messages.some((message) => message.role === "system" && message.content === "已参考：飞机大战参考包")).toBe(true);
+    expect(messages.some((message) => message.role === "system" && message.content === "已参考：飞机大战参考包")).toBe(
+      true
+    );
+  });
+
+  it("does not append playable-ready copy during asset generation or review", () => {
+    const project = runMockPipeline("做一个太空猫躲避陨石的小游戏");
+    const loadingMessages = buildStudioChatMessages({
+      idea: "做一个太空猫躲避陨石的小游戏",
+      project,
+      messages: getMessages("zh-CN"),
+      phase: "asset_generating",
+      followups: [],
+      assetCandidateStatus: "loading"
+    });
+    const reviewMessages = buildStudioChatMessages({
+      idea: "做一个太空猫躲避陨石的小游戏",
+      project,
+      messages: getMessages("zh-CN"),
+      phase: "asset_review",
+      followups: [],
+      assetCandidates: {
+        candidates: [
+          {
+            slot: "player",
+            assetKey: "player.ship",
+            type: "image",
+            label: "太空猫飞船",
+            prompt: "太空猫飞船，透明背景",
+            style: "未来科技",
+            purpose: "玩家角色",
+            acceptedFileTypes: ["image/*"],
+            previewUrl: "data:image/svg+xml;base64,abc",
+            fileUrl: "data:image/svg+xml;base64,abc",
+            source: "generated"
+          }
+        ]
+      },
+      assetCandidateStatus: "ready"
+    });
+
+    expect(loadingMessages.some((message) => message.id === "asset-candidates-loading")).toBe(true);
+    expect(reviewMessages.some((message) => message.id === "asset-candidates")).toBe(true);
+    expect(loadingMessages.map((message) => message.content).join("\n")).not.toContain("成熟体验");
+    expect(reviewMessages.map((message) => message.content).join("\n")).not.toContain("成熟体验");
   });
 });

@@ -17,6 +17,7 @@ import {
   designBriefSchema,
   gameConfigSchema,
   gameHooksSchema,
+  gameplayDslSchema,
   gddSchema,
   guidedQuestionsSchema,
   matureGameBriefSchema,
@@ -26,16 +27,21 @@ import type {
   AssetCandidate,
   AssetCandidates,
   AssetPack,
+  AssetRequirement,
+  BrowserVerificationReport,
   ConfirmedAssets,
   DesignBrief,
   DesignQuestion,
   GameConfig,
   GameHooks,
+  GameplayDsl,
   MatureGameBrief,
   MockProject,
+  PlayableDirector,
   PlayFeedback,
   PublishRecord,
   ReferencePackageSummary,
+  RuntimeAssetReport,
   RevisionAnalysis,
   TemplateFamily,
   UserMaterial,
@@ -49,6 +55,12 @@ import { createPromptForTask } from "./promptPack";
 import { createAgnesImageProvider } from "./agnesImageProvider";
 import { runDynamicVerification } from "./verificationBench";
 import { getReferenceGamePattern } from "./referenceGamePatterns";
+import { createRuntimeAssetReport } from "../ui/previewAssets";
+import {
+  createVisualAssetReport,
+  validateCoreAssetCandidate
+} from "./visualAssetValidation";
+import { compileGameplayDsl } from "./gameplayDsl";
 
 export interface GeneratePlayableInput {
   idea: string;
@@ -85,6 +97,13 @@ export interface GenerateDesignBriefInput {
 
 export interface GenerateAssetCandidatesInput extends GenerateDesignBriefInput {
   designBrief?: DesignBrief;
+  answers?: UserAnswer[];
+}
+
+export interface RegenerateAssetCandidateInput {
+  idea: string;
+  templateFamily: TemplateFamily;
+  candidate: AssetCandidate;
 }
 
 export interface GenerateRevisionAnalysisInput extends GenerateDesignBriefInput {
@@ -98,6 +117,7 @@ export interface GenerationServiceOptions {
   deepseekBaseUrl?: string;
   fetcher?: DeepSeekExecutorOptions["fetcher"];
   mediaGateway?: MediaGatewayOptions;
+  runtimeEnv?: Record<string, string | undefined>;
 }
 
 export interface SharePayload {
@@ -120,7 +140,8 @@ type GenerationModelTask =
   | GatewayResult<ReturnType<typeof gddSchema.parse>>
   | GatewayResult<ReturnType<typeof matureGameBriefSchema.parse>>
   | GatewayResult<ReturnType<typeof gameConfigSchema.parse>>
-  | GatewayResult<ReturnType<typeof gameHooksSchema.parse>>;
+  | GatewayResult<ReturnType<typeof gameHooksSchema.parse>>
+  | GatewayResult<ReturnType<typeof gameplayDslSchema.parse>>;
 
 const generatedAssetCandidatesSchema = assetCandidatesSchema.transform(
   (value): AssetCandidates =>
@@ -129,13 +150,14 @@ const generatedAssetCandidatesSchema = assetCandidatesSchema.transform(
         ...candidate,
         previewUrl: candidate.previewUrl ?? "",
         fileUrl: candidate.fileUrl ?? "",
-        source: candidate.source ?? "generated"
+        source: candidate.source ?? "generated",
+        approvalStatus: candidate.approvalStatus ?? "pending"
       }))
     })
 );
 
 export function createGenerationService(options: GenerationServiceOptions = {}) {
-  const env = readRuntimeEnv();
+  const env = options.runtimeEnv ?? readRuntimeEnv();
   const apiKey = options.deepseekApiKey ?? env.DEEPSEEK_API_KEY;
   const baseUrl = options.deepseekBaseUrl ?? env.DEEPSEEK_BASE_URL;
   const executor = createDeepSeekExecutor({
@@ -156,7 +178,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
     }
   });
   const mediaGateway = createMediaGateway({
-    ...createMediaGatewayOptionsFromEnv(env),
+    ...createMediaGatewayOptions(env, options.fetcher),
     ...options.mediaGateway
   });
 
@@ -231,7 +253,8 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         preprocess: (raw) => withCandidatePreviews(normalizeAssetCandidates(raw, fallback)),
         fallback
       });
-      const assetCandidates = task.output;
+      const parsedCandidates = normalizeCoreImageCandidates(generatedAssetCandidatesSchema.parse(task.output), fallback);
+      const assetCandidates = await generateCandidateMedia(parsedCandidates, input.templateFamily, mediaGateway, input);
       return {
         assetCandidates,
         confirmedAssets: confirmedAssetsSchema.parse({
@@ -242,6 +265,18 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         }),
         modelTask: task,
         fallbackUsed: task.status === "fallback"
+      };
+    },
+
+    async regenerateAssetCandidate(input: RegenerateAssetCandidateInput) {
+      const assetCandidates = await generateCandidateMedia(
+        { candidates: [input.candidate] },
+        input.templateFamily,
+        mediaGateway,
+        input
+      );
+      return {
+        assetCandidate: assetCandidates.candidates[0]
       };
     },
 
@@ -302,9 +337,15 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       });
       modelTasks.push(classificationTask);
       trackFallback(classificationTask, fallbacksUsed);
+      const classification = lockClassificationToPlayableIntent(
+        classificationTask.output,
+        input.idea,
+        input.templateFamily,
+        fallbacksUsed
+      );
 
-      const referencePattern = getReferenceGamePattern(classificationTask.output.templateFamily);
-      const fallbackMatureGameBrief = createFallbackMatureGameBrief(classificationTask.output.templateFamily);
+      const referencePattern = getReferenceGamePattern(classification.templateFamily);
+      const fallbackMatureGameBrief = createFallbackMatureGameBrief(classification.templateFamily);
       const matureBriefTask = await gateway.runModelTask({
         taskType: "llm.mature_game_brief",
         provider,
@@ -315,7 +356,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           designBrief: input.designBrief,
           confirmedAssets: input.confirmedAssets,
           revisionHistory: input.revisionHistory,
-          classification: classificationTask.output,
+          classification,
           referencePattern,
           referencePackageSummary: input.referencePackageSummary,
           userMaterials: input.userMaterials
@@ -352,32 +393,37 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
 
       const assetStyleGuide = createAssetStyleGuide({
         title: mockProject.title,
-        templateFamily: classificationTask.output.templateFamily,
+        templateFamily: classification.templateFamily,
         gdd: gddTask.output
       });
-      const assetRequirements = createAssetRequirements(classificationTask.output.templateFamily).map(
+      const assetRequirements = createAssetRequirements(classification.templateFamily).map(
         (requirement) => ({
           ...requirement,
           style: `${assetStyleGuide.visualStyle}; ${requirement.style}`,
           prompt: assetStyleGuide.assetPrompts[requirement.assetKey] ?? requirement.prompt
         })
       );
+      const preboundAssets = applyConfirmedAssets(
+        applyUserMaterials(assetRequirements, input.userMaterials ?? []),
+        input.confirmedAssets
+      );
       const generatedAssets = await Promise.all(
-        assetRequirements.map((requirement) =>
-          mediaGateway.generateProjectAsset(input.projectId, "v1", requirement)
-        )
+        preboundAssets.map((requirement) => {
+          if (isResolvedRuntimeAsset(requirement)) return Promise.resolve(requirement);
+          if (isOptionalImageRequirement(requirement)) {
+            return Promise.resolve(mediaGateway.generateProceduralAsset(input.projectId, "v1", requirement));
+          }
+          return mediaGateway.generateProjectAsset(input.projectId, "v1", requirement);
+        })
       );
       const assetPack: AssetPack = {
         versionId: "v1",
-        assets: applyConfirmedAssets(
-          applyUserMaterials(generatedAssets, input.userMaterials ?? []),
-          input.confirmedAssets
-        )
+        assets: generatedAssets
       };
 
       const fallbackConfig = {
         ...mockProject.gameConfig,
-        templateFamily: classificationTask.output.templateFamily
+        templateFamily: classification.templateFamily
       };
       const configTask = await gateway.runModelTask({
         taskType: "llm.game_config",
@@ -389,7 +435,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           designBrief: input.designBrief,
           confirmedAssets: input.confirmedAssets,
           revisionHistory: input.revisionHistory,
-          classification: classificationTask.output,
+          classification,
           matureGameBrief: matureBriefTask.output,
           gdd: gddTask.output,
           assetPack,
@@ -402,7 +448,19 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       modelTasks.push(configTask);
       trackFallback(configTask, fallbacksUsed);
 
-      const gameConfig = sanitizeGameConfig(configTask.output, assetPack);
+      const sanitizedGameConfig = sanitizeGameConfig(
+        alignGameConfigToTemplate({ ...configTask.output, templateFamily: classification.templateFamily }),
+        assetPack
+      );
+      const gameConfig = {
+        ...sanitizedGameConfig,
+        title: normalizeGeneratedTitle(
+          sanitizedGameConfig.title,
+          input.idea,
+          input.designBrief,
+          configTask.status === "fallback" || model === "mock-designer"
+        )
+      };
       const fallbackHooks = createFallbackGameHooks(gameConfig);
       const hooksTask = await gateway.runModelTask({
         taskType: "llm.game_hooks",
@@ -414,7 +472,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           designBrief: input.designBrief,
           confirmedAssets: input.confirmedAssets,
           revisionHistory: input.revisionHistory,
-          classification: classificationTask.output,
+          classification,
           gdd: gddTask.output,
           matureGameBrief: matureBriefTask.output,
           gameConfig,
@@ -427,7 +485,41 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       modelTasks.push(hooksTask);
       trackFallback(hooksTask, fallbacksUsed);
 
-      const gameHooks = hooksTask.output;
+      const fallbackDsl = createFallbackGameplayDsl(gameConfig);
+      const dslTask = await gateway.runModelTask({
+        taskType: "llm.gameplay_dsl",
+        provider,
+        model,
+        prompt: createPromptForTask("llm.gameplay_dsl", {
+          idea: input.idea,
+          answers: input.answers,
+          designBrief: input.designBrief,
+          revisionHistory: input.revisionHistory,
+          classification,
+          gdd: gddTask.output,
+          matureGameBrief: matureBriefTask.output,
+          gameConfig,
+          gameHooks: hooksTask.output,
+          assetPack,
+          referencePackageSummary: input.referencePackageSummary
+        }),
+        schema: gameplayDslSchema,
+        preprocess: (raw) => normalizeGameplayDsl(raw, fallbackDsl),
+        fallback: fallbackDsl
+      });
+      modelTasks.push(dslTask);
+      trackFallback(dslTask, fallbacksUsed);
+
+      const gameHooks = enhanceGameHooksForTemplate(
+        mergeGameplayDslIntoHooks(hooksTask.output, dslTask.output, assetPack),
+        gameConfig,
+        input
+      );
+      const runtimeAssetReport = createRuntimeAssetReport(assetPack);
+      const visualAssetReport = createVisualAssetReport(assetPack);
+      const playableDirector = createPlayableDirector(gameConfig, gameHooks, runtimeAssetReport);
+      const verificationReport = createBrowserVerificationReport(runtimeAssetReport, playableDirector);
+      const deliveryReady = verificationReport.passed && visualAssetReport.ready;
       const publishRecord = createPublishRecord(input.projectId, "v1", gameConfig.title, {
         visibility: "public",
         baseUrl: input.baseUrl,
@@ -437,7 +529,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         ...mockProject,
         id: input.projectId,
         title: gameConfig.title,
-        classification: classificationTask.output,
+        classification,
         assetPack,
         gameConfig,
         gameHooks,
@@ -447,7 +539,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       const artifacts = createArtifacts({
         idea: input.idea,
         title: gameConfig.title,
-        classification: classificationTask.output,
+        classification,
         matureGameBrief: matureBriefTask.output,
         assetRequirements,
         assetStyleGuide,
@@ -467,6 +559,16 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
                 }
               : artifact
         )
+        .concat([
+          {
+            stage: "gameplay-dsl" as const,
+            fileName: "gameplay-dsl.json",
+            title: "Gameplay DSL",
+            content: dslTask.output,
+            format: "json" as const
+          }
+        ])
+        .concat(createDeliveryArtifacts(playableDirector, runtimeAssetReport, visualAssetReport, verificationReport))
         .concat(
           input.referencePackageSummary
             ? [
@@ -486,7 +588,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         ...mockProject,
         id: input.projectId,
         title: gameConfig.title,
-        classification: classificationTask.output,
+        classification,
         artifacts,
         assetPack,
         gameConfig,
@@ -521,7 +623,11 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         share,
         feedback,
         modelTasks,
-        fallbacksUsed
+        fallbacksUsed,
+        playableDirector,
+        runtimeAssetReport,
+        verificationReport,
+        deliveryReady
       };
     }
   };
@@ -578,12 +684,10 @@ function createFallbackAssetCandidates(input: GenerateAssetCandidatesInput): Ass
   const commonStyle = brief.developerPrompt.includes("cat") || input.idea.includes("猫") ? "cute sci-fi" : "arcade sci-fi";
   return withCandidatePreviews({
     candidates: [
-      createCandidate("background", "world.background", "image", "背景", `${brief.developerPrompt}; background environment`, commonStyle, "游戏背景", ["image/*"]),
-      createCandidate("player", "player.ship", "image", "主角", `${brief.developerPrompt}; player character sprite`, commonStyle, "玩家角色", ["image/*"]),
-      createCandidate("hazard", "hazard.asteroid", "image", "危险物", `${brief.developerPrompt}; hazard obstacle sprite`, commonStyle, "失败危险物", ["image/*"]),
-      createCandidate("collectible", "item.collectible", "image", "收集物", `${brief.developerPrompt}; collectible reward item`, commonStyle, "得分道具", ["image/*"]),
-      createCandidate("bgm", "bgm.loop", "bgm", "BGM", `${brief.developerPrompt}; looping background music`, "synth arcade", "背景音乐", ["audio/*"]),
-      createCandidate("sfx", "sfx.collect", "sfx", "收集音效", `${brief.developerPrompt}; collect sound effect`, "bright chime", "收集反馈", ["audio/*"])
+      createCandidate("background", "world.background", "image", labelForAssetSlot("background", input.idea), `${brief.developerPrompt}; ${promptForAssetSlot("background", input.idea)}`, commonStyle, "游戏背景", ["image/*"]),
+      createCandidate("player", "player.ship", "image", labelForAssetSlot("player", input.idea), `${brief.developerPrompt}; ${promptForAssetSlot("player", input.idea)}`, commonStyle, "玩家角色", ["image/*"]),
+      createCandidate("hazard", "hazard.enemy", "image", labelForAssetSlot("hazard", input.idea), `${brief.developerPrompt}; ${promptForAssetSlot("hazard", input.idea)}`, commonStyle, "危险物", ["image/*"]),
+      createCandidate("collectible", "item.collectible", "image", labelForAssetSlot("collectible", input.idea), `${brief.developerPrompt}; ${promptForAssetSlot("collectible", input.idea)}`, commonStyle, "得分道具", ["image/*"])
     ]
   });
 }
@@ -613,13 +717,175 @@ function createCandidate(
   };
 }
 
+function finalizeAssetCandidatePrompts(
+  assetCandidates: AssetCandidates,
+  input: Pick<GenerateAssetCandidatesInput, "idea" | "designBrief" | "answers"> | Pick<RegenerateAssetCandidateInput, "idea">
+): AssetCandidates {
+  return {
+    candidates: assetCandidates.candidates.map((candidate) => {
+      const modelPrompt = candidate.prompt;
+      const finalPrompt = buildSlotSpecificImagePrompt(candidate, {
+        idea: input.idea,
+        designBrief: "designBrief" in input ? input.designBrief : undefined,
+        answers: "answers" in input ? input.answers : undefined,
+        modelPrompt
+      });
+      return {
+        ...candidate,
+        prompt: finalPrompt,
+        generationParams: {
+          ...(candidate.generationParams ?? {}),
+          modelPrompt,
+          finalPrompt
+        }
+      };
+    })
+  };
+}
+
+function buildSlotSpecificImagePrompt(
+  candidate: AssetCandidate,
+  input: {
+    idea: string;
+    designBrief?: DesignBrief;
+    answers?: UserAnswer[];
+    modelPrompt?: string;
+  }
+): string {
+  const slotInstruction = promptForAssetSlot(candidate.slot, input.idea);
+  const answerSummary = (input.answers ?? [])
+    .map((answer) => answer.value.trim())
+    .filter(Boolean)
+    .join("；");
+  const modelPrompt =
+    input.modelPrompt && !shouldReplaceGenericAssetText(input.modelPrompt, candidate.slot)
+      ? `模型原始素材建议：${input.modelPrompt}`
+      : "";
+  return [
+    `WOW Game 核心图片素材：${labelForAssetSlot(candidate.slot, input.idea)}`,
+    `slot: ${candidate.slot}`,
+    `assetKey: ${assetKeyForSlot(candidate.slot)}`,
+    `玩家创意：${input.idea}`,
+    input.designBrief?.developerPrompt ? `设计理解：${input.designBrief.developerPrompt}` : "",
+    answerSummary ? `玩家补充答案：${answerSummary}` : "",
+    modelPrompt,
+    slotInstruction,
+    candidate.slot === "background"
+      ? "输出要求：16:9 游戏场景背景，不要主角、敌人、UI、文字，不要测试网格或纯色块。"
+      : "输出要求：独立居中的游戏精灵，纯绿幕背景便于抠图，不要文字、UI、测试网格、方块占位图。"
+  ]
+    .filter(Boolean)
+    .join("。");
+}
+
+function labelForAssetSlot(slot: AssetCandidate["slot"], idea: string): string {
+  if (slot === "background") return includesAny(idea, ["太空", "星", "飞船", "陨石"]) ? "太空背景" : "游戏背景";
+  if (slot === "player") {
+    if (idea.includes("太空猫")) return "太空猫飞船";
+    if (idea.includes("猫")) return "猫咪主角";
+    if (includesAny(idea, ["飞船", "飞机", "战机"])) return "玩家飞船";
+    return "玩家角色";
+  }
+  if (slot === "hazard") {
+    if (idea.includes("陨石")) return "陨石危险物";
+    if (idea.includes("敌")) return "敌人危险物";
+    return "危险物";
+  }
+  if (slot === "collectible") {
+    if (idea.includes("鱼干")) return "鱼干收集物";
+    if (idea.includes("星星")) return "星星收集物";
+    if (idea.includes("金币")) return "金币收集物";
+    return "收集物";
+  }
+  return "素材";
+}
+
+function promptForAssetSlot(slot: AssetCandidate["slot"], idea: string): string {
+  const concept = idea.trim() || "WOW Game 2D demo";
+  if (slot === "background") {
+    return `根据玩家创意「${concept}」生成游戏背景：16:9 宽幅场景图，突出世界观和空间层次，不包含主角、敌人、UI、文字`;
+  }
+  if (slot === "player") {
+    return `根据玩家创意「${concept}」生成玩家主角精灵：主体清晰居中，和危险物/收集物明显不同，适合 2D 游戏操作`;
+  }
+  if (slot === "hazard") {
+    return `根据玩家创意「${concept}」生成危险物或敌人精灵：必须表现威胁感，形状和颜色区别于主角与收集物`;
+  }
+  if (slot === "collectible") {
+    return `根据玩家创意「${concept}」生成收集物精灵：必须表现奖励感，小尺寸也能辨认，区别于危险物`;
+  }
+  return `根据玩家创意「${concept}」生成游戏素材`;
+}
+
+function shouldReplaceGenericAssetText(text: string | undefined, slot: AssetCandidate["slot"]): boolean {
+  const value = (text ?? "").trim();
+  if (!value) return true;
+  const lower = value.toLowerCase();
+  const genericFragments = [
+    "sky background",
+    "player character",
+    "spike hazard",
+    "coin collectible",
+    "small blue square",
+    "simple sky",
+    "triangular spike",
+    "platformer game",
+    "background",
+    "player",
+    "hazard",
+    "collectible"
+  ];
+  if (genericFragments.some((fragment) => lower === fragment || lower.includes(fragment))) return true;
+  if (slot === "hazard" && lower.includes("spike")) return true;
+  return false;
+}
+
+function includesAny(text: string, tokens: string[]): boolean {
+  return tokens.some((token) => text.includes(token));
+}
+
 function normalizeAssetCandidates(raw: unknown, fallback: AssetCandidates): AssetCandidates {
   const value = asRecord(raw);
   const rawCandidates = Array.isArray(value.candidates) ? value.candidates : [];
   const candidates = rawCandidates
     .map((item, index) => normalizeAssetCandidate(item, fallback.candidates[index]))
     .filter((item): item is AssetCandidate => Boolean(item));
-  return { candidates: candidates.length > 0 ? candidates : fallback.candidates };
+  return normalizeCoreImageCandidates(candidates.length > 0 ? candidates : fallback.candidates, fallback);
+}
+
+function normalizeCoreImageCandidates(input: AssetCandidate[] | AssetCandidates, fallback: AssetCandidates): AssetCandidates {
+  const candidates = Array.isArray(input) ? input : input.candidates;
+  const requiredSlots: Array<AssetCandidate["slot"]> = ["background", "player", "hazard", "collectible"];
+  const bySlot = new Map<AssetCandidate["slot"], AssetCandidate>();
+  for (const candidate of candidates) {
+    if (!requiredSlots.includes(candidate.slot)) continue;
+    const fallbackCandidate = fallback.candidates.find((item) => item.slot === candidate.slot);
+    bySlot.set(candidate.slot, {
+      ...candidate,
+      type: "image",
+      assetKey: assetKeyForSlot(candidate.slot),
+      label: shouldReplaceGenericAssetText(candidate.label, candidate.slot)
+        ? fallbackCandidate?.label ?? candidate.label
+        : candidate.label,
+      prompt: candidate.prompt || fallbackCandidate?.prompt || candidate.label,
+      purpose: shouldReplaceGenericAssetText(candidate.purpose, candidate.slot)
+        ? fallbackCandidate?.purpose ?? candidate.purpose
+        : candidate.purpose,
+      acceptedFileTypes: ["image/*"]
+    });
+  }
+  for (const candidate of fallback.candidates) {
+    if (!requiredSlots.includes(candidate.slot) || bySlot.has(candidate.slot)) continue;
+    bySlot.set(candidate.slot, {
+      ...candidate,
+      type: "image",
+      assetKey: assetKeyForSlot(candidate.slot),
+      acceptedFileTypes: ["image/*"]
+    });
+  }
+  return {
+    candidates: requiredSlots.map((slot) => bySlot.get(slot)).filter((item): item is AssetCandidate => Boolean(item))
+  };
 }
 
 function normalizeAssetCandidate(raw: unknown, fallback?: AssetCandidate): AssetCandidate | null {
@@ -656,7 +922,87 @@ function normalizeAssetCandidate(raw: unknown, fallback?: AssetCandidate): Asset
     acceptedFileTypes: normalizeStringArray(value.acceptedFileTypes, fallback?.acceptedFileTypes ?? acceptedTypesFor(type)),
     previewUrl: normalizeString(value.previewUrl, fallback?.previewUrl ?? ""),
     fileUrl: normalizeString(value.fileUrl, fallback?.fileUrl ?? ""),
-    source: normalizeEnum(value.source, fallback?.source ?? "generated", ["mock", "preset", "uploaded", "generated", "library"])
+    source: normalizeEnum(value.source, fallback?.source ?? "generated", ["mock", "preset", "uploaded", "generated", "library"]),
+    provider: normalizeString(value.provider, fallback?.provider ?? ""),
+    model: normalizeString(value.model, fallback?.model ?? ""),
+    generationParams: asRecord(value.generationParams ?? fallback?.generationParams),
+    error: normalizeString(value.error, fallback?.error ?? "")
+  };
+}
+
+async function generateCandidateMedia(
+  assetCandidates: AssetCandidates,
+  templateFamily: TemplateFamily,
+  mediaGateway: ReturnType<typeof createMediaGateway>,
+  input: Pick<GenerateAssetCandidatesInput, "idea" | "designBrief" | "answers"> | Pick<RegenerateAssetCandidateInput, "idea">
+): Promise<AssetCandidates> {
+  const withPreviews = withCandidatePreviews(finalizeAssetCandidatePrompts(assetCandidates, input));
+  const candidates = await Promise.all(
+    withPreviews.candidates.map(async (candidate) => {
+      if (candidate.type !== "image" && candidate.type !== "ui") return candidate;
+      const requirement = createCandidateAssetRequirement(candidate, templateFamily, input.idea);
+      const generated = await mediaGateway.generateProjectAsset("asset-candidates", "draft", requirement);
+      const processedUrl =
+        typeof generated.generationParams?.processedLibraryUrl === "string"
+          ? generated.generationParams.processedLibraryUrl
+          : "";
+      const candidateFileUrl = processedUrl || generated.fileUrl || candidate.fileUrl;
+      return validateCoreAssetCandidate({
+        ...candidate,
+        previewUrl: candidateFileUrl || generated.previewUrl || candidate.previewUrl,
+        fileUrl: candidateFileUrl,
+        source: generated.source,
+        provider: generated.provider,
+        model: generated.model,
+        generationParams: {
+          ...(candidate.generationParams ?? {}),
+          ...(generated.generationParams ?? {}),
+          finalPrompt: candidate.prompt
+        },
+        error: generated.error,
+        approvalStatus: "pending" as const
+      } as AssetCandidate);
+    })
+  );
+  return { candidates };
+}
+
+function createCandidateAssetRequirement(
+  candidate: AssetCandidate,
+  templateFamily: TemplateFamily,
+  idea = ""
+): AssetRequirement {
+  const transparent = candidate.slot === "player" || candidate.slot === "hazard" || candidate.slot === "collectible";
+  return {
+    assetKey: candidate.assetKey,
+    type: candidate.type,
+    purpose: candidate.purpose,
+    style: candidate.style,
+    generationMode: "model",
+    copyrightStatus: "generated",
+    spec: [
+      `${candidate.label} for ${templateFamily}`,
+      idea ? `user idea: ${idea}` : "",
+      transparent
+        ? "solid chroma green background, isolated centered sprite, readable silhouette, no shadow, no glow, no ground, no border, no checkerboard; use chroma magenta background if the subject is green"
+        : "wide 16:9 gameplay background, no foreground player, no UI text",
+      `slot: ${candidate.slot}`
+    ].join("; "),
+    status: "missing",
+    prompt: candidate.prompt,
+    acceptedFileTypes: candidate.acceptedFileTypes,
+    previewUrl: candidate.previewUrl,
+    source: candidate.source,
+    fileUrl: candidate.fileUrl,
+    provider: "pending",
+    model: "pending",
+    generationParams: {
+      slot: candidate.slot,
+      templateFamily
+    },
+    transparentBackgroundRequired: transparent,
+    targetSize: transparent ? "512x512" : "1536x864",
+    approvalStatus: "pending"
   };
 }
 
@@ -732,7 +1078,7 @@ function normalizeRevisionAnalysis(raw: unknown, fallback: RevisionAnalysis): Re
 
 function assetKeyForSlot(slot: AssetCandidate["slot"]): string {
   if (slot === "background") return "world.background";
-  if (slot === "hazard") return "hazard.asteroid";
+  if (slot === "hazard") return "hazard.enemy";
   if (slot === "collectible") return "item.collectible";
   if (slot === "bgm") return "bgm.loop";
   if (slot === "sfx") return "sfx.collect";
@@ -785,6 +1131,51 @@ function createCreativeArtifacts(input: GeneratePlayableInput) {
     });
   }
   return artifacts;
+}
+
+function createDeliveryArtifacts(
+  playableDirector: PlayableDirector,
+  runtimeAssetReport: RuntimeAssetReport,
+  visualAssetReport: ReturnType<typeof createVisualAssetReport>,
+  verificationReport: BrowserVerificationReport
+) {
+  return [
+    {
+      stage: "playable-director" as const,
+      fileName: "playable-director.json",
+      title: "Playable Director",
+      content: playableDirector,
+      format: "json" as const
+    },
+    {
+      stage: "runtime-asset-report" as const,
+      fileName: "runtime-asset-report.json",
+      title: "Runtime Asset Report",
+      content: runtimeAssetReport,
+      format: "json" as const
+    },
+    {
+      stage: "visual-asset-report" as const,
+      fileName: "visual-asset-report.json",
+      title: "Visual Asset Report",
+      content: visualAssetReport,
+      format: "json" as const
+    },
+    {
+      stage: "browser-verification-report" as const,
+      fileName: "browser-verification-report.json",
+      title: "Browser Verification Report",
+      content: verificationReport,
+      format: "json" as const
+    },
+    {
+      stage: "playability-report" as const,
+      fileName: "playability-report.json",
+      title: "Playability Report",
+      content: verificationReport,
+      format: "json" as const
+    }
+  ];
 }
 
 function normalizeGuidedQuestions(raw: unknown, fallbackQuestions: DesignQuestion[], idea = "") {
@@ -865,6 +1256,35 @@ function normalizeClassification(raw: unknown, fallbackFamily: TemplateFamily) {
   };
 }
 
+function lockClassificationToPlayableIntent(
+  classification: ReturnType<typeof classificationSchema.parse>,
+  idea: string,
+  preferredTemplate: TemplateFamily,
+  fallbacksUsed: string[]
+): ReturnType<typeof classificationSchema.parse> {
+  const lockedTemplate = shouldForceTopDown(idea, preferredTemplate) ? "top_down" : preferredTemplate;
+  if (classification.templateFamily === lockedTemplate) return classification;
+  fallbacksUsed.push("template_drift_blocked");
+  return {
+    ...classification,
+    templateFamily: lockedTemplate,
+    reasons: [
+      ...classification.reasons,
+      `Template locked to ${lockedTemplate} by user choice and playable intent.`
+    ]
+  };
+}
+
+function shouldForceTopDown(idea: string, preferredTemplate: TemplateFamily): boolean {
+  if (preferredTemplate !== "top_down") return false;
+  const text = idea.toLowerCase();
+  const hasShip = /飞船|太空|飞机|spaceship|ship|space/.test(text);
+  const hasDodge = /躲避|闪避|避开|dodge|avoid/.test(text);
+  const hasHazard = /陨石|障碍|危险|asteroid|meteor|hazard/.test(text);
+  const hasCollect = /收集|星星|鱼干|collect|star/.test(text);
+  return [hasShip, hasDodge, hasHazard, hasCollect].filter(Boolean).length >= 2;
+}
+
 function normalizeGdd(raw: unknown, fallback: ReturnType<typeof gddSchema.parse>) {
   const value = asRecord(raw);
   return {
@@ -879,7 +1299,7 @@ function normalizeGdd(raw: unknown, fallback: ReturnType<typeof gddSchema.parse>
 
 function normalizeGameConfig(raw: unknown, fallback: GameConfig): GameConfig {
   const value = asRecord(raw);
-  return {
+  return alignGameConfigToTemplate({
     templateFamily: normalizeTemplateFamily(value.templateFamily, fallback.templateFamily),
     title: normalizeString(value.title, fallback.title),
     pitch: normalizeString(value.pitch, fallback.pitch),
@@ -889,11 +1309,97 @@ function normalizeGameConfig(raw: unknown, fallback: GameConfig): GameConfig {
     referencedAssetKeys: normalizeStringArray(value.referencedAssetKeys, fallback.referencedAssetKeys),
     gameplay: normalizeGameplay(value.gameplay, fallback.gameplay),
     level: normalizeLevel(value.level, fallback.level)
-  };
+  });
+}
+
+function alignGameConfigToTemplate(config: GameConfig): GameConfig {
+  if (config.templateFamily === "top_down") {
+    return {
+      ...config,
+      controls: ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"],
+      playerGoal:
+        config.playerGoal || "Move through lanes, collect targets, dodge hazards, and use Space for a short dash.",
+      gameplay: {
+        ...config.gameplay,
+        primaryAction: "dodge_collect",
+        objectiveMode: "collect_score",
+        playerAbility: "dash",
+        spawnPattern: config.gameplay.spawnPattern === "grid" ? "lanes" : config.gameplay.spawnPattern
+      }
+    };
+  }
+  if (config.templateFamily === "platformer") {
+    return {
+      ...config,
+      controls: ["ArrowLeft", "ArrowRight", "Space"],
+      gameplay: {
+        ...config.gameplay,
+        primaryAction: "jump_reach_goal",
+        objectiveMode: config.gameplay.objectiveMode === "collect_score" ? "reach_exit" : config.gameplay.objectiveMode,
+        playerAbility: "jump"
+      }
+    };
+  }
+  return config;
 }
 
 function createFallbackGameHooks(config: GameConfig): GameHooks {
   return createGameHooks(config);
+}
+
+function createFallbackGameplayDsl(config: GameConfig): GameplayDsl {
+  if (config.templateFamily === "platformer") {
+    return {
+      version: "1",
+      rules: [
+        { id: "teach-reward", when: "timeMs >= 3500", do: "reward_burst", count: 2, message: "奖励路径打开" },
+        { id: "mid-hazard", when: "score >= 2", do: "spawn_wave", enemyType: "patroller", count: 2, message: "巡逻危险出现" },
+        { id: "finale-stage", when: "timeMs >= 14000", do: "stage_change", stageId: "finale", message: "终点冲刺阶段" },
+        { id: "jump-feedback", when: "score >= 1", do: "effect", effect: "collect_burst" }
+      ]
+    };
+  }
+  return {
+    version: "1",
+    rules: [
+      { id: "opening-wave", when: "timeMs >= 4000", do: "spawn_wave", enemyType: "chaser", count: 2, message: "第一波追踪压力进入" },
+      { id: "score-reward", when: "score >= 1", do: "reward_burst", count: 2, message: "奖励路线打开" },
+      { id: "score-pressure", when: "score >= 2", do: "projectile_burst", enemyType: "shooter", count: 2, message: "弹幕压力增强" },
+      { id: "mine-field", when: "timeMs >= 9000", do: "spawn_mine", enemyType: "mine", count: 2, message: "地雷区激活" },
+      { id: "impact-feedback", when: "score >= 1", do: "effect", effect: "screen_shake" }
+    ]
+  };
+}
+
+function normalizeGameplayDsl(raw: unknown, fallback: GameplayDsl): GameplayDsl {
+  const parsed = gameplayDslSchema.safeParse(raw);
+  if (parsed.success && parsed.data.rules.length > 0) return parsed.data;
+  return fallback;
+}
+
+function mergeGameplayDslIntoHooks(hooks: GameHooks, gameplayDsl: GameplayDsl, assetPack: AssetPack): GameHooks {
+  const compiled = compileGameplayDsl(gameplayDsl, assetPack);
+  if (!compiled.success) return hooks;
+  const compiledImpactRules = compiled.hooks.impactRules;
+  return {
+    ...hooks,
+    enemyArchetypes: mergeById(hooks.enemyArchetypes ?? [], compiled.hooks.enemyArchetypes ?? []),
+    encounterTimeline: [...(hooks.encounterTimeline ?? []), ...(compiled.hooks.encounterTimeline ?? [])],
+    stageGoals: mergeById(hooks.stageGoals ?? [], compiled.hooks.stageGoals ?? []),
+    impactRules: compiledImpactRules
+      ? {
+          ...(hooks.impactRules ?? compiledImpactRules),
+          ...compiledImpactRules
+        }
+      : hooks.impactRules
+  };
+}
+
+function mergeById<T extends { id: string }>(base: T[], additions: T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const item of base) byId.set(item.id, item);
+  for (const item of additions) byId.set(item.id, item);
+  return Array.from(byId.values());
 }
 
 function normalizeGameHooks(raw: unknown, fallback: GameHooks): GameHooks {
@@ -910,7 +1416,7 @@ function normalizeGameHooks(raw: unknown, fallback: GameHooks): GameHooks {
   const spawnRules = asRecord(value.spawnRules);
   const visualLayerRules = asRecord(value.visualLayerRules);
   const difficultyRules = asRecord(value.difficultyRules);
-  return {
+  const normalized: GameHooks = {
     enemyRules: {
       movement: normalizeEnum(enemyRules.movement, fallback.enemyRules.movement, ["static", "patrol", "chase", "wave"]),
       speed: normalizeNumber(enemyRules.speed, fallback.enemyRules.speed),
@@ -1038,8 +1544,372 @@ function normalizeGameHooks(raw: unknown, fallback: GameHooks): GameHooks {
         fallback.difficultyRules?.collectibleSpacing ?? "guided reward path"
       ),
       checkpointPolicy: normalizeString(difficultyRules.checkpointPolicy, fallback.difficultyRules?.checkpointPolicy ?? "short retry")
-    }
+    },
+    enemyArchetypes: normalizeEnemyArchetypes(value.enemyArchetypes, fallback.enemyArchetypes ?? []),
+    attackRules: normalizeAttackRules(value.attackRules, fallback.attackRules),
+    stageGoals: normalizeStageGoals(value.stageGoals, fallback.stageGoals ?? []),
+    impactRules: normalizeImpactRules(value.impactRules, fallback.impactRules),
+    encounterTimeline: normalizeEncounterTimeline(value.encounterTimeline, fallback.encounterTimeline ?? [])
   };
+  return normalized;
+}
+
+function enhanceGameHooksForTemplate(
+  hooks: GameHooks,
+  config: GameConfig,
+  input: GeneratePlayableInput
+): GameHooks {
+  const designText = [
+    input.idea,
+    input.designBrief?.developerPrompt,
+    input.designBrief?.coreGameplay,
+    ...input.answers.map((answer) => answer.value)
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (config.templateFamily === "top_down") {
+    const wantsWaves = /wave|runner|endless|asteroid|meteor|飞船|太空|陨石|躲避|赛博|城市/.test(designText);
+    const movement = wantsWaves ? "wave" : hooks.enemyRules.movement === "static" ? "chase" : hooks.enemyRules.movement;
+    const base: GameHooks = {
+      ...hooks,
+      enemyRules: {
+        ...hooks.enemyRules,
+        movement,
+        speed: Math.max(hooks.enemyRules.speed, wantsWaves ? 145 : 130),
+        waveIntervalMs: hooks.enemyRules.waveIntervalMs > 0 ? hooks.enemyRules.waveIntervalMs : 420
+      },
+      collectibleRules: {
+        ...hooks.collectibleRules,
+        placement: hooks.collectibleRules.placement === "random" ? "grid" : hooks.collectibleRules.placement,
+        value: Math.max(1, hooks.collectibleRules.value)
+      },
+      failCondition: {
+        ...hooks.failCondition,
+        mode: "hit_hazard",
+        lives: Math.max(1, Math.min(hooks.failCondition.lives || 1, config.difficulty === "hard" ? 1 : 2))
+      },
+      numberTuning: {
+        ...hooks.numberTuning,
+        playerSpeed: Math.max(hooks.numberTuning.playerSpeed, 270),
+        hazardSpeed: Math.max(hooks.numberTuning.hazardSpeed, wantsWaves ? 150 : 135)
+      },
+      levelLayout: {
+        ...hooks.levelLayout,
+        lanes:
+          hooks.levelLayout.lanes.length > 0
+            ? hooks.levelLayout.lanes
+            : [
+                { y: 145, speed: 135, count: 2 },
+                { y: 260, speed: 155, count: 2 },
+                { y: 375, speed: 145, count: 2 }
+              ]
+      },
+      levelFlow: {
+        ...(hooks.levelFlow ?? {
+          spawnPoint: { x: 140, y: 270 },
+          safeZones: [],
+          cameraIntent: "show readable dodge lanes",
+          tutorialBeats: []
+        }),
+        spawnPoint: hooks.levelFlow?.spawnPoint ?? { x: 140, y: 270 },
+        safeZones: hooks.levelFlow?.safeZones?.length ? hooks.levelFlow.safeZones : [{ x: 140, y: 270, width: 160, height: 130 }],
+        tutorialBeats: hooks.levelFlow?.tutorialBeats?.length
+          ? hooks.levelFlow.tutorialBeats
+          : ["safe start", "first pickup teaches route", "second lane introduces moving hazard"]
+      },
+      collisionRules: {
+        collisionRadius: hooks.collisionRules?.collisionRadius ?? 14,
+        invulnerabilityMs: Math.max(hooks.collisionRules?.invulnerabilityMs ?? 650, 650),
+        knockbackForce: Math.max(hooks.collisionRules?.knockbackForce ?? 180, 180)
+      },
+      feedbackRules: {
+        particleCount: Math.max(hooks.feedbackRules?.particleCount ?? 22, 22),
+        screenShakeIntensity: Math.max(hooks.feedbackRules?.screenShakeIntensity ?? 0.018, 0.018),
+        collectBurstCount: Math.max(hooks.feedbackRules?.collectBurstCount ?? 16, 16),
+        floatingScore: hooks.feedbackRules?.floatingScore ?? true,
+        comboText: hooks.feedbackRules?.comboText ?? true,
+        audioCueKeys: hooks.feedbackRules?.audioCueKeys ?? ["sfx.collect", "sfx.hit", "sfx.win", "sfx.lose"]
+      },
+      spawnRules: {
+        hazardIntervalMs: Math.min(hooks.spawnRules?.hazardIntervalMs ?? 820, 900),
+        maxActiveHazards: Math.max(hooks.spawnRules?.maxActiveHazards ?? config.level.hazards, config.level.hazards + 2)
+      }
+    };
+    return normalizeCommercialHooks(base, config, designText);
+  }
+
+  if (config.templateFamily === "platformer") {
+    const base: GameHooks = {
+      ...hooks,
+      enemyRules: {
+        ...hooks.enemyRules,
+        movement: hooks.enemyRules.movement === "static" ? "patrol" : hooks.enemyRules.movement,
+        speed: Math.max(hooks.enemyRules.speed, 110)
+      },
+      failCondition: {
+        ...hooks.failCondition,
+        mode: "hit_hazard",
+        lives: Math.max(1, Math.min(hooks.failCondition.lives || 1, 2))
+      },
+      numberTuning: {
+        ...hooks.numberTuning,
+        playerSpeed: Math.max(hooks.numberTuning.playerSpeed, 220),
+        jumpVelocity: Math.max(hooks.numberTuning.jumpVelocity, 460)
+      },
+      levelLayout: {
+        ...hooks.levelLayout,
+        platforms:
+          hooks.levelLayout.platforms.length >= 3
+            ? hooks.levelLayout.platforms
+            : [
+                { x: 480, y: 510, width: 920, height: 28 },
+                { x: 270, y: 405, width: 180, height: 20 },
+                { x: 520, y: 320, width: 190, height: 20 },
+                { x: 760, y: 235, width: 160, height: 20 }
+              ]
+      },
+      levelFlow: {
+        ...(hooks.levelFlow ?? {
+          spawnPoint: { x: 96, y: 430 },
+          safeZones: [],
+          cameraIntent: "show jump route",
+          tutorialBeats: []
+        }),
+        spawnPoint: hooks.levelFlow?.spawnPoint ?? { x: 96, y: 430 },
+        finishZone: hooks.levelFlow?.finishZone ?? { x: 830, y: 420, width: 60, height: 130 }
+      }
+    };
+    return normalizeCommercialHooks(base, config, designText);
+  }
+
+  return normalizeCommercialHooks(hooks, config, designText);
+}
+
+function normalizeCommercialHooks(hooks: GameHooks, config: GameConfig, designText: string): GameHooks {
+  const wantsExplosions = /explode|explosion|bomb|mine|blast|爆炸|炸|地雷|陨石|撞/.test(designText);
+  const wantsShooting = /shoot|bullet|laser|projectile|射击|子弹|激光/.test(designText);
+  const wantsChase = /chase|hunt|追|追踪|敌人|怪/.test(designText);
+  const enemyArchetypes =
+    hooks.enemyArchetypes && hooks.enemyArchetypes.length >= 2
+      ? hooks.enemyArchetypes
+      : defaultEnemyArchetypes(config, { wantsExplosions, wantsShooting, wantsChase });
+  const attackRules = hooks.attackRules ?? {
+    contactDamage: 1,
+    dashDamage: config.templateFamily === "top_down" ? 0 : 1,
+    projectileSpeed: wantsShooting ? 220 : 170,
+    projectileCooldownMs: wantsShooting ? 1200 : 1800,
+    explosionRadius: wantsExplosions ? 92 : 68,
+    explosionDelayMs: wantsExplosions ? 520 : 700,
+    warningMs: 420
+  };
+  const impactRules = hooks.impactRules ?? {
+    hitStopMs: wantsExplosions ? 110 : 75,
+    screenShakeIntensity: Math.max(hooks.feedbackRules?.screenShakeIntensity ?? 0.018, wantsExplosions ? 0.026 : 0.018),
+    explosionParticles: wantsExplosions ? 34 : 22,
+    knockbackForce: Math.max(hooks.collisionRules?.knockbackForce ?? 180, wantsExplosions ? 220 : 180),
+    invulnerabilityMs: Math.max(hooks.collisionRules?.invulnerabilityMs ?? 650, 650),
+    comboWindowMs: 1800
+  };
+  return {
+    ...hooks,
+    enemyArchetypes,
+    attackRules,
+    stageGoals: hooks.stageGoals?.length ? hooks.stageGoals : defaultStageGoals(config, enemyArchetypes),
+    impactRules,
+    encounterTimeline: hooks.encounterTimeline?.length ? hooks.encounterTimeline : defaultEncounterTimeline(config)
+  };
+}
+
+function defaultEnemyArchetypes(
+  config: GameConfig,
+  flags: { wantsExplosions: boolean; wantsShooting: boolean; wantsChase: boolean }
+): NonNullable<GameHooks["enemyArchetypes"]> {
+  if (config.templateFamily === "platformer") {
+    return [
+      { id: "patroller_1", type: "patroller", count: 2, speed: 110, spawnAfterMs: 0, warningMs: 250 },
+      {
+        id: flags.wantsExplosions ? "mine_1" : "charger_1",
+        type: flags.wantsExplosions ? "mine" : "charger",
+        count: 2,
+        speed: 135,
+        spawnAfterMs: 6500,
+        warningMs: 520
+      }
+    ];
+  }
+  return [
+    {
+      id: flags.wantsChase ? "chaser_1" : "patroller_1",
+      type: flags.wantsChase ? "chaser" : "patroller",
+      count: 2,
+      speed: 135,
+      spawnAfterMs: 0,
+      laneY: 260,
+      warningMs: 280
+    },
+    {
+      id: flags.wantsShooting ? "shooter_1" : flags.wantsExplosions ? "mine_1" : "charger_1",
+      type: flags.wantsShooting ? "shooter" : flags.wantsExplosions ? "mine" : "charger",
+      count: 2,
+      speed: flags.wantsShooting ? 95 : 155,
+      spawnAfterMs: 5200,
+      laneY: 150,
+      warningMs: 520
+    },
+    { id: "orbiter_1", type: "orbiter", count: 1, speed: 120, spawnAfterMs: 10500, laneY: 375, warningMs: 300 }
+  ];
+}
+
+function defaultStageGoals(
+  config: GameConfig,
+  enemyArchetypes: NonNullable<GameHooks["enemyArchetypes"]>
+): NonNullable<GameHooks["stageGoals"]> {
+  const firstEnemy = enemyArchetypes[0]?.id ?? "patroller_1";
+  const secondEnemy = enemyArchetypes[1]?.id ?? firstEnemy;
+  return [
+    {
+      id: "teach",
+      label: config.templateFamily === "platformer" ? "Learn jump timing and collect the first reward" : "Learn movement, collect the first reward, and test dash",
+      startsAtMs: 0,
+      durationMs: 5000,
+      objective: "learn_controls",
+      target: 1,
+      enemyMix: [firstEnemy],
+      rewardPacing: "slow"
+    },
+    {
+      id: "pressure",
+      label: "Collect under enemy pressure",
+      startsAtMs: 5000,
+      durationMs: 10000,
+      objective: "collect",
+      target: Math.max(3, Math.ceil(config.level.winScore / 2)),
+      enemyMix: [firstEnemy, secondEnemy],
+      rewardPacing: "normal"
+    },
+    {
+      id: "finale",
+      label: "Survive the final wave and finish the goal",
+      startsAtMs: 15000,
+      durationMs: 12000,
+      objective: "finale",
+      target: config.level.winScore,
+      enemyMix: enemyArchetypes.map((enemy) => enemy.id),
+      rewardPacing: "burst"
+    }
+  ];
+}
+
+function defaultEncounterTimeline(config: GameConfig): NonNullable<GameHooks["encounterTimeline"]> {
+  return [
+    { atMs: 4800, trigger: "time", event: "spawn_wave", intensity: 2, message: "Hazard pattern is changing" },
+    { atMs: 9000, trigger: "score", event: "reward_burst", intensity: 2, message: "Reward route opened" },
+    {
+      atMs: 14500,
+      trigger: "time",
+      event: config.templateFamily === "platformer" ? "spawn_mine" : "projectile_burst",
+      intensity: 3,
+      message: "Final pressure incoming"
+    }
+  ];
+}
+
+function normalizeEnemyArchetypes(value: unknown, fallback: NonNullable<GameHooks["enemyArchetypes"]>) {
+  if (!Array.isArray(value)) return fallback;
+  const items = value
+    .filter((item) => typeof item === "object" && item !== null)
+    .map((item, index) => {
+      const record = asRecord(item);
+      return {
+        id: normalizeSlug(record.id, `enemy_${index + 1}`),
+        type: normalizeEnum(record.type, "chaser" as const, [
+          "chaser",
+          "patroller",
+          "charger",
+          "shooter",
+          "orbiter",
+          "mine"
+        ]),
+        count: clampNumber(normalizeNumber(record.count, 1), 1, 8),
+        speed: clampNumber(normalizeNumber(record.speed, 120), 20, 360),
+        spawnAfterMs: clampNumber(normalizeNumber(record.spawnAfterMs, 0), 0, 120000),
+        laneY: record.laneY === undefined ? undefined : clampNumber(normalizeNumber(record.laneY, 260), 60, 500),
+        warningMs: record.warningMs === undefined ? undefined : clampNumber(normalizeNumber(record.warningMs, 300), 0, 3000)
+      };
+    });
+  return items.length > 0 ? items : fallback;
+}
+
+function normalizeAttackRules(value: unknown, fallback?: GameHooks["attackRules"]): NonNullable<GameHooks["attackRules"]> | undefined {
+  const record = asRecord(value);
+  if (!Object.keys(record).length && !fallback) return undefined;
+  return {
+    contactDamage: clampNumber(normalizeNumber(record.contactDamage, fallback?.contactDamage ?? 1), 1, 3),
+    dashDamage: clampNumber(normalizeNumber(record.dashDamage, fallback?.dashDamage ?? 0), 0, 3),
+    projectileSpeed: clampNumber(normalizeNumber(record.projectileSpeed, fallback?.projectileSpeed ?? 180), 60, 420),
+    projectileCooldownMs: clampNumber(normalizeNumber(record.projectileCooldownMs, fallback?.projectileCooldownMs ?? 1400), 250, 8000),
+    explosionRadius: clampNumber(normalizeNumber(record.explosionRadius, fallback?.explosionRadius ?? 72), 28, 96),
+    explosionDelayMs: clampNumber(normalizeNumber(record.explosionDelayMs, fallback?.explosionDelayMs ?? 650), 100, 3000),
+    warningMs: clampNumber(normalizeNumber(record.warningMs, fallback?.warningMs ?? 420), 0, 3000)
+  };
+}
+
+function normalizeStageGoals(value: unknown, fallback: NonNullable<GameHooks["stageGoals"]>) {
+  if (!Array.isArray(value)) return fallback;
+  const items = value
+    .filter((item) => typeof item === "object" && item !== null)
+    .map((item, index) => {
+      const record = asRecord(item);
+      return {
+        id: normalizeSlug(record.id, `stage_${index + 1}`),
+        label: normalizeString(record.label, index === 0 ? "Learn controls" : "Survive the pressure"),
+        startsAtMs: clampNumber(normalizeNumber(record.startsAtMs, index * 7000), 0, 180000),
+        durationMs: clampNumber(normalizeNumber(record.durationMs, 7000), 1000, 60000),
+        objective: normalizeEnum(record.objective, "collect" as const, ["learn_controls", "collect", "survive", "finale"]),
+        target: clampNumber(normalizeNumber(record.target, 1), 0, 99),
+        enemyMix: normalizeStringArray(record.enemyMix, []),
+        rewardPacing: normalizeEnum(record.rewardPacing, "normal" as const, ["slow", "normal", "burst"])
+      };
+    });
+  return items.length > 0 ? items : fallback;
+}
+
+function normalizeImpactRules(value: unknown, fallback?: GameHooks["impactRules"]): NonNullable<GameHooks["impactRules"]> | undefined {
+  const record = asRecord(value);
+  if (!Object.keys(record).length && !fallback) return undefined;
+  return {
+    hitStopMs: clampNumber(normalizeNumber(record.hitStopMs, fallback?.hitStopMs ?? 80), 0, 300),
+    screenShakeIntensity: clampNumber(normalizeNumber(record.screenShakeIntensity, fallback?.screenShakeIntensity ?? 0.018), 0, 0.08),
+    explosionParticles: clampNumber(normalizeNumber(record.explosionParticles, fallback?.explosionParticles ?? 24), 1, 64),
+    knockbackForce: clampNumber(normalizeNumber(record.knockbackForce, fallback?.knockbackForce ?? 180), 0, 800),
+    invulnerabilityMs: clampNumber(normalizeNumber(record.invulnerabilityMs, fallback?.invulnerabilityMs ?? 650), 0, 3000),
+    comboWindowMs: clampNumber(normalizeNumber(record.comboWindowMs, fallback?.comboWindowMs ?? 1800), 300, 6000)
+  };
+}
+
+function normalizeEncounterTimeline(value: unknown, fallback: NonNullable<GameHooks["encounterTimeline"]>) {
+  if (!Array.isArray(value)) return fallback;
+  const items = value
+    .filter((item) => typeof item === "object" && item !== null)
+    .map((item) => {
+      const record = asRecord(item);
+      return {
+        atMs: clampNumber(normalizeNumber(record.atMs, 0), 0, 180000),
+        trigger: normalizeEnum(record.trigger, "time" as const, ["time", "score"]),
+        event: normalizeEnum(record.event, "spawn_wave" as const, [
+          "spawn_wave",
+          "spawn_mine",
+          "projectile_burst",
+          "reward_burst",
+          "finale"
+        ]),
+        intensity: clampNumber(normalizeNumber(record.intensity, 1), 1, 5),
+        message: normalizeString(record.message, "Incoming pressure")
+      };
+    });
+  return items.length > 0 ? items : fallback;
 }
 
 function normalizeGameplay(value: unknown, fallback: GameConfig["gameplay"]): GameConfig["gameplay"] {
@@ -1203,6 +2073,14 @@ function normalizeString(value: unknown, fallback: string): string {
   return fallback;
 }
 
+function normalizeSlug(value: unknown, fallback: string): string {
+  const text = normalizeString(value, fallback)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return text || fallback;
+}
+
 function normalizeStringArray(value: unknown, fallback: string[] = []): string[] {
   if (Array.isArray(value)) {
     const items = value
@@ -1262,6 +2140,111 @@ function sanitizeGameConfig(config: GameConfig, assetPack: AssetPack): GameConfi
   return sanitized;
 }
 
+export function createPlayableDirector(
+  gameConfig: GameConfig,
+  gameHooks: GameHooks,
+  runtimeAssetReport: RuntimeAssetReport
+): PlayableDirector {
+  const coreAssets = Object.fromEntries(
+    runtimeAssetReport.slots.map((slot) => [slot.slot, slot.assetKey])
+  ) as PlayableDirector["coreAssets"];
+  const enemyArchetypes = gameHooks.enemyArchetypes?.length
+    ? gameHooks.enemyArchetypes
+    : [
+        { id: "chaser_pressure", type: "chaser" as const, count: 2, speed: 140, spawnAfterMs: 5000 },
+        { id: "charger_warning", type: "charger" as const, count: 1, speed: 220, spawnAfterMs: 12000, warningMs: 500 }
+      ];
+  const stageGoals = gameHooks.stageGoals?.length
+    ? gameHooks.stageGoals
+    : [
+        {
+          id: "tutorial",
+          label: "学习移动并拿到第一个奖励",
+          startsAtMs: 0,
+          durationMs: 5000,
+          objective: "learn_controls" as const,
+          target: 1,
+          enemyMix: [],
+          rewardPacing: "slow" as const
+        },
+        {
+          id: "collect",
+          label: "收集目标并观察危险节奏",
+          startsAtMs: 5000,
+          durationMs: 14000,
+          objective: "collect" as const,
+          target: Math.max(3, Math.min(gameConfig.level.winScore, 6)),
+          enemyMix: ["chaser"],
+          rewardPacing: "normal" as const
+        },
+        {
+          id: "finale",
+          label: "压力波次：完成最后收集",
+          startsAtMs: 19000,
+          durationMs: 20000,
+          objective: "finale" as const,
+          target: gameConfig.level.winScore,
+          enemyMix: ["chaser", "charger"],
+          rewardPacing: "burst" as const
+        }
+      ];
+  const encounterTimeline = gameHooks.encounterTimeline?.length
+    ? gameHooks.encounterTimeline
+    : [
+        { atMs: 5000, trigger: "time" as const, event: "spawn_wave" as const, intensity: 1, message: "第一波危险接近" },
+        { atMs: 12000, trigger: "time" as const, event: "projectile_burst" as const, intensity: 2, message: "注意冲刺和爆炸预警" },
+        { atMs: 22000, trigger: "time" as const, event: "finale" as const, intensity: 3, message: "最终压力波次" }
+      ];
+  return {
+    templateFamily: gameConfig.templateFamily,
+    playerGoal: gameConfig.playerGoal,
+    coreAssets,
+    enemyArchetypes,
+    stageGoals,
+    encounterTimeline,
+    winCondition: gameHooks.winCondition,
+    failCondition: gameHooks.failCondition,
+    firstMinuteScript: [
+      "0-5s: show controls and one safe collectible",
+      "5-19s: spawn readable enemies and guide collection",
+      "19-40s: pressure wave with collision and explosion feedback",
+      "40-60s: force win or lose resolution and allow restart"
+    ]
+  };
+}
+
+export function createBrowserVerificationReport(
+  runtimeAssetReport: RuntimeAssetReport,
+  playableDirector: PlayableDirector
+): BrowserVerificationReport {
+  const checks = [
+    {
+      id: "core_images_bound",
+      passed: runtimeAssetReport.ready,
+      detail: runtimeAssetReport.ready ? "All core image slots are bound." : runtimeAssetReport.errors.join("; ")
+    },
+    {
+      id: "director_has_enemies",
+      passed: playableDirector.enemyArchetypes.length >= 2,
+      detail: `${playableDirector.enemyArchetypes.length} enemy archetypes`
+    },
+    {
+      id: "director_has_stages",
+      passed: playableDirector.stageGoals.length >= 3,
+      detail: `${playableDirector.stageGoals.length} stage goals`
+    },
+    {
+      id: "director_has_outcomes",
+      passed: Boolean(playableDirector.winCondition.target && playableDirector.failCondition.lives),
+      detail: `win=${playableDirector.winCondition.mode}, fail=${playableDirector.failCondition.mode}`
+    }
+  ];
+  return {
+    passed: checks.every((check) => check.passed),
+    checks
+  };
+}
+
 function trackFallback(result: GatewayResult<unknown>, fallbacksUsed: string[]) {
   if (result.status === "fallback") {
     fallbacksUsed.push(result.taskType);
@@ -1314,6 +2297,19 @@ function applyUserMaterials(
   });
 }
 
+function isResolvedRuntimeAsset(asset: AssetRequirement): boolean {
+  return (
+    Boolean(asset.fileUrl.trim()) &&
+    asset.approvalStatus === "approved" &&
+    (asset.status === "uploaded" || asset.status === "generated")
+  );
+}
+
+function isOptionalImageRequirement(asset: AssetRequirement): boolean {
+  if (asset.type !== "image" && asset.type !== "ui") return false;
+  return !["world.background", "player.ship", "hazard.enemy", "item.collectible"].includes(asset.assetKey);
+}
+
 function applyConfirmedAssets(
   assets: AssetPack["assets"],
   confirmedAssets?: ConfirmedAssets
@@ -1339,10 +2335,11 @@ function applyConfirmedAssets(
       copyrightStatus: candidate.source === "uploaded" ? "user_provided" : "generated",
       fileUrl: candidate.fileUrl || asset.fileUrl,
       previewUrl: candidate.previewUrl || asset.previewUrl,
-      provider: candidate.source === "uploaded" ? "uploaded" : "confirmed-candidate",
-      model: "asset-candidates-v1",
+      provider: candidate.source === "uploaded" ? "uploaded" : candidate.provider || asset.provider || "confirmed-candidate",
+      model: candidate.source === "uploaded" ? "user-upload" : candidate.model || asset.model || "asset-candidates-v1",
       generationParams: {
         ...asset.generationParams,
+        ...(candidate.generationParams ?? {}),
         slot: candidate.slot,
         candidateLabel: candidate.label
       },
@@ -1352,31 +2349,37 @@ function applyConfirmedAssets(
 }
 
 function resolveConfirmedAssetKey(candidate: AssetCandidate, availableKeys: Set<string>): string {
-  if (availableKeys.has(candidate.assetKey)) return candidate.assetKey;
   const fallbackKeys: Record<AssetCandidate["slot"], string[]> = {
-    player: ["player.hero", "player.ship", "player.cursor", "player.tower", "player.panel"],
-    background: ["world.background", "cover.main", "world.tiles", "world.path"],
+    player: ["player.ship"],
+    background: ["world.background"],
     hazard: ["hazard.enemy", "hazard.spike", "hazard.block", "hazard.timer", "hazard.asteroid"],
     collectible: ["item.collectible"],
     cover: ["cover.main", "world.background"],
     bgm: ["bgm.loop"],
     sfx: ["sfx.collect", "sfx.hit", "sfx.win", "sfx.lose"]
   };
+  if (candidate.slot === "player" || candidate.slot === "background" || candidate.slot === "hazard" || candidate.slot === "collectible") {
+    return fallbackKeys[candidate.slot].find((assetKey) => availableKeys.has(assetKey)) ?? candidate.assetKey;
+  }
+  if (availableKeys.has(candidate.assetKey)) return candidate.assetKey;
   return fallbackKeys[candidate.slot].find((assetKey) => availableKeys.has(assetKey)) ?? candidate.assetKey;
 }
 
 function resolveUserMaterialAssetKey(material: UserMaterial, availableKeys: Set<string>): string {
-  if (availableKeys.has(material.assetKey)) return material.assetKey;
   const slot = material.slot ?? inferUserMaterialSlot(material.assetKey);
   const fallbackKeys: Record<NonNullable<UserMaterial["slot"]>, string[]> = {
-    player: ["player.hero", "player.ship", "player.cursor", "player.tower", "player.panel"],
-    background: ["world.background", "cover.main", "world.tiles", "world.path"],
+    player: ["player.ship"],
+    background: ["world.background"],
     hazard: ["hazard.enemy", "hazard.spike", "hazard.block", "hazard.timer"],
     collectible: ["item.collectible"],
     cover: ["cover.main", "world.background"],
     bgm: ["bgm.loop"],
     sfx: ["sfx.collect", "sfx.hit", "sfx.win", "sfx.lose"]
   };
+  if (slot === "player" || slot === "background" || slot === "hazard" || slot === "collectible") {
+    return fallbackKeys[slot].find((assetKey) => availableKeys.has(assetKey)) ?? material.assetKey;
+  }
+  if (availableKeys.has(material.assetKey)) return material.assetKey;
   return fallbackKeys[slot].find((assetKey) => availableKeys.has(assetKey)) ?? material.assetKey;
 }
 
@@ -1406,6 +2409,61 @@ function createSharePayload(publishRecord: PublishRecord): SharePayload {
   };
 }
 
+function normalizeGeneratedTitle(
+  currentTitle: string,
+  idea: string,
+  designBrief: DesignBrief | undefined,
+  shouldUseIdeaTitle: boolean
+): string {
+  const trimmed = currentTitle.trim();
+  if (trimmed && !shouldUseIdeaTitle && !isGenericGeneratedTitle(trimmed, idea)) return trimmed;
+  if (trimmed && !shouldUseIdeaTitle) return trimmed;
+  return deriveTitleFromIdea(idea, designBrief);
+}
+
+function isGenericGeneratedTitle(title: string, idea: string): boolean {
+  const genericTitles = new Set([
+    "星尘航线",
+    "跳动森林",
+    "边境塔线",
+    "晶格谜阵",
+    "口袋工坊",
+    "闪避迷航",
+    "Star Runner",
+    "Generated Game",
+    "WOW Game"
+  ]);
+  if (genericTitles.has(title)) return true;
+  if (/^(untitled|default|demo|test)/i.test(title)) return true;
+  return idea.length >= 6 && title.length <= 4;
+}
+
+function deriveTitleFromIdea(idea: string, designBrief?: DesignBrief): string {
+  const text = `${idea} ${designBrief?.coreGameplay ?? ""} ${designBrief?.playerGoal ?? ""}`;
+  const subject = pickKeyword(text, [
+    "太空猫",
+    "赛博猫",
+    "飞船",
+    "机器人",
+    "潜艇",
+    "矿工",
+    "魔法师",
+    "猫",
+    "船"
+  ]);
+  const target = pickKeyword(text, ["鱼干", "星星", "水晶", "金币", "钥匙", "芯片", "能量", "宝石"]);
+  const danger = pickKeyword(text, ["陨石", "水雷", "尖刺", "火球", "敌人", "障碍"]);
+  if (subject && target) return `${subject}${target}航线`;
+  if (subject && danger) return `${subject}${danger}挑战`;
+  if (subject) return `${subject}冒险`;
+  if (target) return `${target}收集行动`;
+  return "玩家创意挑战";
+}
+
+function pickKeyword(text: string, keywords: string[]): string {
+  return keywords.find((keyword) => text.includes(keyword)) ?? "";
+}
+
 function readRuntimeEnv(): Record<string, string | undefined> {
   const maybeProcess = globalThis as {
     process?: { env?: Record<string, string | undefined> };
@@ -1414,6 +2472,13 @@ function readRuntimeEnv(): Record<string, string | undefined> {
 }
 
 function createMediaGatewayOptionsFromEnv(env: Record<string, string | undefined>): MediaGatewayOptions {
+  return createMediaGatewayOptions(env);
+}
+
+function createMediaGatewayOptions(
+  env: Record<string, string | undefined>,
+  fetcher?: DeepSeekExecutorOptions["fetcher"]
+): MediaGatewayOptions {
   if (env.IMAGE_PROVIDER !== "agnes") return {};
   return {
     imageProvider: createAgnesImageProvider({
@@ -1423,7 +2488,8 @@ function createMediaGatewayOptionsFromEnv(env: Record<string, string | undefined
       model: env.IMAGE_MODEL,
       authHeader: env.IMAGE_AUTH_HEADER,
       responseImagePath: env.IMAGE_RESPONSE_PATH,
-      timeoutMs: parseOptionalNumber(env.IMAGE_TIMEOUT_MS)
+      timeoutMs: parseOptionalNumber(env.IMAGE_TIMEOUT_MS),
+      fetcher
     })
   };
 }

@@ -89,10 +89,10 @@ export function createGuidedQuestions(idea: string, preferredTemplate?: Template
     platformer: [
       choiceQuestion(
         "core_action",
-        "核心操作",
-        "平台关卡里，玩家最重要的操作体验是什么？",
-        ["轻快精准跳跃", "带惯性的挑战跳跃", "新手友好的低难度跳跃"],
-        "轻快精准跳跃"
+        "关卡节奏",
+        "平台关卡的第一分钟应该怎样推进平台、陷阱、金币路径和终点压力？",
+        ["先低台教学，再金币路径，最后尖刺和终点", "连续跳台加移动陷阱，节奏更紧张", "短平台加安全检查点，适合新手"],
+        "先低台教学，再金币路径，最后尖刺和终点"
       ),
       choiceQuestion(
         "character_enemy_item",
@@ -105,10 +105,10 @@ export function createGuidedQuestions(idea: string, preferredTemplate?: Template
     top_down: [
       choiceQuestion(
         "core_action",
-        "核心操作",
-        "俯视角里，玩家主要通过什么动作获得乐趣？",
-        ["自由移动躲避", "冲刺穿越危险区", "边移动边收集奖励"],
-        "自由移动躲避"
+        "敌人/障碍行为",
+        "俯视角里，敌人和障碍应该如何制造压力？",
+        ["追踪敌人加陨石波次", "巡逻敌人加地雷预警", "弹幕敌人加奖励路线"],
+        "追踪敌人加陨石波次"
       ),
       choiceQuestion(
         "character_enemy_item",
@@ -181,7 +181,7 @@ function sharedQuestion(id: "goal" | "failure" | "style_audio_pacing", templateF
   if (id === "goal") {
     return {
       id: "goal",
-      label: "胜利目标",
+      label: "玩法目标",
       prompt: "玩家怎样才算赢？请用一句话说明第一版的胜利目标。",
       inputType: "short_text",
       defaultAnswer:
@@ -198,8 +198,8 @@ function sharedQuestion(id: "goal" | "failure" | "style_audio_pacing", templateF
   if (id === "failure") {
     return {
       id: "failure",
-      label: "失败条件",
-      prompt: "玩家遇到什么情况会失败？",
+      label: "奖励/失败反馈",
+      prompt: "玩家获得奖励和失败时，系统应该给出什么反馈？",
       inputType: "short_text",
       defaultAnswer:
         templateFamily === "tower_defense"
@@ -210,7 +210,7 @@ function sharedQuestion(id: "goal" | "failure" | "style_audio_pacing", templateF
   }
   return {
     id: "style_audio_pacing",
-    label: "视听与节奏",
+    label: "关卡节奏/视听",
     prompt: "画面风格、音效氛围和第一关节奏希望是什么？",
     inputType: "single_choice",
     options: [

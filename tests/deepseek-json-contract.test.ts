@@ -46,11 +46,11 @@ describe("DeepSeek JSON contract", () => {
     });
 
     expect(prompt).toContain("Generate exactly 5");
-    expect(prompt).toContain("win goal");
-    expect(prompt).toContain("core controls/action");
-    expect(prompt).toContain("fail condition");
-    expect(prompt).toContain("character/enemy/collectible identity");
-    expect(prompt).toContain("visual style/audio mood/level pacing");
+    expect(prompt).toContain("core gameplay goal");
+    expect(prompt).toContain("enemy/hazard behavior");
+    expect(prompt).toContain("reward/failure feedback");
+    expect(prompt).toContain("character/collectible identity");
+    expect(prompt).toContain("level pacing");
     expect(containsMojibake(prompt)).toBe(false);
   });
 

@@ -1,17 +1,17 @@
-import type { AssetCandidates, ConversationSession, DesignBrief, MockProject, RevisionAnalysis } from "../core/types";
+﻿import type { AssetCandidates, ConversationSession, DesignBrief, MockProject, RevisionAnalysis } from "../core/types";
 import type { getMessages } from "./i18n";
 
 export type StudioChatPhase =
   | "chatting"
   | "ai_thinking"
   | "guided_questions"
+  | "asset_generating"
   | "asset_review"
-  | "ready_to_generate"
+  | "assets_confirmed"
   | "revision"
   | "revision_thinking"
   | "cooking"
   | "ready"
-  | "playable_ready"
   | "failed";
 
 export interface StudioFollowup {
@@ -26,6 +26,13 @@ export interface StudioChatMessage {
   content: string;
   meta: string;
   assetCandidates?: AssetCandidates;
+  assetProgress?: AssetProgressStep[];
+}
+
+export interface AssetProgressStep {
+  slot: "background" | "player" | "hazard" | "collectible";
+  label: string;
+  status: "generating";
 }
 
 export function buildGenerationIdea(idea: string, followups: StudioFollowup[]): string {
@@ -157,42 +164,43 @@ export function buildStudioChatMessages({
   }
 
   if (assetCandidateStatus === "loading") {
+    const assetProgress = createAssetProgressSteps();
     result.push({
       id: "asset-candidates-loading",
       role: "assistant",
-      meta: "素材提示词",
-      content: "AI 正在生成素材提示词。你可以先生成游戏，素材完成后会在这里确认。"
+      meta: "素材生成",
+      content: [
+        "AI 正在根据开发提示词生成核心素材。",
+        ...assetProgress.map((step) => `${step.label}生成中`)
+      ].join("\n"),
+      assetProgress
     });
   } else if (assetCandidateStatus === "failed") {
     result.push({
       id: "asset-candidates-failed",
       role: "assistant",
-      meta: "素材提示词",
-      content: "素材提示词生成失败，已使用占位资源继续，不影响游戏试玩。"
+      meta: "素材生成失败",
+      content: "图片生成失败。请重试、上传替换素材，或在素材卡中使用占位图继续；确认核心素材前不会生成游戏。"
     });
   } else if (assetCandidates) {
     result.push({
       id: "asset-candidates",
       role: "assistant",
       meta: "素材确认",
-      content: "素材已生成，可选确认。当前游戏可先用占位资源生成，确认素材后下一次生成会采用这些方向。",
+      content: "请确认背景、主角、危险物和收集物。确认后，最终游戏会通过 asset-pack.json 使用这些素材。",
       assetCandidates
     });
   }
 
-  if (phase === "ready_to_generate") {
+  if (phase === "assets_confirmed") {
     result.push({
-      id: "assistant-ready-to-generate",
+      id: "assistant-assets-confirmed",
       role: "assistant",
-      meta: messages.chat.readyMeta,
-      content: [
-        "我已经可以开始生成首版游戏。",
-        `${messages.thinking.goal}: ${project.gameConfig.playerGoal}`,
-        `${messages.thinking.controls}: ${project.gameConfig.controls.join(" / ")}`,
-        `${messages.thinking.assets}: ${project.assetPack.assets.length} items`
-      ].join("\n")
+      meta: "素材已确认",
+      content: "核心素材已确认。现在可以生成可玩游戏，Phaser 运行时会从最终 asset-pack.json 读取这些素材。"
     });
-  } else if (phase !== "chatting") {
+  }
+  if (phase === "ready") {
     const matureBrief = project.artifacts.find((artifact) => artifact.fileName === "mature-game-brief.json");
     const matureSummary =
       typeof matureBrief?.content === "object" && matureBrief.content !== null
@@ -216,6 +224,15 @@ export function buildStudioChatMessages({
   return result;
 }
 
+function createAssetProgressSteps(): AssetProgressStep[] {
+  return [
+    { slot: "background", label: "背景", status: "generating" },
+    { slot: "player", label: "主角", status: "generating" },
+    { slot: "hazard", label: "危险物", status: "generating" },
+    { slot: "collectible", label: "收集物", status: "generating" }
+  ];
+}
+
 function dedupeFollowups(followups: StudioFollowup[]): StudioFollowup[] {
   const seen = new Set<string>();
   return followups.filter((followup) => {
@@ -225,3 +242,4 @@ function dedupeFollowups(followups: StudioFollowup[]): StudioFollowup[] {
     return true;
   });
 }
+

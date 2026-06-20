@@ -1,6 +1,7 @@
 import type { MockProject, QaReport } from "../core/types";
 import { validateAssetReferences } from "../core/pipeline";
 import { getTemplateSkill } from "./templateSkills";
+import { createRuntimeAssetReport } from "../ui/previewAssets";
 
 export interface DynamicVerificationEvidence {
   canvasNonEmpty: boolean;
@@ -16,8 +17,9 @@ export function runDynamicVerification(project: MockProject): QaReport & { evide
   const unsupportedControl = project.gameConfig.controls.find(
     (control) => !templateSkill.runtimeContract.supportedControls.includes(control)
   );
+  const runtimeAssetReport = createRuntimeAssetReport(project.assetPack);
   const evidence: DynamicVerificationEvidence = {
-    canvasNonEmpty: project.assetPack.assets.some((asset) => asset.fileUrl.startsWith("data:")),
+    canvasNonEmpty: runtimeAssetReport.ready,
     consoleErrorCount: missingAssets.length,
     screenshotCaptured: true,
     playerMoved: !unsupportedControl,
@@ -53,7 +55,7 @@ export function runDynamicVerification(project: MockProject): QaReport & { evide
       ? [
           ...missingAssets.map((assetKey) => `dynamic-verification: missing asset ${assetKey}`),
           ...(unsupportedControl ? [`dynamic-verification: unsupported control ${unsupportedControl}`] : []),
-          ...(!evidence.canvasNonEmpty ? ["dynamic-verification: blank canvas risk"] : [])
+          ...(!evidence.canvasNonEmpty ? runtimeAssetReport.errors.map((error) => `dynamic-verification: ${error}`) : [])
         ]
       : ["dynamic-verification: no blocking runtime issues found"],
     evidence

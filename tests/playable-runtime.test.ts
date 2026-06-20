@@ -5,11 +5,24 @@ import {
   createPlayableRules,
   createPlayableRuntimeState,
   hitPlayableHazard,
+  PREVIEW_PRIMARY_ACTION_EVENT,
+  readPreviewActionLabel,
   restartPlayableRuntime,
   startPlayableRuntime
 } from "../src/ui/playableRuntime";
 
 describe("playable runtime state", () => {
+  it("exposes a stable DOM fallback event for starting the Phaser preview", () => {
+    expect(PREVIEW_PRIMARY_ACTION_EVENT).toBe("wow-game-preview-primary-action");
+  });
+
+  it("shows a DOM action only when the canvas needs an explicit start or restart", () => {
+    expect(readPreviewActionLabel("idle")).toBe("Start game");
+    expect(readPreviewActionLabel("playing")).toBeUndefined();
+    expect(readPreviewActionLabel("won")).toBe("Restart");
+    expect(readPreviewActionLabel("lost")).toBe("Restart");
+  });
+
   it("starts from idle and enters playing when the player starts", () => {
     const state = createPlayableRuntimeState();
     const playing = startPlayableRuntime(state, "2026-06-17T00:00:00.000Z");
@@ -35,6 +48,14 @@ describe("playable runtime state", () => {
 
     expect(createPlayableRules({ configWinScore: 0, collectibleValue: -1, hookLives: 0 })).toEqual({
       winScore: 1,
+      collectibleValue: 1,
+      lives: 1
+    });
+  });
+
+  it("prevents one generated collectible from instantly completing the whole game", () => {
+    expect(createPlayableRules({ configWinScore: 6, hookWinTarget: 6, collectibleValue: 6 })).toEqual({
+      winScore: 6,
       collectibleValue: 1,
       lives: 1
     });

@@ -1,4 +1,4 @@
-import type { AssetPack } from "../core/types";
+import type { AssetPack, RuntimeAssetReport, RuntimeAssetSlotName, RuntimeAssetSlotReport } from "../core/types";
 
 export interface PreviewRuntimeAssets {
   player?: string;
@@ -14,6 +14,20 @@ export interface PreviewRuntimeAssets {
     lose?: string;
   };
 }
+
+const coreSlotKeys: Record<RuntimeAssetSlotName, string> = {
+  background: "world.background",
+  player: "player.ship",
+  hazard: "hazard.enemy",
+  collectible: "item.collectible"
+};
+
+const runtimeSlotSizes: Record<RuntimeAssetSlotName, { width: number; height: number; slotRole: "background" | "sprite" }> = {
+  background: { width: 960, height: 540, slotRole: "background" },
+  player: { width: 64, height: 64, slotRole: "sprite" },
+  hazard: { width: 58, height: 58, slotRole: "sprite" },
+  collectible: { width: 42, height: 42, slotRole: "sprite" }
+};
 
 export function selectPreviewRuntimeAssets(assetPack?: AssetPack): PreviewRuntimeAssets {
   if (!assetPack) return { sfx: {} };
@@ -32,10 +46,10 @@ export function selectPreviewRuntimeAssets(assetPack?: AssetPack): PreviewRuntim
       asset.status !== "failed"
   );
   return {
-    player: findAssetUrl(imageAssets, ["player.ship", "player.hero", "player.cursor", "player.tower", "player.panel"]),
-    collectible: findAssetUrl(imageAssets, ["item.collectible"]),
-    hazard: findAssetUrl(imageAssets, ["hazard.enemy", "hazard.spike", "hazard.block", "hazard.timer"]),
-    background: findAssetUrl(imageAssets, ["world.background", "cover.main"]),
+    player: findAssetUrl(imageAssets, [coreSlotKeys.player]),
+    collectible: findAssetUrl(imageAssets, [coreSlotKeys.collectible]),
+    hazard: findAssetUrl(imageAssets, [coreSlotKeys.hazard]),
+    background: findAssetUrl(imageAssets, [coreSlotKeys.background]),
     tile: findAssetUrl(imageAssets, ["world.tiles", "world.path"]),
     bgm: findAssetUrl(audioAssets, ["bgm.loop"]),
     sfx: {
@@ -47,6 +61,51 @@ export function selectPreviewRuntimeAssets(assetPack?: AssetPack): PreviewRuntim
   };
 }
 
+export function createRuntimeAssetReport(assetPack?: AssetPack): RuntimeAssetReport {
+  const slots = (Object.keys(coreSlotKeys) as RuntimeAssetSlotName[]).map((slot) => {
+    const assetKey = coreSlotKeys[slot];
+    const size = runtimeSlotSizes[slot];
+    const asset = assetPack?.assets.find((item) => item.assetKey === assetKey);
+    const fileUrl = asset?.fileUrl ?? "";
+    const validUrl = Boolean(fileUrl) && isRuntimeImageUrl(fileUrl);
+    const failed = asset?.status === "failed" || asset?.status === "missing";
+    const validType = asset ? asset.type === "image" || asset.type === "ui" : false;
+    const status: RuntimeAssetSlotReport["status"] = !asset
+      ? "missing"
+      : failed
+        ? "failed"
+        : validUrl && validType
+          ? "bound"
+          : "invalid_url";
+    return {
+      slot,
+      assetKey,
+      provider: asset?.provider ?? "",
+      source: asset?.source ?? "mock",
+      fileUrl,
+      slotRole: size.slotRole,
+      runtimeWidth: size.width,
+      runtimeHeight: size.height,
+      status,
+      error:
+        asset?.error ||
+        (!validType && asset
+          ? `Runtime ${slot} asset must be image/ui, got ${asset.type}.`
+          : status === "invalid_url"
+            ? "Runtime image URL must be localized before Phaser preview."
+            : undefined)
+    };
+  });
+  const errors = slots
+    .filter((slot) => slot.status !== "bound")
+    .map((slot) => `${slot.slot}:${slot.assetKey}:${slot.error ?? slot.status}`);
+  return {
+    ready: errors.length === 0,
+    slots,
+    errors
+  };
+}
+
 function isPreviewImageUrl(fileUrl: string): boolean {
   return (
     fileUrl.startsWith("data:image") ||
@@ -54,6 +113,10 @@ function isPreviewImageUrl(fileUrl: string): boolean {
     fileUrl.startsWith("blob:") ||
     /^https?:\/\//.test(fileUrl)
   );
+}
+
+function isRuntimeImageUrl(fileUrl: string): boolean {
+  return fileUrl.startsWith("data:image") || fileUrl.startsWith("/projects/") || fileUrl.startsWith("blob:");
 }
 
 function isPreviewAudioUrl(fileUrl: string): boolean {

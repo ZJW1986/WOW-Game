@@ -1,4 +1,7 @@
 import type {
+  AssetPack,
+  AssetCandidate,
+  AssetCandidates,
   ConfirmedAssets,
   DesignBrief,
   ReferencePackageSummary,
@@ -10,12 +13,20 @@ import type {
 } from "../core/types";
 import type { StartModelId } from "../core/start";
 import { createPublishRecord, runMockPipeline } from "../core/pipeline";
-import { createGenerationService, type GenerationServiceOptions } from "./generationService";
+import {
+  createBrowserVerificationReport,
+  createGenerationService,
+  createPlayableDirector,
+  type GenerationServiceOptions
+} from "./generationService";
+import { validateCoreAssetCandidate } from "./visualAssetValidation";
 import { createPlayableStore, type PlayableStoreOptions } from "./playableStore";
 import {
   createFallbackEditPlan,
   parseUploadedPackage
 } from "./uploadedPackageService";
+import { createRuntimeAssetReport } from "../ui/previewAssets";
+import { processGeneratedImageForSlot } from "./imageCutoutService";
 
 export interface GenerationApiRequest {
   method: string;
@@ -32,6 +43,14 @@ export interface GenerationApiOptions {
   env?: Record<string, string | undefined>;
   fetcher?: GenerationServiceOptions["fetcher"];
   storeIO?: Pick<PlayableStoreOptions, "writeText" | "readText" | "writeBytes" | "readBytes" | "ensureDir">;
+}
+
+let assetBatchSequence = 0;
+
+function createAssetBatchId(slot?: string): string {
+  assetBatchSequence += 1;
+  const suffix = slot ? `-${safeAssetFileName(slot)}` : "";
+  return `assets-${Date.now().toString(36)}-${assetBatchSequence.toString(36)}${suffix}`;
 }
 
 export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
@@ -247,7 +266,8 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         const service = createGenerationService({
           deepseekApiKey: env.DEEPSEEK_API_KEY,
           deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
-          fetcher: options.fetcher
+          fetcher: options.fetcher,
+          runtimeEnv: env
         });
         const referencePackageSummary = await readReferencePackageSummary(
           store,
@@ -275,22 +295,101 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         const service = createGenerationService({
           deepseekApiKey: env.DEEPSEEK_API_KEY,
           deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
-          fetcher: options.fetcher
+          fetcher: options.fetcher,
+          runtimeEnv: env
         });
         const referencePackageSummary = await readReferencePackageSummary(
           store,
           optionalString(request.body.referencePackageId),
           optionalString(request.body.referenceVersionId)
         );
+        const idea = requireString(request.body.idea, "idea");
         const result = await service.generateAssetCandidates({
-          idea: requireString(request.body.idea, "idea"),
+          idea,
           templateFamily: parseTemplateFamily(request.body.templateFamily),
           model: parseModel(request.body.model),
           designBrief: parseOptionalDesignBrief(request.body.designBrief),
+          answers: parseAnswers(request.body.answers),
           referencePackageSummary,
           userMaterials: parseUserMaterials(request.body.userMaterials)
         });
+        const assetBatchId = createAssetBatchId();
+        await localizeAssetCandidates(store, result.assetCandidates, idea, assetBatchId);
+        result.assetCandidates = {
+          candidates: result.assetCandidates.candidates.map((candidate) =>
+            candidate.validationStatus === "failed" || candidate.error
+              ? candidate
+              : validateCoreAssetCandidate(candidate)
+          )
+        };
+        result.confirmedAssets = {
+          assets: result.assetCandidates.candidates
+            .filter(isConfirmableCoreCandidate)
+            .map((candidate) => ({
+              ...candidate,
+              approvalStatus: "approved" as const
+            }))
+        };
         return { status: 200, body: result as unknown as Record<string, any> };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/regenerate-asset-candidate") {
+      try {
+        const service = createGenerationService({
+          deepseekApiKey: env.DEEPSEEK_API_KEY,
+          deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
+          fetcher: options.fetcher,
+          runtimeEnv: env
+        });
+        const idea = requireString(request.body.idea, "idea");
+        const candidate = parseAssetCandidateInput(request.body.candidate);
+        const result = await service.regenerateAssetCandidate({
+          idea,
+          templateFamily: parseTemplateFamily(request.body.templateFamily),
+          candidate
+        });
+        const assetBatchId = createAssetBatchId(candidate.slot);
+        await localizeAssetCandidate(store, result.assetCandidate, idea, assetBatchId);
+        result.assetCandidate =
+          result.assetCandidate.validationStatus === "failed" || result.assetCandidate.error
+            ? result.assetCandidate
+            : validateCoreAssetCandidate(result.assetCandidate);
+        return { status: 200, body: result as unknown as Record<string, any> };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/process-uploaded-material") {
+      try {
+        const idea = requireString(request.body.idea, "idea");
+        const slot = parseUserMaterialSlot(request.body.slot);
+        const assetKey = runtimeAssetKeyForSlot(slot);
+        const fileName = requireString(request.body.fileName, "fileName");
+        const fileBase64 = requireString(request.body.fileBase64, "fileBase64");
+        const contentType = requireString(request.body.contentType, "contentType");
+        const bytes = decodeBase64(fileBase64);
+        const result = await processUploadedMaterialCandidate(store, {
+          idea,
+          slot,
+          assetKey,
+          fileName,
+          contentType,
+          bytes,
+          label: optionalString(request.body.label),
+          prompt: optionalString(request.body.prompt),
+          style: optionalString(request.body.style)
+        });
+        return { status: 200, body: { assetCandidate: result } };
       } catch (error) {
         return {
           status: 400,
@@ -304,7 +403,8 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         const service = createGenerationService({
           deepseekApiKey: env.DEEPSEEK_API_KEY,
           deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
-          fetcher: options.fetcher
+          fetcher: options.fetcher,
+          runtimeEnv: env
         });
         const referencePackageSummary = await readReferencePackageSummary(
           store,
@@ -335,7 +435,8 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         const service = createGenerationService({
           deepseekApiKey: env.DEEPSEEK_API_KEY,
           deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
-          fetcher: options.fetcher
+          fetcher: options.fetcher,
+          runtimeEnv: env
         });
         const referencePackageSummary = await readReferencePackageSummary(
           store,
@@ -369,10 +470,21 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
     }
 
     try {
+      const confirmedAssets = parseOptionalConfirmedAssets(request.body.confirmedAssets);
+      const confirmedAssetError = validateConfirmedCoreAssetInputs(confirmedAssets, request.body.allowPlaceholderAssets === true);
+      if (confirmedAssetError) {
+        return {
+          status: 400,
+          body: {
+            error: confirmedAssetError
+          }
+        };
+      }
       const service = createGenerationService({
         deepseekApiKey: env.DEEPSEEK_API_KEY,
         deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
-        fetcher: options.fetcher
+        fetcher: options.fetcher,
+        runtimeEnv: env
       });
       const referencePackageId = optionalString(request.body.referencePackageId);
       const referenceVersionId = optionalString(request.body.referenceVersionId);
@@ -387,11 +499,35 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         referencePackageSummary,
         userMaterials: parseUserMaterials(request.body.userMaterials),
         designBrief: parseOptionalDesignBrief(request.body.designBrief),
-        confirmedAssets: parseOptionalConfirmedAssets(request.body.confirmedAssets),
+        confirmedAssets,
         revisionHistory: parseRevisionHistory(request.body.revisionHistory)
       });
       if (referencePackageId && referenceVersionId && !referencePackageSummary) {
         result.fallbacksUsed.push("reference_package_missing");
+      }
+      const localizationError = await localizeRemoteImageAssets(store, result.project.id, result.project.version.id, result.project.assetPack);
+      if (localizationError) {
+        return {
+          status: 400,
+          body: { error: localizationError }
+        };
+      }
+      result.runtimeAssetReport = createRuntimeAssetReport(result.project.assetPack);
+      result.playableDirector = createPlayableDirector(
+        result.project.gameConfig,
+        result.project.gameHooks,
+        result.runtimeAssetReport
+      );
+      result.verificationReport = createBrowserVerificationReport(result.runtimeAssetReport, result.playableDirector);
+      result.deliveryReady = result.verificationReport.passed;
+      syncDeliveryArtifacts(result.project, result.playableDirector, result.runtimeAssetReport, result.verificationReport);
+      syncAssetPackArtifact(result.project);
+      const finalAssetError = validateFinalCoreAssets(result.project.assetPack, confirmedAssets);
+      if (finalAssetError) {
+        return {
+          status: 400,
+          body: { error: finalAssetError }
+        };
       }
       await store.savePlayable({
         project: result.project,
@@ -407,6 +543,432 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       };
     }
   };
+}
+
+async function localizeRemoteImageAssets(
+  store: ReturnType<typeof createPlayableStore>,
+  projectId: string,
+  versionId: string,
+  assetPack: AssetPack
+): Promise<string | null> {
+  const errors: string[] = [];
+  await Promise.all(
+    assetPack.assets.map(async (asset) => {
+      if ((asset.type !== "image" && asset.type !== "ui") || !/^https?:\/\//.test(asset.fileUrl)) return;
+      try {
+        const localized = await localizeImageUrl(store, {
+          projectId,
+          versionId,
+          assetKey: asset.assetKey,
+          slot: inferSlotFromAssetKey(asset.assetKey),
+          remoteUrl: asset.fileUrl,
+          prompt: asset.prompt,
+          style: asset.style,
+          idea: asset.purpose
+        });
+        asset.fileUrl = localized.localUrl;
+        asset.previewUrl = localized.localUrl;
+        asset.generationParams = {
+          ...asset.generationParams,
+          originalRemoteUrl: localized.originalRemoteUrl,
+          localized: true,
+          originalLibraryUrl: localized.originalLibraryUrl,
+          processedLibraryUrl: localized.libraryUrl,
+          cutoutApplied: localized.cutoutApplied,
+          cutoutMethod: localized.cutoutMethod ?? ""
+        };
+        asset.error = undefined;
+      } catch (error) {
+        const message = `Remote image could not be localized for ${asset.assetKey}: ${error instanceof Error ? error.message : String(error)}`;
+        asset.status = "failed";
+        asset.error = message;
+        errors.push(message);
+      }
+    })
+  );
+  return errors.length > 0 ? errors.join("; ") : null;
+}
+
+async function localizeAssetCandidates(
+  store: ReturnType<typeof createPlayableStore>,
+  assetCandidates: AssetCandidates,
+  idea: string,
+  assetBatchId: string
+): Promise<void> {
+  await Promise.all(
+    assetCandidates.candidates.map((candidate) => localizeAssetCandidate(store, candidate, idea, assetBatchId))
+  );
+}
+
+async function localizeAssetCandidate(
+  store: ReturnType<typeof createPlayableStore>,
+  candidate: AssetCandidate,
+  idea: string,
+  assetBatchId: string
+): Promise<void> {
+  if (
+    (candidate.type !== "image" && candidate.type !== "ui") ||
+    (!/^https?:\/\//.test(candidate.fileUrl) && !candidate.fileUrl.startsWith("data:image"))
+  ) return;
+  try {
+    const localized = await localizeImageUrl(store, {
+      projectId: "asset-candidates",
+      versionId: assetBatchId,
+      assetKey: candidate.assetKey,
+      slot: candidate.slot,
+      remoteUrl: candidate.fileUrl,
+      prompt: candidate.prompt,
+      style: candidate.style,
+      idea
+    });
+    candidate.fileUrl = localized.localUrl;
+    candidate.previewUrl = localized.localUrl;
+    candidate.generationParams = {
+      ...(candidate.generationParams ?? {}),
+      assetBatchId,
+      slotRevisionId: `${assetBatchId}-${candidate.slot}`,
+      originalRemoteUrl: localized.originalRemoteUrl,
+      localized: true,
+      libraryFileUrl: localized.libraryUrl,
+      originalLibraryUrl: localized.originalLibraryUrl,
+      processedLibraryUrl: localized.libraryUrl,
+      libraryKeywords: localized.keywords.join(","),
+      cutoutApplied: localized.cutoutApplied,
+      cutoutMethod: localized.cutoutMethod ?? "",
+      chromaKeyColor: localized.chromaKeyColor ?? "",
+      chromaTolerance: localized.chromaTolerance ?? 0,
+      edgeResidueScore: localized.edgeResidueScore ?? 0,
+      spillScore: localized.spillScore ?? 0,
+      subjectCoverage: localized.subjectCoverage ?? 0
+    };
+    const validated = validateCoreAssetCandidate({
+      ...candidate,
+      fileUrl: localized.validationUrl,
+      previewUrl: localized.validationUrl
+    });
+    const validationErrors = [
+      ...(validated.validationErrors ?? []),
+      ...(localized.validationErrors ?? [])
+    ];
+    const fatalValidationErrors = validationErrors.filter(isFatalAssetValidationError);
+    candidate.slotRole = validated.slotRole;
+    candidate.requiresTransparency = validated.requiresTransparency;
+    candidate.subjectBounds = localized.subjectBounds ?? validated.subjectBounds;
+    candidate.alphaCoverage = localized.alphaCoverage ?? validated.alphaCoverage;
+    candidate.validationStatus =
+      fatalValidationErrors.length > 0 ? "failed" : validationErrors.length > 0 ? "warning" : validated.validationStatus;
+    candidate.validationErrors = validationErrors;
+    if (candidate.validationStatus === "failed") {
+      candidate.error = fatalValidationErrors.join(" ") || "Visual asset validation failed.";
+      candidate.approvalStatus = "rejected";
+      return;
+    }
+    candidate.error = undefined;
+  } catch (error) {
+    candidate.fileUrl = "";
+    candidate.previewUrl = "";
+    candidate.error = `Remote image could not be localized: ${error instanceof Error ? error.message : String(error)}`;
+    candidate.approvalStatus = "rejected";
+  }
+}
+
+function isFatalAssetValidationError(error: string): boolean {
+  return !/edge residue|touches the image edge/i.test(error);
+}
+
+async function localizeImageUrl(
+  store: ReturnType<typeof createPlayableStore>,
+  input: {
+    projectId: string;
+    versionId: string;
+    assetKey: string;
+    slot: string;
+    remoteUrl: string;
+    prompt: string;
+    style: string;
+    idea: string;
+  }
+): Promise<{
+  localUrl: string;
+  libraryUrl: string;
+  originalRemoteUrl: string;
+  keywords: string[];
+  validationUrl: string;
+  originalLibraryUrl: string;
+  cutoutApplied: boolean;
+  cutoutMethod?: string;
+  alphaCoverage?: number;
+  subjectBounds?: { x: number; y: number; width: number; height: number };
+  chromaKeyColor?: string;
+  chromaTolerance?: number;
+  edgeResidueScore?: number;
+  spillScore?: number;
+  subjectCoverage?: number;
+  validationErrors?: string[];
+}> {
+  const localizedInput = await readImageInput(input.remoteUrl);
+  const contentType = localizedInput.contentType;
+  const bytes = localizedInput.bytes;
+  const extension = extensionForContentType(contentType, input.remoteUrl);
+  const originalFileName = `${safeAssetFileName(input.assetKey)}.${extension}`;
+  const assetPath = `generated/original/${originalFileName}`;
+  await store.saveProjectAsset(input.projectId, input.versionId, assetPath, bytes);
+  const originalLocalUrl = `/projects/${input.projectId}/${input.versionId}/assets/${assetPath}`;
+  const keywords = extractAssetLibraryKeywords(input.idea, input.prompt, input.style);
+  const keywordPath = keywords.length > 0 ? keywords.join("-") : "general";
+  const libraryAssetPath = `${keywordPath}/original/${originalFileName}`;
+  await store.saveLibraryAsset(libraryAssetPath, bytes);
+  const originalLibraryUrl = `/asset-library/assets/${libraryAssetPath}`;
+  const processed = await processGeneratedImageForSlot({
+    slot: input.slot,
+    assetKey: input.assetKey,
+    bytes,
+    contentType
+  });
+  const processedFileName = processed.cutoutApplied
+    ? `${safeAssetFileName(input.assetKey)}.cutout.png`
+    : originalFileName;
+  const processedAssetPath = processed.cutoutApplied
+    ? `generated/processed/${processedFileName}`
+    : assetPath;
+  if (processed.cutoutApplied) {
+    await store.saveProjectAsset(input.projectId, input.versionId, processedAssetPath, processed.outputBytes);
+  }
+  const localUrl = processed.cutoutApplied
+    ? `/projects/${input.projectId}/${input.versionId}/assets/${processedAssetPath}`
+    : originalLocalUrl;
+  const processedLibraryPath = processed.cutoutApplied
+    ? `${keywordPath}/processed/${processedFileName}`
+    : libraryAssetPath;
+  if (processed.cutoutApplied) {
+    await store.saveLibraryAsset(processedLibraryPath, processed.outputBytes);
+  }
+  const libraryUrl = `/asset-library/assets/${processedLibraryPath}`;
+  await appendAssetLibraryIndex(store, {
+    assetKey: input.assetKey,
+    slot: input.slot,
+    fileUrl: libraryUrl,
+    originalFileUrl: originalLibraryUrl,
+    sourceProjectId: input.projectId,
+    sourceVersionId: input.versionId,
+    originalRemoteUrl: input.remoteUrl,
+    prompt: input.prompt,
+    style: input.style,
+    keywords,
+    provider: "agnes",
+    cutoutApplied: processed.cutoutApplied,
+    cutoutMethod: processed.cutoutMethod,
+    savedAt: new Date("2026-06-20T00:00:00.000Z").toISOString()
+  });
+  return {
+    localUrl,
+    libraryUrl,
+    originalRemoteUrl: input.remoteUrl,
+    keywords,
+    validationUrl: processed.outputExtension === "png"
+      ? `data:image/png;base64,${Buffer.from(processed.outputBytes).toString("base64")}`
+      : localUrl,
+    originalLibraryUrl,
+    cutoutApplied: processed.cutoutApplied,
+    cutoutMethod: processed.cutoutMethod,
+    alphaCoverage: processed.validation.alphaCoverage,
+    subjectBounds: processed.validation.subjectBounds,
+    chromaKeyColor: processed.validation.chromaKeyColor,
+    chromaTolerance: processed.validation.chromaTolerance,
+    edgeResidueScore: processed.validation.edgeResidueScore,
+    spillScore: processed.validation.spillScore,
+    subjectCoverage: processed.validation.subjectCoverage,
+    validationErrors: processed.validation.validationErrors
+  };
+}
+
+async function readImageInput(url: string): Promise<{ contentType: string; bytes: Uint8Array }> {
+  if (url.startsWith("data:image")) {
+    const match = url.match(/^data:([^;,]+)(?:;base64)?,/);
+    return {
+      contentType: match?.[1] ?? "image/png",
+      bytes: decodeBase64(url)
+    };
+  }
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return {
+    contentType: response.headers.get("content-type") ?? "",
+    bytes: new Uint8Array(await response.arrayBuffer())
+  };
+}
+
+async function processUploadedMaterialCandidate(
+  store: ReturnType<typeof createPlayableStore>,
+  input: {
+    idea: string;
+    slot: AssetCandidate["slot"];
+    assetKey: string;
+    fileName: string;
+    contentType: string;
+    bytes: Uint8Array;
+    label?: string;
+    prompt?: string;
+    style?: string;
+  }
+): Promise<AssetCandidate> {
+  const projectId = "uploaded-materials";
+  const versionId = "draft";
+  const extension = extensionForContentType(input.contentType, input.fileName);
+  const originalFileName = `${safeAssetFileName(input.assetKey)}.${extension}`;
+  const originalAssetPath = `uploaded/original/${originalFileName}`;
+  await store.saveProjectAsset(projectId, versionId, originalAssetPath, input.bytes);
+  const originalLocalUrl = `/projects/${projectId}/${versionId}/assets/${originalAssetPath}`;
+  const processed = await processGeneratedImageForSlot({
+    slot: input.slot,
+    assetKey: input.assetKey,
+    bytes: input.bytes,
+    contentType: input.contentType
+  });
+  const processedFileName = processed.cutoutApplied
+    ? `${safeAssetFileName(input.assetKey)}.cutout.png`
+    : originalFileName;
+  const processedAssetPath = processed.cutoutApplied
+    ? `uploaded/processed/${processedFileName}`
+    : originalAssetPath;
+  if (processed.cutoutApplied) {
+    await store.saveProjectAsset(projectId, versionId, processedAssetPath, processed.outputBytes);
+  }
+  const localUrl = processed.cutoutApplied
+    ? `/projects/${projectId}/${versionId}/assets/${processedAssetPath}`
+    : originalLocalUrl;
+  const keywords = extractAssetLibraryKeywords(input.idea, input.prompt ?? input.fileName, input.style ?? "");
+  const keywordPath = keywords.length > 0 ? keywords.join("-") : "uploaded";
+  const originalLibraryPath = `${keywordPath}/uploaded/original/${originalFileName}`;
+  await store.saveLibraryAsset(originalLibraryPath, input.bytes);
+  const processedLibraryPath = processed.cutoutApplied
+    ? `${keywordPath}/uploaded/processed/${processedFileName}`
+    : originalLibraryPath;
+  if (processed.cutoutApplied) {
+    await store.saveLibraryAsset(processedLibraryPath, processed.outputBytes);
+  }
+  const candidate = validateCoreAssetCandidate({
+    slot: input.slot,
+    assetKey: input.assetKey,
+    type: "image",
+    label: input.label ?? input.fileName,
+    prompt: input.prompt ?? input.fileName,
+    style: input.style ?? "uploaded",
+    purpose: input.label ?? input.fileName,
+    acceptedFileTypes: ["image/*"],
+    previewUrl: localUrl,
+    fileUrl: localUrl,
+    source: "uploaded",
+    provider: "uploaded",
+    model: "user-file",
+    approvalStatus: "pending",
+    generationParams: {
+      fileName: input.fileName,
+      contentType: input.contentType,
+      originalLibraryUrl: `/asset-library/assets/${originalLibraryPath}`,
+      processedLibraryUrl: `/asset-library/assets/${processedLibraryPath}`,
+      cutoutApplied: processed.cutoutApplied,
+      cutoutMethod: processed.cutoutMethod ?? "",
+      chromaKeyColor: processed.validation.chromaKeyColor ?? "",
+      chromaTolerance: processed.validation.chromaTolerance ?? 0,
+      edgeResidueScore: processed.validation.edgeResidueScore ?? 0,
+      spillScore: processed.validation.spillScore ?? 0,
+      subjectCoverage: processed.validation.subjectCoverage ?? 0
+    },
+    subjectBounds: processed.validation.subjectBounds,
+    alphaCoverage: processed.validation.alphaCoverage,
+    validationStatus: processed.validation.validationStatus,
+    validationErrors: processed.validation.validationErrors
+  } as AssetCandidate);
+  const validationErrors = [
+    ...(candidate.validationErrors ?? []),
+    ...processed.validation.validationErrors
+  ];
+  return {
+    ...candidate,
+    validationStatus: validationErrors.length > 0 ? "failed" : candidate.validationStatus,
+    validationErrors,
+    error: validationErrors.length > 0 ? validationErrors.join(" ") : undefined,
+    approvalStatus: validationErrors.length > 0 ? "rejected" : "approved"
+  };
+}
+
+async function appendAssetLibraryIndex(
+  store: ReturnType<typeof createPlayableStore>,
+  entry: Record<string, unknown>
+): Promise<void> {
+  const index = await store.readAssetLibraryIndex();
+  const nextIndex = [
+    entry,
+    ...index.filter(
+      (item) =>
+        !isRecord(item) ||
+        item.assetKey !== entry.assetKey ||
+        item.fileUrl !== entry.fileUrl
+    )
+  ];
+  await store.saveAssetLibraryIndex(nextIndex);
+}
+
+function extractAssetLibraryKeywords(idea: string, prompt: string, style: string): string[] {
+  const text = `${idea} ${prompt} ${style}`;
+  const keywordPatterns = [
+    "太空猫",
+    "躲避游戏",
+    "飞船",
+    "陨石",
+    "鱼干",
+    "星空",
+    "科幻",
+    "霓虹",
+    "平台跳跃",
+    "机器人",
+    "金币"
+  ];
+  const keywords = keywordPatterns.filter((keyword) => text.includes(keyword));
+  if (keywords.length > 0) return keywords.slice(0, 4);
+  return text
+    .split(/[\s,，。:：;；、]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2)
+    .slice(0, 4);
+}
+
+function syncAssetPackArtifact(project: { artifacts: Array<{ fileName: string; content: unknown }>; assetPack: AssetPack }) {
+  project.artifacts = project.artifacts.map((artifact) =>
+    artifact.fileName === "asset-pack.json" ? { ...artifact, content: project.assetPack } : artifact
+  );
+}
+
+function syncDeliveryArtifacts(
+  project: { artifacts: Array<{ fileName: string; content: unknown }> },
+  playableDirector: unknown,
+  runtimeAssetReport: unknown,
+  verificationReport: unknown
+) {
+  project.artifacts = project.artifacts.map((artifact) => {
+    if (artifact.fileName === "playable-director.json") return { ...artifact, content: playableDirector };
+    if (artifact.fileName === "runtime-asset-report.json") return { ...artifact, content: runtimeAssetReport };
+    if (artifact.fileName === "browser-verification-report.json") return { ...artifact, content: verificationReport };
+    return artifact;
+  });
+}
+
+function safeAssetFileName(assetKey: string): string {
+  return assetKey.replace(/[^a-z0-9._-]+/gi, "_");
+}
+
+function extensionForContentType(contentType: string, url: string): string {
+  const lowerType = contentType.toLowerCase();
+  if (lowerType.includes("image/webp")) return "webp";
+  if (lowerType.includes("image/jpeg")) return "jpg";
+  if (lowerType.includes("image/svg")) return "svg";
+  if (lowerType.includes("image/png")) return "png";
+  const lowerUrl = url.toLowerCase().split("?")[0];
+  if (lowerUrl.endsWith(".webp")) return "webp";
+  if (lowerUrl.endsWith(".jpg") || lowerUrl.endsWith(".jpeg")) return "jpg";
+  if (lowerUrl.endsWith(".svg")) return "svg";
+  return "png";
 }
 
 async function readReferencePackageSummary(
@@ -508,6 +1070,29 @@ function parseTemplateFamily(value: unknown): TemplateFamily {
   return "top_down";
 }
 
+function parseUserMaterialSlot(value: unknown): AssetCandidate["slot"] {
+  if (
+    value === "background" ||
+    value === "player" ||
+    value === "hazard" ||
+    value === "collectible"
+  ) {
+    return value;
+  }
+  throw new Error("Unsupported uploaded material slot.");
+}
+
+function runtimeAssetKeyForSlot(slot: AssetCandidate["slot"]): string {
+  if (slot === "background") return "world.background";
+  if (slot === "player") return "player.ship";
+  if (slot === "hazard") return "hazard.enemy";
+  if (slot === "collectible") return "item.collectible";
+  if (slot === "cover") return "cover.main";
+  if (slot === "bgm") return "bgm.loop";
+  if (slot === "sfx") return "sfx.collect";
+  return "player.ship";
+}
+
 function parseModel(value: unknown): StartModelId {
   if (value === "deepseek-v4-flash" || value === "mock-designer" || value === "custom-provider") {
     return value;
@@ -525,13 +1110,12 @@ function parseAnswers(value: unknown): UserAnswer[] {
         typeof answer === "object" &&
         answer !== null &&
         typeof (answer as UserAnswer).questionId === "string" &&
-        typeof (answer as UserAnswer).value === "string" &&
-        typeof (answer as UserAnswer).answeredAt === "string"
+        typeof (answer as UserAnswer).value === "string"
     )
     .map((answer) => ({
       questionId: answer.questionId,
       value: answer.value,
-      answeredAt: answer.answeredAt
+      answeredAt: typeof answer.answeredAt === "string" ? answer.answeredAt : new Date("2026-06-20T00:00:00.000Z").toISOString()
     }));
 }
 
@@ -595,16 +1179,189 @@ function parseOptionalConfirmedAssets(value: unknown): ConfirmedAssets | undefin
         previewUrl: optionalString(asset.previewUrl) ?? "",
         fileUrl: optionalString(asset.fileUrl) ?? "",
         source: parseAssetSource(asset.source),
+        provider: optionalString(asset.provider),
+        model: optionalString(asset.model),
+        generationParams: isRecord(asset.generationParams)
+          ? Object.fromEntries(
+              Object.entries(asset.generationParams).filter(
+                (entry): entry is [string, string | number | boolean] =>
+                  typeof entry[1] === "string" || typeof entry[1] === "number" || typeof entry[1] === "boolean"
+              )
+            )
+          : undefined,
+        error: optionalString(asset.error),
         approvalStatus:
           asset.approvalStatus === "pending" ||
           asset.approvalStatus === "approved" ||
           asset.approvalStatus === "rejected"
             ? asset.approvalStatus
-            : "approved"
+            : "approved",
+        slotRole: asset.slotRole === "background" || asset.slotRole === "sprite" ? asset.slotRole : undefined,
+        requiresTransparency: typeof asset.requiresTransparency === "boolean" ? asset.requiresTransparency : undefined,
+        subjectBounds: isRecord(asset.subjectBounds)
+          ? {
+              x: readNumber(asset.subjectBounds.x, 0),
+              y: readNumber(asset.subjectBounds.y, 0),
+              width: readNumber(asset.subjectBounds.width, 0),
+              height: readNumber(asset.subjectBounds.height, 0)
+            }
+          : undefined,
+        alphaCoverage: typeof asset.alphaCoverage === "number" ? asset.alphaCoverage : undefined,
+        validationStatus:
+          asset.validationStatus === "passed" ||
+          asset.validationStatus === "warning" ||
+          asset.validationStatus === "failed"
+            ? asset.validationStatus
+            : undefined,
+        validationErrors: parseStringArray(asset.validationErrors)
       }))
       .filter((asset) => asset.assetKey && asset.prompt)
   };
 }
+
+function parseAssetCandidateInput(value: unknown): AssetCandidate {
+  const parsed = parseOptionalConfirmedAssets({ assets: [value] })?.assets[0];
+  if (!parsed) throw new Error("candidate is required");
+  return parsed;
+}
+
+function validateConfirmedCoreAssetInputs(
+  confirmedAssets: ConfirmedAssets | undefined,
+  allowPlaceholderAssets: boolean
+): string | null {
+  if (allowPlaceholderAssets) return null;
+  const remoteAsset = confirmedAssets?.assets.find(
+    (asset) =>
+      ["background", "player", "hazard", "collectible"].includes(asset.slot) &&
+      asset.approvalStatus !== "rejected" &&
+      (/^https?:\/\//.test(asset.fileUrl) || /^https?:\/\//.test(asset.previewUrl))
+  );
+  if (remoteAsset) {
+    return `Core assets must be localized before generating a playable game: ${remoteAsset.slot}/${remoteAsset.assetKey}`;
+  }
+  if (!hasConfirmedCoreAssets(confirmedAssets)) {
+    return "Core assets must be confirmed before generating a playable game.";
+  }
+  const invalidAsset = confirmedAssets?.assets.find(
+    (asset) =>
+      ["background", "player", "hazard", "collectible"].includes(asset.slot) &&
+      asset.approvalStatus !== "rejected" &&
+      (!isRuntimeImageUrl(asset.fileUrl) || !isRuntimeImageUrl(asset.previewUrl) || asset.validationStatus === "failed")
+  );
+  if (invalidAsset) {
+    return `Core assets must pass visual validation before generating a playable game: ${invalidAsset.slot}/${invalidAsset.assetKey}`;
+  }
+  return null;
+}
+
+function hasConfirmedCoreAssets(confirmedAssets: ConfirmedAssets | undefined): boolean {
+  const requiredSlots = new Set(["background", "player", "hazard", "collectible"]);
+  for (const asset of confirmedAssets?.assets ?? []) {
+    if (
+      requiredSlots.has(asset.slot) &&
+      asset.approvalStatus !== "rejected" &&
+    isRuntimeImageUrl(asset.fileUrl) &&
+    isRuntimeImageUrl(asset.previewUrl) &&
+    asset.validationStatus !== "failed" &&
+    !asset.error
+    ) {
+      requiredSlots.delete(asset.slot);
+    }
+  }
+  return requiredSlots.size === 0;
+}
+
+function isConfirmableCoreCandidate(candidate: AssetCandidate): boolean {
+  return (
+    ["background", "player", "hazard", "collectible"].includes(candidate.slot) &&
+    (candidate.type === "image" || candidate.type === "ui") &&
+    candidate.approvalStatus !== "rejected" &&
+    isRuntimeImageUrl(candidate.fileUrl) &&
+    isRuntimeImageUrl(candidate.previewUrl) &&
+    candidate.validationStatus !== "failed" &&
+    !candidate.error
+  );
+}
+
+function isRuntimeImageUrl(fileUrl: string): boolean {
+  return fileUrl.startsWith("data:image") || fileUrl.startsWith("blob:") || fileUrl.startsWith("/projects/");
+}
+
+function validateFinalCoreAssets(assetPack: AssetPack, confirmedAssets: ConfirmedAssets | undefined): string | null {
+  if (!confirmedAssets) return null;
+  const requiredSlots = ["background", "player", "hazard", "collectible"] as const;
+  for (const slot of requiredSlots) {
+    const confirmed = confirmedAssets.assets.find(
+      (asset) =>
+        asset.slot === slot &&
+        asset.approvalStatus !== "rejected" &&
+        asset.fileUrl.trim() &&
+        asset.previewUrl.trim()
+    );
+    const finalAsset = assetPack.assets.find(
+      (asset) => coreAssetKeysBySlot[slot].includes(asset.assetKey) && finalAssetUsesConfirmedUrl(asset, confirmed)
+    );
+    if (!confirmed || !finalAsset) {
+      return "Final asset-pack must use confirmed core assets before saving a playable game.";
+    }
+  }
+  return null;
+}
+
+function finalAssetUsesConfirmedUrl(asset: AssetPack["assets"][number], confirmed: ConfirmedAssets["assets"][number] | undefined): boolean {
+  if (!confirmed) return false;
+  const originalRemoteUrl =
+    typeof asset.generationParams?.originalRemoteUrl === "string" ? asset.generationParams.originalRemoteUrl : undefined;
+  return (
+    asset.fileUrl === confirmed.fileUrl ||
+    originalRemoteUrl === confirmed.fileUrl
+  );
+}
+
+function inferSlotFromAssetKey(assetKey: string): string {
+  if (assetKey.startsWith("player.")) return "player";
+  if (assetKey.startsWith("hazard.")) return "hazard";
+  if (assetKey.startsWith("item.")) return "collectible";
+  if (assetKey.startsWith("world.") || assetKey.startsWith("cover.")) return "background";
+  return "asset";
+}
+
+function createLocalizationFallbackImage(assetKey: string): string {
+  const color = assetKey.includes("hazard")
+    ? "#fb7185"
+    : assetKey.includes("collectible")
+      ? "#facc15"
+      : assetKey.includes("player")
+        ? "#22d3ee"
+        : "#172554";
+  const label = assetKey.split(".").at(-1) ?? "asset";
+  const shape = assetKey.includes("background")
+    ? `<rect width="160" height="100" fill="${color}"/><circle cx="32" cy="24" r="3" fill="#fff"/><circle cx="120" cy="38" r="2" fill="#fff"/>`
+    : assetKey.includes("hazard")
+      ? `<polygon points="80,14 140,86 20,86" fill="${color}"/><circle cx="80" cy="66" r="6" fill="#fff"/>`
+      : assetKey.includes("collectible")
+        ? `<circle cx="80" cy="48" r="26" fill="${color}"/><path d="M80 18l7 22 23 1-18 13 6 22-18-12-18 12 6-22-18-13 23-1z" fill="#fff"/>`
+        : `<polygon points="80,12 120,88 80,70 40,88" fill="${color}"/><circle cx="80" cy="58" r="8" fill="#fff"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 160 100"><rect width="160" height="100" rx="10" fill="#0b1020"/>${shape}<text x="80" y="94" text-anchor="middle" font-family="Arial" font-size="10" fill="#f8fafc">${escapeSvgText(label)}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function escapeSvgText(text: string): string {
+  return text.replace(/[<>&'"]/g, (char) => {
+    if (char === "<") return "&lt;";
+    if (char === ">") return "&gt;";
+    if (char === "&") return "&amp;";
+    if (char === "'") return "&apos;";
+    return "&quot;";
+  });
+}
+
+const coreAssetKeysBySlot: Record<string, string[]> = {
+  background: ["world.background", "cover.main", "world.tiles", "world.path"],
+  player: ["player.ship", "player.hero", "player.cursor", "player.tower", "player.panel"],
+  hazard: ["hazard.enemy", "hazard.spike", "hazard.block", "hazard.timer"],
+  collectible: ["item.collectible"]
+};
 
 function parseRevisionHistory(value: unknown): RevisionAnalysis[] {
   if (!Array.isArray(value)) return [];
@@ -635,6 +1392,10 @@ function parseRevisionHistory(value: unknown): RevisionAnalysis[] {
 
 function parseStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function readNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function parseAssetSlot(value: unknown): ConfirmedAssets["assets"][number]["slot"] {

@@ -23,6 +23,7 @@ export interface ModelTaskRequest {
     | "llm.mature_game_brief"
     | "llm.game_config"
     | "llm.game_hooks"
+    | "llm.gameplay_dsl"
     | "llm.asset_prompts"
     | "llm.revision_analysis"
     | "image.asset"

@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { answerDesignQuestion, createConversationSession } from "../src/core/conversation";
 import { buildIdeaDialogModel, readIdeaDialogActionState } from "../src/ui/ideaDialogModel";
+import { buildConfirmedCoreAssets, hasConfirmedCoreAssets } from "../src/ui/App";
+import { getMessages } from "../src/ui/i18n";
+import type { AssetCandidate } from "../src/core/types";
+import type { StartUploadedMaterial } from "../src/core/start";
 
 describe("idea dialog flow", () => {
   it("starts from the user's idea and exposes one unanswered Chinese question at a time", () => {
@@ -17,22 +21,35 @@ describe("idea dialog flow", () => {
     expect(model.canGenerate).toBe(false);
   });
 
-  it("asks five professional design questions covering gameplay, failure, roles, visual/audio, and pacing", () => {
+  it("asks five professional design questions covering goal, enemy pressure, roles, feedback, and pacing", () => {
     const session = createConversationSession("生成一个太空猫躲避陨石收集鱼干的小游戏", {
       preferredTemplate: "top_down"
     });
     const visibleText = session.questions.map((question) => `${question.label} ${question.prompt}`).join(" ");
 
     expect(session.questions).toHaveLength(5);
-    expect(visibleText).toContain("胜利目标");
-    expect(visibleText).toContain("核心操作");
-    expect(visibleText).toContain("失败条件");
+    expect(visibleText).toContain("玩法目标");
+    expect(visibleText).toContain("敌人");
+    expect(visibleText).toContain("反馈");
     expect(visibleText).toContain("角色与道具");
-    expect(visibleText).toContain("视听与节奏");
+    expect(visibleText).toContain("关卡节奏");
     expect(visibleText).toContain("音效");
   });
 
-  it("becomes ready to generate after all guided questions are answered with readable Chinese copy", () => {
+  it("asks smart required optimization slots before generation", () => {
+    const session = createConversationSession("做一个霓虹飞船躲陨石收集星星", {
+      preferredTemplate: "top_down"
+    });
+    const visibleText = session.questions.map((question) => `${question.label} ${question.prompt}`).join(" ");
+
+    expect(visibleText).toContain("玩法目标");
+    expect(visibleText).toContain("敌人");
+    expect(visibleText).toContain("关卡节奏");
+    expect(visibleText).toContain("反馈");
+    expect(session.questions.every((question) => question.required)).toBe(true);
+  });
+
+  it("becomes ready to generate assets after all guided questions are answered", () => {
     let session = createConversationSession("生成一个飞船小游戏");
     for (const question of session.questions) {
       session = answerDesignQuestion(session, question.id, question.defaultAnswer);
@@ -43,10 +60,32 @@ describe("idea dialog flow", () => {
     expect(model.currentQuestion).toBeUndefined();
     expect(model.answeredCount).toBe(model.totalQuestions);
     expect(model.canGenerate).toBe(true);
-    expect(model.turns.at(-1)?.content).toContain("可以开始生成首版游戏");
+    expect(model.turns.at(-1)?.content).toContain("Generate assets first");
   });
 
-  it("allows game generation while asset prompts are still preparing", () => {
+  it("uses localized Chinese copy after guided questions are answered", () => {
+    let session = createConversationSession("生成一个飞船小游戏");
+    for (const question of session.questions) {
+      session = answerDesignQuestion(session, question.id, question.defaultAnswer);
+    }
+    const copy = getMessages("zh-CN").ideaDialog;
+
+    const model = buildIdeaDialogModel(session, copy);
+    const state = readIdeaDialogActionState({
+      session,
+      hasDesignBrief: true,
+      hasAssetCandidates: false,
+      hasConfirmedAssets: false,
+      creationPhase: "guided_questions",
+      copy
+    });
+
+    expect(model.turns.at(-1)?.content).toBe("信息已补全。请先生成素材，确认素材方向后再生成可玩游戏。");
+    expect(state.buttonLabel).toBe("生成素材");
+    expect(state.statusLabel).toBe("问题已完成，请继续生成核心素材。");
+  });
+
+  it("starts asset generation before playable generation", () => {
     let session = createConversationSession("生成一个飞船小游戏");
     for (const question of session.questions) {
       session = answerDesignQuestion(session, question.id, question.defaultAnswer);
@@ -60,13 +99,14 @@ describe("idea dialog flow", () => {
       creationPhase: "guided_questions"
     });
 
-    expect(state.canGenerate).toBe(true);
-    expect(state.isPreparingAssets).toBe(true);
-    expect(state.buttonLabel).toBe("生成游戏");
-    expect(state.statusLabel).toBe("AI 正在生成素材提示词，不影响生成游戏");
+    expect(state.canGenerate).toBe(false);
+    expect(state.canStartAssets).toBe(true);
+    expect(state.isPreparingAssets).toBe(false);
+    expect(state.buttonLabel).toBe("Generate assets");
+    expect(state.statusLabel).toBe("Questions are complete. Generate core assets next.");
   });
 
-  it("allows local fallback generation when design brief is missing", () => {
+  it("blocks local fallback generation when design brief is missing", () => {
     let session = createConversationSession("生成一个飞船小游戏");
     for (const question of session.questions) {
       session = answerDesignQuestion(session, question.id, question.defaultAnswer);
@@ -80,12 +120,31 @@ describe("idea dialog flow", () => {
       creationPhase: "chatting"
     });
 
-    expect(state.canGenerate).toBe(true);
-    expect(state.buttonLabel).toBe("生成游戏");
-    expect(state.statusLabel).toBe("信息已补齐，可用本地兜底方案生成游戏");
+    expect(state.canGenerate).toBe(false);
+    expect(state.buttonLabel).toBe("Send");
+    expect(state.statusLabel).toBe("");
   });
 
-  it("allows generation if questions are answered before model thinking finishes", () => {
+  it("allows asset generation when answered questions recover to chatting phase", () => {
+    let session = createConversationSession("生成一个飞船小游戏");
+    for (const question of session.questions) {
+      session = answerDesignQuestion(session, question.id, question.defaultAnswer);
+    }
+
+    const state = readIdeaDialogActionState({
+      session,
+      hasDesignBrief: true,
+      hasAssetCandidates: false,
+      hasConfirmedAssets: false,
+      creationPhase: "chatting"
+    });
+
+    expect(state.canGenerate).toBe(false);
+    expect(state.canStartAssets).toBe(true);
+    expect(state.buttonLabel).toBe("Generate assets");
+  });
+
+  it("blocks generation if questions are answered before model thinking finishes", () => {
     let session = createConversationSession("生成一个飞船小游戏");
     for (const question of session.questions) {
       session = answerDesignQuestion(session, question.id, question.defaultAnswer);
@@ -99,11 +158,10 @@ describe("idea dialog flow", () => {
       creationPhase: "ai_thinking"
     });
 
-    expect(state.canGenerate).toBe(true);
-    expect(state.buttonLabel).toBe("生成游戏");
+    expect(state.canGenerate).toBe(false);
+    expect(state.buttonLabel).toBe("Send");
   });
 });
-
 describe("physics-aware guided questions", () => {
   it("asks different guided questions for different game physics families", () => {
     const platformer = createConversationSession("make a platform jump game with coins", {
@@ -124,3 +182,122 @@ describe("physics-aware guided questions", () => {
     );
   });
 });
+
+describe("asset-gated generation flow", () => {
+  it("requires confirmed core assets before playable generation", () => {
+    let session = createConversationSession("做一个飞船躲避小游戏");
+    for (const question of session.questions) {
+      session = answerDesignQuestion(session, question.id, question.defaultAnswer);
+    }
+
+    const beforeAssets = readIdeaDialogActionState({
+      session,
+      hasDesignBrief: true,
+      hasAssetCandidates: false,
+      hasConfirmedAssets: false,
+      creationPhase: "guided_questions"
+    });
+    const afterAssets = readIdeaDialogActionState({
+      session,
+      hasDesignBrief: true,
+      hasAssetCandidates: true,
+      hasConfirmedAssets: true,
+      creationPhase: "assets_confirmed"
+    });
+
+    expect(beforeAssets.canGenerate).toBe(false);
+    expect(beforeAssets.canStartAssets).toBe(true);
+    expect(beforeAssets.isPreparingAssets).toBe(false);
+    expect(beforeAssets.buttonLabel).toBe("Generate assets");
+    expect(afterAssets.canGenerate).toBe(true);
+    expect(afterAssets.buttonLabel).toBe("Generate game");
+  });
+
+  it("allows confirming asset direction when uploaded images replace failed generated slots", () => {
+    const candidate = (slot: AssetCandidate["slot"], failed = false): AssetCandidate => ({
+      slot,
+      assetKey:
+        slot === "background"
+          ? "world.background"
+          : slot === "player"
+            ? "player.ship"
+            : slot === "hazard"
+              ? "hazard.enemy"
+              : "item.collectible",
+      type: "image",
+      label: slot,
+      prompt: slot,
+      style: "test",
+      purpose: slot,
+      acceptedFileTypes: ["image/*"],
+      previewUrl: failed ? "" : `data:image/png;base64,${slot}`,
+      fileUrl: failed ? "" : `data:image/png;base64,${slot}`,
+      source: "generated",
+      validationStatus: failed ? "failed" : "passed",
+      error: failed ? "Agnes image request timed out" : undefined
+    });
+    const uploadedCollectible: StartUploadedMaterial = {
+      id: "uploaded-collectible",
+      slot: "collectible",
+      assetKey: "item.collectible",
+      fileName: "collectible.png",
+      mimeType: "image/png",
+      fileUrl: "blob:collectible",
+      previewUrl: "blob:collectible"
+    };
+
+    const confirmed = buildConfirmedCoreAssets(
+      {
+        candidates: [
+          candidate("background"),
+          candidate("player"),
+          candidate("hazard"),
+          candidate("collectible", true)
+        ]
+      },
+      [uploadedCollectible]
+    );
+
+    expect(hasConfirmedCoreAssets(confirmed)).toBe(true);
+    expect(confirmed.assets.find((asset) => asset.slot === "collectible")?.source).toBe("uploaded");
+  });
+
+  it("allows processed cutout sprites with edge-residue warnings to continue generation", () => {
+    const candidate = (slot: AssetCandidate["slot"]): AssetCandidate => ({
+      slot,
+      assetKey:
+        slot === "background"
+          ? "world.background"
+          : slot === "player"
+            ? "player.ship"
+            : slot === "hazard"
+              ? "hazard.enemy"
+              : "item.collectible",
+      type: "image",
+      label: slot,
+      prompt: slot,
+      style: "test",
+      purpose: slot,
+      acceptedFileTypes: ["image/*"],
+      previewUrl: `/projects/asset-candidates/draft/assets/generated/processed/${slot}.cutout.png`,
+      fileUrl: `/projects/asset-candidates/draft/assets/generated/processed/${slot}.cutout.png`,
+      source: "generated",
+      validationStatus: slot === "background" || slot === "player" ? "passed" : "warning",
+      validationErrors:
+        slot === "hazard" || slot === "collectible"
+          ? ["Sprite has edge residue or subject touches the image edge after cutout."]
+          : [],
+      generationParams: {
+        cutoutApplied: slot !== "background",
+        processedLibraryUrl: `/asset-library/assets/test/processed/${slot}.cutout.png`
+      }
+    });
+
+    const confirmed = buildConfirmedCoreAssets({
+      candidates: [candidate("background"), candidate("player"), candidate("hazard"), candidate("collectible")]
+    });
+
+    expect(hasConfirmedCoreAssets(confirmed)).toBe(true);
+  });
+});
+

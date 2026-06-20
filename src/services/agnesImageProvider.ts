@@ -100,7 +100,7 @@ function buildAgnesPrompt(
   transparentBackground: boolean
 ): string {
   const constraints = transparentBackground
-    ? "PNG game character sprite, transparent background, isolated subject, no shadow backdrop."
+    ? "Solid chroma green background (#00ff00), isolated centered game sprite, readable silhouette, no shadow, no glow, no ground, no border, no checkerboard, no text. If the subject itself is green, use solid chroma magenta background (#ff00ff) instead."
     : "Wide 16:9 game environment background, readable gameplay space, no text.";
   return [requirement.prompt, requirement.style, requirement.spec, constraints].filter(Boolean).join("\n");
 }

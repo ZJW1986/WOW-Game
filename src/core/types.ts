@@ -19,6 +19,13 @@ export type PipelineStage =
   | "asset-pack"
   | "game-config"
   | "game-hooks"
+  | "playable-director"
+  | "runtime-asset-report"
+  | "visual-asset-report"
+  | "browser-verification-report"
+  | "playability-report"
+  | "gameplay-dsl"
+  | "sandbox-plugin"
   | "qa-report"
   | "publish-record"
   | "iteration-report";
@@ -83,6 +90,59 @@ export interface AssetPack {
   assets: AssetRequirement[];
 }
 
+export type RuntimeAssetSlotName = "background" | "player" | "hazard" | "collectible";
+
+export interface RuntimeAssetSlotReport {
+  slot: RuntimeAssetSlotName;
+  assetKey: string;
+  provider: string;
+  source: AssetSource;
+  fileUrl: string;
+  status: "bound" | "missing" | "invalid_url" | "failed";
+  slotRole: "background" | "sprite";
+  runtimeWidth: number;
+  runtimeHeight: number;
+  error?: string;
+}
+
+export interface RuntimeAssetReport {
+  ready: boolean;
+  slots: RuntimeAssetSlotReport[];
+  errors: string[];
+}
+
+export interface VisualAssetReport {
+  ready: boolean;
+  slots: Array<{
+    slot: RuntimeAssetSlotName;
+    assetKey: string;
+    fileUrl: string;
+    requiresTransparency: boolean;
+    validationStatus: "passed" | "warning" | "failed";
+    validationErrors: string[];
+    runtimeWidth: number;
+    runtimeHeight: number;
+  }>;
+  errors: string[];
+}
+
+export interface BrowserVerificationReport {
+  passed: boolean;
+  checks: Array<{ id: string; passed: boolean; detail: string }>;
+}
+
+export interface PlayableDirector {
+  templateFamily: TemplateFamily;
+  playerGoal: string;
+  coreAssets: Record<RuntimeAssetSlotName, string>;
+  enemyArchetypes: NonNullable<GameHooks["enemyArchetypes"]>;
+  stageGoals: NonNullable<GameHooks["stageGoals"]>;
+  encounterTimeline: NonNullable<GameHooks["encounterTimeline"]>;
+  winCondition: GameHooks["winCondition"];
+  failCondition: GameHooks["failCondition"];
+  firstMinuteScript: string[];
+}
+
 export type UserMaterialSlot = "player" | "background" | "hazard" | "collectible" | "cover" | "bgm" | "sfx";
 
 export interface UserMaterial {
@@ -125,7 +185,17 @@ export interface AssetCandidate {
   previewUrl: string;
   fileUrl: string;
   source: AssetSource;
+  provider?: string;
+  model?: string;
+  generationParams?: Record<string, string | number | boolean>;
+  error?: string;
   approvalStatus?: "pending" | "approved" | "rejected";
+  slotRole?: "background" | "sprite";
+  requiresTransparency?: boolean;
+  subjectBounds?: { x: number; y: number; width: number; height: number };
+  alphaCoverage?: number;
+  validationStatus?: "passed" | "warning" | "failed";
+  validationErrors?: string[];
 }
 
 export interface AssetCandidates {
@@ -237,6 +307,82 @@ export interface GameHooks {
     collectibleSpacing: string;
     checkpointPolicy: string;
   };
+  enemyArchetypes?: Array<{
+    id: string;
+    type: "chaser" | "patroller" | "charger" | "shooter" | "orbiter" | "mine";
+    count: number;
+    speed: number;
+    spawnAfterMs: number;
+    laneY?: number;
+    warningMs?: number;
+  }>;
+  attackRules?: {
+    contactDamage: number;
+    dashDamage: number;
+    projectileSpeed: number;
+    projectileCooldownMs: number;
+    explosionRadius: number;
+    explosionDelayMs: number;
+    warningMs: number;
+  };
+  stageGoals?: Array<{
+    id: string;
+    label: string;
+    startsAtMs: number;
+    durationMs: number;
+    objective: "learn_controls" | "collect" | "survive" | "finale";
+    target: number;
+    enemyMix: string[];
+    rewardPacing: "slow" | "normal" | "burst";
+  }>;
+  impactRules?: {
+    hitStopMs: number;
+    screenShakeIntensity: number;
+    explosionParticles: number;
+    knockbackForce: number;
+    invulnerabilityMs: number;
+    comboWindowMs: number;
+  };
+  encounterTimeline?: Array<{
+    atMs: number;
+    trigger: "time" | "score";
+    event: "spawn_wave" | "spawn_mine" | "projectile_burst" | "reward_burst" | "finale";
+    intensity: number;
+    message: string;
+  }>;
+}
+
+export interface GameplayDslRule {
+  id: string;
+  when: string;
+  do: "spawn_wave" | "spawn_mine" | "projectile_burst" | "reward_burst" | "stage_change" | "effect";
+  enemyType?: "chaser" | "patroller" | "charger" | "shooter" | "orbiter" | "mine";
+  count?: number;
+  effect?: "screen_shake" | "explosion" | "collect_burst" | "hit_flash";
+  stageId?: string;
+  assetKey?: string;
+  message?: string;
+}
+
+export interface GameplayDsl {
+  version: "1";
+  rules: GameplayDslRule[];
+}
+
+export interface SandboxPlugin {
+  version: "1";
+  name: string;
+  code: string;
+  allowedApis: string[];
+  referencedAssetKeys: string[];
+  fallbackLayer: "gameplay-dsl" | "game-hooks";
+}
+
+export interface SandboxValidationResult {
+  accepted: boolean;
+  errors: string[];
+  referencedAssetKeys: string[];
+  fallbackLayer: "gameplay-dsl" | "game-hooks";
 }
 
 export interface QaReport {

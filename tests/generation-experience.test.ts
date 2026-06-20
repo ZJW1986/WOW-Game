@@ -87,6 +87,14 @@ describe("fast playable generation experience", () => {
             difficultyCurve: ["先教学", "再危险", "最后终点"],
             gameFeelMoments: ["金币路径", "落地反馈", "终点庆祝"]
           };
+        } else if (prompt.includes("llm.gameplay_dsl")) {
+          content = {
+            version: "1",
+            rules: [
+              { id: "score-wave", when: "score >= 2", do: "spawn_wave", enemyType: "charger", count: 2, message: "冲刺敌人进入" },
+              { id: "time-reward", when: "timeMs >= 6000", do: "reward_burst", count: 2, message: "金币奖励路线打开" }
+            ]
+          };
         } else if (prompt.includes("llm.game_hooks")) {
           content = {
             enemyRules: { movement: "patrol", speed: 140, waveIntervalMs: 0 },
@@ -135,10 +143,15 @@ describe("fast playable generation experience", () => {
       "llm.mature_game_brief",
       "llm.gdd",
       "llm.game_config",
-      "llm.game_hooks"
+      "llm.game_hooks",
+      "llm.gameplay_dsl"
     ]);
-    expect(result.project.artifacts.map((artifact) => artifact.fileName)).toContain("game-hooks.json");
+    expect(result.project.artifacts.map((artifact) => artifact.fileName)).toEqual(
+      expect.arrayContaining(["game-hooks.json", "gameplay-dsl.json"])
+    );
     expect(result.project.gameHooks.enemyRules.movement).toBe("patrol");
+    expect(result.project.gameHooks.enemyArchetypes?.map((enemy) => enemy.type)).toContain("charger");
+    expect(result.project.gameHooks.encounterTimeline?.map((event) => event.event)).toContain("reward_burst");
     expect(result.modelTasks.every((task) => task.status === "success")).toBe(true);
     expect(result.fallbacksUsed).toEqual([]);
   });
@@ -252,7 +265,7 @@ describe("fast playable generation experience", () => {
       .join(" ");
 
     expect(visibleText).toContain("玩家怎样才算赢？");
-    expect(visibleText).toContain("视听与节奏");
+    expect(visibleText).toContain("关卡节奏");
     expect(visibleText).not.toContain("How will the player move");
     expect(visibleText).not.toContain("Arrow keys");
   });
@@ -291,14 +304,17 @@ describe("fast playable generation experience", () => {
     });
 
     expect(result.project.gameConfig.templateFamily).toBe("top_down");
-    expect(result.modelTasks).toHaveLength(5);
+    expect(result.modelTasks).toHaveLength(6);
     expect(result.fallbacksUsed).toEqual([
       "llm.classification",
       "llm.mature_game_brief",
       "llm.gdd",
       "llm.game_config",
-      "llm.game_hooks"
+      "llm.game_hooks",
+      "llm.gameplay_dsl"
     ]);
+    expect(result.project.artifacts.map((artifact) => artifact.fileName)).toContain("gameplay-dsl.json");
+    expect(result.project.gameHooks.encounterTimeline?.length).toBeGreaterThan(0);
   });
 
   it("repairs common DeepSeek near-miss JSON shapes before schema validation", async () => {
@@ -352,9 +368,67 @@ describe("fast playable generation experience", () => {
       "ArrowUp",
       "ArrowDown",
       "ArrowLeft",
-      "ArrowRight"
+      "ArrowRight",
+      "Space"
     ]);
     expect(result.project.gameConfig.difficulty).toBe("normal");
+  });
+
+  it("locks spaceship dodge collection ideas to top_down even if the model drifts to platformer", async () => {
+    const service = createGenerationService({
+      deepseekApiKey: "test-key",
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as { messages: Array<{ content: string }> };
+        const prompt = body.messages.at(-1)?.content ?? "";
+        const content = prompt.includes("llm.classification")
+          ? {
+              templateFamily: "platformer",
+              reasons: ["model drift"],
+              risks: [],
+              unsupportedRequests: []
+            }
+          : prompt.includes("llm.game_hooks")
+            ? {
+                enemyRules: { movement: "chase", speed: 140, waveIntervalMs: 1200 },
+                collectibleRules: { placement: "line", value: 1, respawn: false },
+                winCondition: { mode: "collect_score", target: 6 },
+                failCondition: { mode: "hit_hazard", lives: 1 },
+                numberTuning: { playerSpeed: 260, jumpVelocity: 0, hazardSpeed: 160 },
+                levelLayout: { platforms: [], lanes: [{ y: 180, speed: 130, count: 2 }], grid: { columns: 0, rows: 0 } }
+              }
+            : {
+                templateFamily: "platformer",
+                title: "星际躲避",
+                pitch: "飞船躲避陨石并收集星星",
+                playerGoal: "收集 6 个星星",
+                controls: ["ArrowLeft", "ArrowRight", "Space"],
+                difficulty: "normal",
+                referencedAssetKeys: ["player.ship", "world.background", "hazard.enemy", "item.collectible"],
+                gameplay: {
+                  primaryAction: "jump_reach_goal",
+                  enemyBehavior: "patrol",
+                  objectiveMode: "reach_exit",
+                  playerAbility: "jump",
+                  spawnPattern: "fixed"
+                },
+                level: { width: 960, height: 540, collectibles: 6, hazards: 4, winScore: 6 }
+              };
+        return JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] });
+      }
+    });
+
+    const result = await service.generatePlayableVersion({
+      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      answers: [],
+      templateFamily: "top_down",
+      projectId: "project-template-lock",
+      baseUrl: "https://wow-game.example",
+      model: "deepseek-v4-flash"
+    });
+
+    expect(result.project.classification.templateFamily).toBe("top_down");
+    expect(result.project.gameConfig.templateFamily).toBe("top_down");
+    expect(result.fallbacksUsed).toContain("template_drift_blocked");
   });
 
   it("generates a playable version with publish share metadata and a QR payload", async () => {

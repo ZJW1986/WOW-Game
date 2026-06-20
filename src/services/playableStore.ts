@@ -77,6 +77,52 @@ export function createPlayableStore(options: PlayableStoreOptions) {
       filePath: string
     ): Promise<Uint8Array | null> {
       return io.readBytes(uploadFilePath(options.dataDir, projectId, versionId, filePath));
+    },
+
+    async saveProjectAsset(
+      projectId: string,
+      versionId: string,
+      assetPath: string,
+      bytes: Uint8Array
+    ): Promise<void> {
+      const filePath = projectAssetPath(options.dataDir, projectId, versionId, assetPath);
+      await io.ensureDir(dirname(filePath));
+      await io.writeBytes(filePath, bytes);
+    },
+
+    async readProjectAsset(
+      projectId: string,
+      versionId: string,
+      assetPath: string
+    ): Promise<Uint8Array | null> {
+      return io.readBytes(projectAssetPath(options.dataDir, projectId, versionId, assetPath));
+    },
+
+    async saveLibraryAsset(assetPath: string, bytes: Uint8Array): Promise<void> {
+      const filePath = assetLibraryAssetPath(options.dataDir, assetPath);
+      await io.ensureDir(dirname(filePath));
+      await io.writeBytes(filePath, bytes);
+    },
+
+    async readLibraryAsset(assetPath: string): Promise<Uint8Array | null> {
+      return io.readBytes(assetLibraryAssetPath(options.dataDir, assetPath));
+    },
+
+    async readAssetLibraryIndex(): Promise<unknown[]> {
+      const raw = await io.readText(assetLibraryIndexPath(options.dataDir));
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    },
+
+    async saveAssetLibraryIndex(index: unknown[]): Promise<void> {
+      const filePath = assetLibraryIndexPath(options.dataDir);
+      await io.ensureDir(dirname(filePath));
+      await io.writeText(filePath, JSON.stringify(index, null, 2));
     }
   };
 }
@@ -87,6 +133,18 @@ function projectJsonPath(dataDir: string, projectId: string, versionId: string):
 
 function uploadFilePath(dataDir: string, projectId: string, versionId: string, filePath: string): string {
   return [dataDir, "uploads", projectId, versionId, "files", filePath].join("/");
+}
+
+function projectAssetPath(dataDir: string, projectId: string, versionId: string, assetPath: string): string {
+  return [dataDir, "projects", projectId, "versions", versionId, "assets", assetPath].join("/");
+}
+
+function assetLibraryAssetPath(dataDir: string, assetPath: string): string {
+  return [dataDir, "asset-library", "assets", assetPath].join("/");
+}
+
+function assetLibraryIndexPath(dataDir: string): string {
+  return [dataDir, "asset-library", "asset-library-index.json"].join("/");
 }
 
 async function defaultWriteText(filePath: string, content: string): Promise<void> {

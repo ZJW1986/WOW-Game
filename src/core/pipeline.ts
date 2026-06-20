@@ -492,9 +492,12 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
 
   const familyAssets: Record<TemplateFamily, AssetRequirement[]> = {
     platformer: [
+      mockImage("player.ship", "runtime player sprite", "small readable platformer character"),
       mockImage("player.hero", "jumping hero sprite", "small readable platformer character"),
+      mockImage("world.background", "gameplay background", "wide forest platformer background"),
       mockImage("world.tiles", "ground and platform tiles", "forest platform tile sheet"),
       mockImage("item.collectible", "collectible sprite", "bright coin or gem"),
+      mockImage("hazard.enemy", "runtime hazard sprite", "clear platformer obstacle"),
       mockImage("hazard.spike", "hazard sprite", "clear triangular obstacle")
     ],
     top_down: [

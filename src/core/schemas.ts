@@ -110,7 +110,22 @@ export const assetCandidateSchema = z.object({
   previewUrl: z.string().optional(),
   fileUrl: z.string().optional(),
   source: z.enum(["mock", "preset", "uploaded", "generated", "library"]).optional(),
-  approvalStatus: z.enum(["pending", "approved", "rejected"]).optional()
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  generationParams: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  error: z.string().optional(),
+  approvalStatus: z.enum(["pending", "approved", "rejected"]).optional(),
+  slotRole: z.enum(["background", "sprite"]).optional(),
+  requiresTransparency: z.boolean().optional(),
+  subjectBounds: z.object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number()
+  }).optional(),
+  alphaCoverage: z.number().optional(),
+  validationStatus: z.enum(["passed", "warning", "failed"]).optional(),
+  validationErrors: z.array(z.string()).optional()
 });
 
 export const assetCandidatesSchema = z.object({
@@ -249,7 +264,85 @@ export const gameHooksSchema = z.object({
     enemyPacing: z.string(),
     collectibleSpacing: z.string(),
     checkpointPolicy: z.string()
-  }).optional()
+  }).optional(),
+  enemyArchetypes: z.array(z.object({
+    id: z.string(),
+    type: z.enum(["chaser", "patroller", "charger", "shooter", "orbiter", "mine"]),
+    count: z.number(),
+    speed: z.number(),
+    spawnAfterMs: z.number(),
+    laneY: z.number().optional(),
+    warningMs: z.number().optional()
+  })).optional(),
+  attackRules: z.object({
+    contactDamage: z.number(),
+    dashDamage: z.number(),
+    projectileSpeed: z.number(),
+    projectileCooldownMs: z.number(),
+    explosionRadius: z.number(),
+    explosionDelayMs: z.number(),
+    warningMs: z.number()
+  }).optional(),
+  stageGoals: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    startsAtMs: z.number(),
+    durationMs: z.number(),
+    objective: z.enum(["learn_controls", "collect", "survive", "finale"]),
+    target: z.number(),
+    enemyMix: z.array(z.string()),
+    rewardPacing: z.enum(["slow", "normal", "burst"])
+  })).optional(),
+  impactRules: z.object({
+    hitStopMs: z.number(),
+    screenShakeIntensity: z.number(),
+    explosionParticles: z.number(),
+    knockbackForce: z.number(),
+    invulnerabilityMs: z.number(),
+    comboWindowMs: z.number()
+  }).optional(),
+  encounterTimeline: z.array(z.object({
+    atMs: z.number(),
+    trigger: z.enum(["time", "score"]),
+    event: z.enum(["spawn_wave", "spawn_mine", "projectile_burst", "reward_burst", "finale"]),
+    intensity: z.number(),
+    message: z.string()
+  })).optional()
+});
+
+export const gameplayDslRuleSchema = z.object({
+  id: z.string(),
+  when: z.string().refine((value) => /^(timeMs|score)\s*(>=|>|=)\s*\d+$/.test(value), {
+    message: "Trigger must be declarative, for example: score >= 3"
+  }),
+  do: z.enum(["spawn_wave", "spawn_mine", "projectile_burst", "reward_burst", "stage_change", "effect"]),
+  enemyType: z.enum(["chaser", "patroller", "charger", "shooter", "orbiter", "mine"]).optional(),
+  count: z.number().optional(),
+  effect: z.enum(["screen_shake", "explosion", "collect_burst", "hit_flash"]).optional(),
+  stageId: z.string().optional(),
+  assetKey: z.string().optional(),
+  message: z.string().optional()
+});
+
+export const gameplayDslSchema = z.object({
+  version: z.literal("1"),
+  rules: z.array(gameplayDslRuleSchema).max(24)
+});
+
+export const sandboxPluginSchema = z.object({
+  version: z.literal("1"),
+  name: z.string(),
+  code: z.string().max(12000),
+  allowedApis: z.array(z.string()),
+  referencedAssetKeys: z.array(z.string()),
+  fallbackLayer: z.enum(["gameplay-dsl", "game-hooks"])
+});
+
+export const sandboxValidationResultSchema = z.object({
+  accepted: z.boolean(),
+  errors: z.array(z.string()),
+  referencedAssetKeys: z.array(z.string()),
+  fallbackLayer: z.enum(["gameplay-dsl", "game-hooks"])
 });
 
 export const qaReportSchema = z.object({
@@ -303,6 +396,8 @@ export const artifactSchemas = {
   "asset-pack": assetPackSchema,
   "game-config": gameConfigSchema,
   "game-hooks": gameHooksSchema,
+  "gameplay-dsl": gameplayDslSchema,
+  "sandbox-plugin": sandboxPluginSchema,
   "qa-report": qaReportSchema,
   "publish-record": publishRecordSchema,
   "iteration-report": iterationReportSchema

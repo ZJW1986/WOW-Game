@@ -35,11 +35,12 @@ import {
 } from "../core/playCatalog";
 import { runMockPipeline } from "../core/pipeline";
 import {
+  createStartTemplateTiles,
   createStartGameDraft,
-  templateOptions,
   type StartGameDraft,
   type StartUploadedMaterial
 } from "../core/start";
+import { getOfficialTemplates, startDraftFromTemplate, type TemplateRecord } from "../core/templateCatalog";
 import type {
   AssetCandidates,
   ConfirmedAssets,
@@ -48,10 +49,10 @@ import type {
   ConversationSession,
   MockProject,
   PipelineArtifact,
+  PublishRecord,
   ReferencePackageSummary,
   RevisionAnalysis,
   TemplateFamily,
-  UserMaterial,
   UserMaterialSlot
 } from "../core/types";
 import { getMessages, type Locale } from "./i18n";
@@ -69,6 +70,8 @@ import {
   requestDesignBrief,
   requestPlayableGeneration,
   requestGuidedQuestions,
+  requestProcessUploadedMaterial,
+  requestRegenerateAssetCandidate,
   requestRevisionAnalysis,
   replacePackageAsset,
   requestPlayableProject,
@@ -88,13 +91,13 @@ type CreationPhase =
   | "chatting"
   | "ai_thinking"
   | "guided_questions"
+  | "asset_generating"
   | "asset_review"
-  | "ready_to_generate"
+  | "assets_confirmed"
   | "revision"
   | "revision_thinking"
   | "cooking"
   | "ready"
-  | "playable_ready"
   | "failed";
 type AppPage = "create" | "play" | "projects" | "idea_dialog" | "studio";
 type GenerationResult = Awaited<ReturnType<ReturnType<typeof createGenerationService>["generatePlayableVersion"]>>;
@@ -108,7 +111,7 @@ interface GenerationNotice {
   detail: string;
 }
 
-interface ProjectRecord {
+export interface ProjectRecord {
   id: string;
   title: string;
   idea: string;
@@ -175,6 +178,107 @@ function getBrowserBaseUrl(): string {
   return window.location.origin;
 }
 
+export function upsertGeneratedProjectRecord(
+  current: ProjectRecord[],
+  project: MockProject,
+  publishRecord: PublishRecord
+): ProjectRecord[] {
+  const record: ProjectRecord = {
+    id: project.id,
+    title: project.title || project.gameConfig.title,
+    idea: project.gameConfig.pitch,
+    contentType: "ai_project",
+    editable: project.editable,
+    shareable: project.shareable,
+    sourceLabel: project.sourceLabel,
+    status: "published",
+    visibility: "public",
+    updatedAt: publishRecord.publishedAt.slice(0, 10),
+    plays: 0,
+    likes: 0,
+    templateFamily: project.classification.templateFamily,
+    project
+  };
+  const exists = current.some((item) => item.id === project.id);
+  if (exists) return current.map((item) => (item.id === project.id ? { ...item, ...record } : item));
+  return [record, ...current];
+}
+
+export function hasConfirmedCoreAssets(confirmedAssets?: ConfirmedAssets | null): boolean {
+  const required: UserMaterialSlot[] = ["background", "player", "hazard", "collectible"];
+  const confirmed = new Set(
+    (confirmedAssets?.assets ?? [])
+      .filter(
+        (asset) =>
+          asset.approvalStatus !== "rejected" &&
+          isRuntimeImageUrl(asset.fileUrl) &&
+          isRuntimeImageUrl(asset.previewUrl) &&
+          asset.validationStatus !== "failed" &&
+          !asset.error
+      )
+      .map((asset) => asset.slot)
+  );
+  return required.every((slot) => confirmed.has(slot));
+}
+
+export function buildConfirmedCoreAssets(
+  assetCandidates?: AssetCandidates | null,
+  uploadedMaterials: StartUploadedMaterial[] = []
+): ConfirmedAssets {
+  const assets = new Map<UserMaterialSlot, ConfirmedAssets["assets"][number]>();
+  for (const candidate of assetCandidates?.candidates ?? []) {
+    if (isConfirmableImageAsset(candidate)) {
+      assets.set(candidate.slot, {
+        ...candidate,
+        assetKey: resolveMaterialAssetKey(candidate.slot, "top_down"),
+        approvalStatus: "approved"
+      });
+    }
+  }
+  for (const material of uploadedMaterials) {
+    if (!["background", "player", "hazard", "collectible"].includes(material.slot)) continue;
+    if (!isRuntimeImageUrl(material.fileUrl) || !isRuntimeImageUrl(material.previewUrl)) continue;
+    assets.set(material.slot, {
+      slot: material.slot,
+      assetKey: resolveMaterialAssetKey(material.slot, "top_down"),
+      type: "image",
+      label: material.fileName,
+      prompt: `用户上传素材：${material.fileName}`,
+      style: "user-upload",
+      purpose: materialSlotLabels[material.slot],
+      acceptedFileTypes: ["image/*"],
+      previewUrl: material.previewUrl,
+      fileUrl: material.fileUrl,
+      source: "uploaded",
+      provider: "user-upload",
+      model: "user-upload",
+      generationParams: {
+        uploaded: true
+      },
+      approvalStatus: "approved",
+      validationStatus: "passed"
+    });
+  }
+  return { assets: Array.from(assets.values()) };
+}
+
+function isConfirmableImageAsset(asset: ConfirmedAssets["assets"][number]): boolean {
+  return (
+    ["background", "player", "hazard", "collectible"].includes(asset.slot) &&
+    (asset.type === "image" || asset.type === "ui") &&
+    asset.approvalStatus !== "rejected" &&
+    isRuntimeImageUrl(asset.fileUrl) &&
+    isRuntimeImageUrl(asset.previewUrl) &&
+    asset.validationStatus !== "failed" &&
+    !asset.error
+  );
+}
+
+function isRuntimeImageUrl(fileUrl?: string): boolean {
+  if (!fileUrl) return false;
+  return fileUrl.startsWith("data:image") || fileUrl.startsWith("blob:") || fileUrl.startsWith("/projects/");
+}
+
 function addFollowup(current: StudioFollowup[], content: string): StudioFollowup[] {
   const trimmed = content.trim();
   if (!trimmed) return current;
@@ -201,6 +305,21 @@ function readGuidedQuestionStatus(
 
 function readGenerationError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function canStartAssetGeneration(
+  session: ConversationSession,
+  designBrief: DesignBrief | null,
+  assetCandidates: AssetCandidates | null,
+  creationPhase: CreationPhase
+): boolean {
+  const hasAnsweredGuidedQuestions = session.answers.length >= session.questions.length;
+  return (
+    hasAnsweredGuidedQuestions &&
+    Boolean(designBrief) &&
+    !assetCandidates &&
+    ["chatting", "guided_questions", "asset_review", "revision"].includes(creationPhase)
+  );
 }
 
 function playGenerationSuccessTone() {
@@ -260,6 +379,8 @@ export function App() {
   const [assetCandidates, setAssetCandidates] = useState<AssetCandidates | null>(null);
   const [confirmedAssets, setConfirmedAssets] = useState<ConfirmedAssets | null>(null);
   const [assetCandidateStatus, setAssetCandidateStatus] = useState<AssetCandidateStatus>("idle");
+  const [regeneratingAssetSlots, setRegeneratingAssetSlots] = useState<Set<UserMaterialSlot>>(() => new Set());
+  const regeneratingAssetSlotsRef = useRef<Set<UserMaterialSlot>>(new Set());
   const [revisionHistory, setRevisionHistory] = useState<RevisionAnalysis[]>([]);
   const [shareOpen, setShareOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -271,21 +392,19 @@ export function App() {
   const project = generatedProject ?? fallbackProject;
   const playRoute = getPlayRoute();
   const hasAnsweredGuidedQuestions = session.answers.length >= session.questions.length;
+  const canStartAssets = canStartAssetGeneration(session, designBrief, assetCandidates, creationPhase);
   const canGeneratePlayable =
     hasAnsweredGuidedQuestions &&
-    (creationPhase === "chatting" ||
-      creationPhase === "ai_thinking" ||
-      creationPhase === "guided_questions" ||
-      creationPhase === "asset_review" ||
-      creationPhase === "ready_to_generate" ||
-      creationPhase === "revision" ||
-      creationPhase === "ready");
+    Boolean(designBrief) &&
+    hasConfirmedCoreAssets(confirmedAssets) &&
+    ["assets_confirmed", "ready"].includes(creationPhase);
   const ideaDialogActionState = readIdeaDialogActionState({
     session,
     hasDesignBrief: Boolean(designBrief),
     hasAssetCandidates: Boolean(assetCandidates),
-    hasConfirmedAssets: Boolean(confirmedAssets),
-    creationPhase
+    hasConfirmedAssets: hasConfirmedCoreAssets(confirmedAssets),
+    creationPhase,
+    copy: t.ideaDialog
   });
 
   useEffect(() => {
@@ -315,6 +434,11 @@ export function App() {
         title: "素材已应用",
         detail: "上传素材已写入当前试玩 asset-pack，可直接重新开始试玩。"
       });
+    }
+    const nextConfirmedAssets = buildConfirmedCoreAssets(assetCandidates, mergedMaterials);
+    setConfirmedAssets(nextConfirmedAssets);
+    if (assetCandidates) {
+      setCreationPhase(hasConfirmedCoreAssets(nextConfirmedAssets) ? "assets_confirmed" : "asset_review");
     }
     setRevisionText((current) => {
       if (current.trim()) return current;
@@ -439,18 +563,17 @@ export function App() {
     revisionSubmittingRef.current = false;
   };
 
-  useEffect(() => {
-    if (
-      (page !== "studio" && page !== "idea_dialog") ||
-      !["chatting", "guided_questions", "asset_review"].includes(creationPhase) ||
-      !hasAnsweredGuidedQuestions
-    ) {
+  const startResourceGeneration = async () => {
+    if (!canGeneratePlayable) {
+      setGenerationNotice({
+        tone: "error",
+        title: "请先确认核心素材",
+        detail: "背景、主角、危险物和收集物确认后，才能生成可玩游戏。"
+      });
+      setPage("studio");
+      setActiveTab("preview");
       return;
     }
-    setCreationPhase("ready_to_generate");
-  }, [creationPhase, hasAnsweredGuidedQuestions, page]);
-
-  const startResourceGeneration = async () => {
     setCreationPhase("cooking");
     setActiveTab("preview");
     setPage("studio");
@@ -481,9 +604,10 @@ export function App() {
           previewUrl: material.previewUrl,
           mimeType: material.mimeType
         }))
-      }, undefined, { timeoutMs: 8000 })) as GenerationResult;
+      })) as GenerationResult;
       setGenerationResult(result);
       setGeneratedProject(result.project);
+      setProjects((current) => upsertGeneratedProjectRecord(current, result.project, result.publishRecord));
       setCreationPhase("ready");
       setActiveTab("preview");
       const fallbackTasks = result.fallbacksUsed ?? [];
@@ -498,36 +622,16 @@ export function App() {
       window.setTimeout(() => setGenerationNotice(null), 4200);
       playGenerationSuccessTone();
     } catch (error) {
-      const fallback = await createGenerationService().generatePlayableVersion({
-        idea: generationIdea,
-        answers: session.answers,
-        templateFamily: activeDraft.templateFamily,
-        projectId: "project-local-fallback",
-        baseUrl: getBrowserBaseUrl(),
-        model: "mock-designer",
-        designBrief: designBrief ?? undefined,
-        confirmedAssets: confirmedAssets ?? undefined,
-        revisionHistory,
-        userMaterials: activeDraft.uploadedMaterials.map((material) => ({
-          assetKey: material.assetKey,
-          slot: material.slot,
-          fileName: material.fileName,
-          fileUrl: material.fileUrl,
-          previewUrl: material.previewUrl,
-          mimeType: material.mimeType
-        }))
-      });
-      setGenerationResult(fallback);
-      setGeneratedProject(fallback.project);
-      setCreationPhase("ready");
+      setGenerationResult(null);
+      setGeneratedProject(null);
+      setCreationPhase(hasConfirmedCoreAssets(confirmedAssets) ? "assets_confirmed" : "asset_review");
       setActiveTab("preview");
       setGenerationNotice({
-        tone: "fallback",
+        tone: "error",
         title: t.notices.errorTitle,
-        detail: `${readGenerationError(error)}${t.notices.errorDetailSuffix}`
+        detail: `${readGenerationError(error)}。请重试生成；不会使用浏览器本地 fallback，因为它无法本地化 Agnes 图片。`
       });
       window.setTimeout(() => setGenerationNotice(null), 5200);
-      playGenerationSuccessTone();
     }
   };
 
@@ -591,40 +695,155 @@ export function App() {
       });
       setGuidedQuestionStatus(result.fallbackUsed ? "fallback" : "ready");
       setCreationPhase((current) =>
-        current === "cooking" || current === "ready" || current === "playable_ready" ? current : "guided_questions"
+        current === "cooking" || current === "ready" ? current : "guided_questions"
       );
     } catch {
       setGuidedQuestionStatus("fallback");
       setCreationPhase((current) =>
-        current === "cooking" || current === "ready" || current === "playable_ready" ? current : "chatting"
+        current === "cooking" || current === "ready" ? current : "chatting"
       );
     }
-    if (nextDesignBrief) {
-      try {
-        setAssetCandidateStatus("loading");
-        const assetResult = await requestAssetCandidates({
-          idea: nextIdea,
-          templateFamily,
-          model,
-          designBrief: nextDesignBrief,
-          referencePackageId: referencePackage?.projectId,
-          referenceVersionId: referencePackage?.versionId,
-          userMaterials: activeDraft.uploadedMaterials.map((material) => ({
-            assetKey: material.assetKey,
-            slot: material.slot,
-            fileName: material.fileName,
-            fileUrl: material.fileUrl,
-            previewUrl: material.previewUrl,
-            mimeType: material.mimeType
-          }))
-        });
-        setAssetCandidates(assetResult.assetCandidates);
-        setAssetCandidateStatus("ready");
-      } catch {
-        setAssetCandidates(null);
-        setConfirmedAssets(null);
-        setAssetCandidateStatus("failed");
-      }
+  };
+
+  const startAssetGeneration = async () => {
+    const currentDesignBrief = designBrief;
+    const hasAnsweredAllQuestions = session.answers.length >= session.questions.length;
+    const canRequestAssets =
+      hasAnsweredAllQuestions &&
+      Boolean(currentDesignBrief) &&
+      assetCandidateStatus !== "loading" &&
+      ["chatting", "guided_questions", "asset_review", "assets_confirmed", "revision"].includes(creationPhase);
+    if (!currentDesignBrief || !canRequestAssets) return;
+    const nextIdea = buildGenerationIdea(idea, followups);
+    setPage("studio");
+    setActiveTab("preview");
+    setAssetCandidates(null);
+    setConfirmedAssets(null);
+    setAssetCandidateStatus("loading");
+    setCreationPhase("asset_generating");
+    try {
+      const assetResult = await requestAssetCandidates({
+        idea: nextIdea,
+        templateFamily: activeDraft.templateFamily,
+        model: activeDraft.model,
+        designBrief: currentDesignBrief,
+        answers: session.answers,
+        referencePackageId: referencePackage?.projectId,
+        referenceVersionId: referencePackage?.versionId,
+        userMaterials: activeDraft.uploadedMaterials.map((material) => ({
+          assetKey: material.assetKey,
+          slot: material.slot,
+          fileName: material.fileName,
+          fileUrl: material.fileUrl,
+          previewUrl: material.previewUrl,
+          mimeType: material.mimeType
+        }))
+      });
+      setAssetCandidates(assetResult.assetCandidates);
+      setConfirmedAssets(null);
+      setAssetCandidateStatus("ready");
+      setCreationPhase("asset_review");
+    } catch {
+      setAssetCandidates(null);
+      setConfirmedAssets(null);
+      setAssetCandidateStatus("failed");
+      setCreationPhase("asset_review");
+    }
+  };
+
+  const regenerateAssetCandidate = async (candidate: AssetCandidates["candidates"][number]) => {
+    if (regeneratingAssetSlotsRef.current.has(candidate.slot)) return;
+    const nextIdea = buildGenerationIdea(idea, followups);
+    regeneratingAssetSlotsRef.current = new Set(regeneratingAssetSlotsRef.current).add(candidate.slot);
+    setRegeneratingAssetSlots((current) => new Set(current).add(candidate.slot));
+    try {
+      const result = await requestRegenerateAssetCandidate({
+        idea: nextIdea,
+        templateFamily: activeDraft.templateFamily,
+        candidate
+      });
+      setAssetCandidates((current) => {
+        const nextCandidates = current
+          ? {
+              candidates: current.candidates.map((item) =>
+                item.slot === candidate.slot ? result.assetCandidate : item
+              )
+            }
+          : { candidates: [result.assetCandidate] };
+        const nextConfirmedAssets = buildConfirmedCoreAssets(nextCandidates, activeDraft.uploadedMaterials);
+        setConfirmedAssets(nextConfirmedAssets);
+        setCreationPhase(hasConfirmedCoreAssets(nextConfirmedAssets) ? "assets_confirmed" : "asset_review");
+        return nextCandidates;
+      });
+      setGenerationNotice({
+        tone: result.assetCandidate.validationStatus === "failed" || result.assetCandidate.error ? "error" : "success",
+        title: result.assetCandidate.validationStatus === "failed" || result.assetCandidate.error ? "素材仍不可用" : "素材已重新生成",
+        detail:
+          result.assetCandidate.error ??
+          `${materialSlotLabels[result.assetCandidate.slot]} 已更新，不会影响其他已生成素材。`
+      });
+    } catch (error) {
+      setGenerationNotice({
+        tone: "error",
+        title: "单素材重生成失败",
+        detail: readGenerationError(error)
+      });
+    } finally {
+      const nextRef = new Set(regeneratingAssetSlotsRef.current);
+      nextRef.delete(candidate.slot);
+      regeneratingAssetSlotsRef.current = nextRef;
+      setRegeneratingAssetSlots((current) => {
+        const next = new Set(current);
+        next.delete(candidate.slot);
+        return next;
+      });
+    }
+  };
+
+  const uploadAssetCandidateReplacement = async (slot: UserMaterialSlot, files: File[]) => {
+    const file = files.find((item) => item.type.startsWith("image/"));
+    if (!file) return;
+    const existingCandidate = assetCandidates?.candidates.find((candidate) => candidate.slot === slot);
+    const fileBase64 = await readFileAsBase64(file);
+    try {
+      const result = await requestProcessUploadedMaterial({
+        idea: buildGenerationIdea(idea, followups),
+        templateFamily: activeDraft.templateFamily,
+        slot,
+        assetKey: resolveMaterialAssetKey(slot, activeDraft.templateFamily),
+        fileName: file.name,
+        fileBase64,
+        contentType: file.type || fallbackMimeType(file),
+        label: existingCandidate?.label ?? materialSlotLabels[slot],
+        prompt: existingCandidate?.prompt ?? file.name,
+        style: existingCandidate?.style ?? "uploaded"
+      });
+      setAssetCandidates((current) => {
+        const nextCandidates = current
+          ? {
+              candidates: current.candidates.map((candidate) =>
+                candidate.slot === slot ? result.assetCandidate : candidate
+              )
+            }
+          : { candidates: [result.assetCandidate] };
+        const nextConfirmedAssets = buildConfirmedCoreAssets(nextCandidates);
+        setConfirmedAssets(nextConfirmedAssets);
+        setCreationPhase(hasConfirmedCoreAssets(nextConfirmedAssets) ? "assets_confirmed" : "asset_review");
+        return nextCandidates;
+      });
+      setGenerationNotice({
+        tone: result.assetCandidate.validationStatus === "failed" || result.assetCandidate.error ? "error" : "success",
+        title: result.assetCandidate.validationStatus === "failed" || result.assetCandidate.error ? "上传素材不可用" : "上传素材已处理",
+        detail:
+          result.assetCandidate.error ??
+          `${materialSlotLabels[result.assetCandidate.slot]} 已经过后端抠图/校验，可用于素材确认。`
+      });
+    } catch (error) {
+      setGenerationNotice({
+        tone: "error",
+        title: "上传素材处理失败",
+        detail: readGenerationError(error)
+      });
     }
   };
 
@@ -682,6 +901,10 @@ export function App() {
     if (typeof window !== "undefined") {
       window.history.pushState({}, "", record.project.playUrl);
     }
+    setGeneratedProject(record.project);
+    setGenerationResult(null);
+    setCreationPhase("ready");
+    setActiveTab("preview");
     setPage("studio");
   };
 
@@ -794,6 +1017,15 @@ export function App() {
           const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
           openIdeaDialog(nextIdea, startDraft.templateFamily);
         }}
+        onUseTemplate={(template) => {
+          const draft = startDraftFromTemplate(template, startDraft.idea);
+          setStartDraft(draft);
+          openIdeaDialog(draft.idea, draft.templateFamily);
+        }}
+        onPreviewTemplate={(template) => {
+          setStartDraft(startDraftFromTemplate(template, startDraft.idea));
+          setPage("play");
+        }}
         onUploadPackage={async (file) => {
           setUploadedPackageMessage(`正在解析 ${file.name}...`);
           try {
@@ -823,12 +1055,14 @@ export function App() {
         draft={activeDraft}
         revisionText={revisionText}
         canGenerate={canGeneratePlayable}
+        canStartAssets={canStartAssets || ideaDialogActionState.canStartAssets}
         isPreparingAssets={ideaDialogActionState.isPreparingAssets}
         actionLabel={ideaDialogActionState.buttonLabel}
         isGenerating={creationPhase === "cooking"}
         onRevisionTextChange={setRevisionText}
         onAnswer={answerCurrentDialogQuestion}
         onGenerate={startResourceGeneration}
+        onStartAssets={startAssetGeneration}
         onClose={() => setPage("create")}
       />
     );
@@ -919,24 +1153,13 @@ export function App() {
                 assetCandidateStatus
               })}
               onConfirmAssets={(candidates) => {
-                setConfirmedAssets({
-                  assets: candidates.candidates.map((candidate) => ({
-                    ...candidate,
-                    approvalStatus: "approved"
-                  }))
-                });
+                const nextConfirmedAssets = buildConfirmedCoreAssets(candidates, activeDraft.uploadedMaterials);
+                setConfirmedAssets(nextConfirmedAssets);
+                setCreationPhase(hasConfirmedCoreAssets(nextConfirmedAssets) ? "assets_confirmed" : "asset_review");
               }}
-              onConfirmAsset={(candidate) => {
-                setConfirmedAssets((current) => ({
-                  assets: [
-                    ...(current?.assets.filter((asset) => asset.slot !== candidate.slot) ?? []),
-                    { ...candidate, approvalStatus: "approved" }
-                  ]
-                }));
-              }}
-              onUploadAsset={async (slot, files) => {
-                await addUserMaterials(files, slot);
-              }}
+              onUploadAsset={uploadAssetCandidateReplacement}
+              onRegenerateAsset={regenerateAssetCandidate}
+              regeneratingSlots={regeneratingAssetSlots}
             />
           </div>
           <PromptDock
@@ -944,9 +1167,12 @@ export function App() {
             revisionText={revisionText}
             modelStatusLabel={readGuidedQuestionStatus(guidedQuestionStatus, t.ideaDialog)}
             canGenerate={canGeneratePlayable}
+            canStartAssets={canStartAssets}
             isGenerating={creationPhase === "cooking"}
+            isGeneratingAssets={creationPhase === "asset_generating"}
             isSubmittingRevision={creationPhase === "revision_thinking"}
             onGenerate={startResourceGeneration}
+            onStartAssets={startAssetGeneration}
             onIdeaChange={setRevisionText}
             onSubmitRevision={submitFollowup}
             onUploadMaterials={addUserMaterials}
@@ -989,7 +1215,16 @@ export function App() {
 
           <div className="stage-content">
             {activeTab === "preview" && (
-              <PreviewWorkspace project={generatedProject} messages={t} phase={creationPhase} notice={generationNotice} />
+              <PreviewWorkspace
+                project={generatedProject}
+                messages={t}
+                phase={creationPhase}
+                notice={generationNotice}
+                canGenerate={canGeneratePlayable}
+                canStartAssets={canStartAssets}
+                onGenerate={startResourceGeneration}
+                onStartAssets={startAssetGeneration}
+              />
             )}
             {activeTab === "assets" && (
               <AssetWorkspace
@@ -1150,7 +1385,7 @@ function fallbackMimeType(file: File): string {
 
 function applyUserMaterialsToAssetPack(
   assets: AssetRequirement[],
-  userMaterials: UserMaterial[]
+  userMaterials: StartUploadedMaterial[]
 ): AssetRequirement[] {
   const materialsByKey = new Map(userMaterials.map((material) => [material.assetKey, material]));
   return assets.map((asset) => {
@@ -1178,7 +1413,7 @@ function applyUserMaterialsToAssetPack(
   });
 }
 
-function isMaterialCompatibleWithAsset(asset: AssetRequirement, material: UserMaterial): boolean {
+function isMaterialCompatibleWithAsset(asset: AssetRequirement, material: StartUploadedMaterial): boolean {
   if (asset.type === "image" || asset.type === "ui") return material.mimeType.startsWith("image/");
   if (asset.type === "sfx" || asset.type === "bgm") return material.mimeType.startsWith("audio/");
   return false;
@@ -1218,6 +1453,8 @@ function StartPage({
   onPlay,
   onProjects,
   onCreate,
+  onUseTemplate,
+  onPreviewTemplate,
   onUploadPackage,
   referencePackage,
   onRemoveReferencePackage,
@@ -1230,6 +1467,8 @@ function StartPage({
   onPlay: () => void;
   onProjects: () => void;
   onCreate: () => void;
+  onUseTemplate: (template: TemplateRecord) => void;
+  onPreviewTemplate: (template: TemplateRecord) => void;
   onUploadPackage: (file: File) => Promise<void>;
   referencePackage: ReferencePackageSummary | null;
   onRemoveReferencePackage: () => void;
@@ -1238,6 +1477,9 @@ function StartPage({
   const canCreate = draft.idea.trim().length > 0;
   const t = getMessages(locale);
   const updateDraft = (patch: Partial<StartGameDraft>) => onDraftChange({ ...draft, ...patch });
+  const officialTemplates = getOfficialTemplates();
+  const templateTiles = createStartTemplateTiles();
+  const [showTemplateLibrary, setShowTemplateLibrary] = useState(false);
 
   return (
     <main className="start-shell">
@@ -1275,7 +1517,10 @@ function StartPage({
         <div className="start-copy">
           <h1>{t.start.title}</h1>
           <p>
-            {t.start.subtitlePrefix} <button>{t.start.subtitleAction}</button>
+            {t.start.subtitlePrefix}{" "}
+            <button type="button" onClick={() => setShowTemplateLibrary(true)}>
+              {t.start.subtitleAction}
+            </button>
           </p>
         </div>
 
@@ -1295,13 +1540,24 @@ function StartPage({
             <span className="char-count">{draft.idea.length}/500</span>
           </div>
 
-          <div className="template-picker">
-            {templateOptions.map((template) => (
+          <div className="start-template-toolbar">
+            <span>小游戏类型</span>
+            <button type="button" className="official-template-launcher" onClick={() => setShowTemplateLibrary(true)}>
+              <Library size={15} />
+              官方模板库
+            </button>
+          </div>
+
+          <div className="template-icon-grid" aria-label="小游戏类型">
+            {templateTiles.map((template) => (
               <button
-                key={template.id}
-                className={draft.templateFamily === template.id ? "template-chip active" : "template-chip"}
+                key={template.templateFamily}
+                type="button"
+                className={
+                  draft.templateFamily === template.templateFamily ? "template-icon-card active" : "template-icon-card"
+                }
                 onClick={() => {
-                  const templateFamily = template.id as TemplateFamily;
+                  const templateFamily = template.templateFamily as TemplateFamily;
                   updateDraft({
                     templateFamily,
                     uploadedMaterials: draft.uploadedMaterials.map((material) => ({
@@ -1311,8 +1567,9 @@ function StartPage({
                   });
                 }}
               >
-                <strong>{template.label}</strong>
-                <span>{template.description}</span>
+                <i>{template.icon}</i>
+                <strong>{template.shortLabel}</strong>
+                <span>{template.hint}</span>
               </button>
             ))}
           </div>
@@ -1414,6 +1671,52 @@ function StartPage({
           </div>
         </section>
       </section>
+      {showTemplateLibrary ? (
+        <div className="official-template-modal" role="dialog" aria-modal="true" aria-label="官方模板库">
+          <div className="official-template-dialog">
+            <header className="official-template-dialog-header">
+              <div>
+                <span>OFFICIAL TEMPLATES</span>
+                <strong>官方模板库</strong>
+              </div>
+              <button type="button" onClick={() => setShowTemplateLibrary(false)} aria-label="关闭官方模板库">
+                <X size={17} />
+              </button>
+            </header>
+            <div className="official-template-grid">
+              {officialTemplates.map((template) => (
+                <article className="official-template-card" key={template.templateId}>
+                  <div>
+                    <span>{template.tags.slice(0, 2).join(" / ")}</span>
+                    <strong>{template.title}</strong>
+                    <p>{template.description}</p>
+                  </div>
+                  <div className="official-template-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowTemplateLibrary(false);
+                        onPreviewTemplate(template);
+                      }}
+                    >
+                      试玩
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowTemplateLibrary(false);
+                        onUseTemplate(template);
+                      }}
+                    >
+                      使用此模板
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -1425,12 +1728,14 @@ function IdeaDialogPage({
   draft,
   revisionText,
   canGenerate,
+  canStartAssets,
   isPreparingAssets,
   actionLabel,
   isGenerating,
   onRevisionTextChange,
   onAnswer,
   onGenerate,
+  onStartAssets,
   onClose
 }: {
   session: ConversationSession;
@@ -1439,18 +1744,26 @@ function IdeaDialogPage({
   draft: StartGameDraft;
   revisionText: string;
   canGenerate: boolean;
+  canStartAssets: boolean;
   isPreparingAssets: boolean;
   actionLabel: string;
   isGenerating: boolean;
   onRevisionTextChange: (value: string) => void;
   onAnswer: (value: string) => void;
   onGenerate: () => void;
+  onStartAssets: () => void;
   onClose: () => void;
 }) {
-  const dialog = buildIdeaDialogModel(session);
+  const dialog = buildIdeaDialogModel(session, messages.ideaDialog);
   const currentQuestion = dialog.currentQuestion;
   const answerValue = revisionText.trim() || currentQuestion?.defaultAnswer || "";
   const progressText = `${dialog.answeredCount}/${dialog.totalQuestions}`;
+  const canRunPrimaryAction = canGenerate || canStartAssets;
+  const runPrimaryAction = () => {
+    if (canGenerate) onGenerate();
+    else if (canStartAssets) onStartAssets();
+    else submitAnswer();
+  };
 
   const submitAnswer = () => {
     if (!currentQuestion || !answerValue) return;
@@ -1519,12 +1832,12 @@ function IdeaDialogPage({
               onKeyDown={(event) => {
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                   event.preventDefault();
-                  if (canGenerate) onGenerate();
+                  if (canRunPrimaryAction) runPrimaryAction();
                   else submitAnswer();
                 }
               }}
               placeholder={
-                canGenerate
+                canRunPrimaryAction
                   ? messages.ideaDialog.readyPlaceholder
                   : messages.ideaDialog.replyPlaceholder
               }
@@ -1542,11 +1855,11 @@ function IdeaDialogPage({
                 {messages.ideaDialog.pickForMe}
               </button>
               <button
-                className={canGenerate ? "idea-send-button generate" : "idea-send-button"}
-                disabled={isGenerating || (!canGenerate && !currentQuestion)}
-                onClick={canGenerate ? onGenerate : submitAnswer}
+                className={canRunPrimaryAction ? "idea-send-button generate" : "idea-send-button"}
+                disabled={isGenerating || (!canRunPrimaryAction && !currentQuestion)}
+                onClick={runPrimaryAction}
               >
-                {isGenerating ? <RefreshCcw size={18} /> : canGenerate ? <Wand2 size={18} /> : <Send size={18} />}
+                {isGenerating ? <RefreshCcw size={18} /> : canRunPrimaryAction ? <Wand2 size={18} /> : <Send size={18} />}
                 <span>{actionLabel}</span>
               </button>
             </div>
@@ -2253,13 +2566,15 @@ function UserPrompt({ text }: { text: string }) {
 function StudioChatFlow({
   messages,
   onConfirmAssets,
-  onConfirmAsset,
-  onUploadAsset
+  onUploadAsset,
+  onRegenerateAsset,
+  regeneratingSlots
 }: {
   messages: StudioChatMessage[];
   onConfirmAssets: (assetCandidates: AssetCandidates) => void;
-  onConfirmAsset: (assetCandidate: AssetCandidates["candidates"][number]) => void;
   onUploadAsset: (slot: UserMaterialSlot, files: File[]) => Promise<void>;
+  onRegenerateAsset: (assetCandidate: AssetCandidates["candidates"][number]) => void;
+  regeneratingSlots: Set<UserMaterialSlot>;
 }) {
   return (
     <div className="studio-chat-flow" aria-label="AI 创作对话">
@@ -2267,15 +2582,31 @@ function StudioChatFlow({
         <article key={message.id} className={`studio-chat-message ${message.role}`}>
           <span>{message.meta}</span>
           <p>{message.content}</p>
+          {message.assetProgress ? <AssetProgressList steps={message.assetProgress} /> : null}
           {message.assetCandidates ? (
             <AssetCandidateReview
               assetCandidates={message.assetCandidates}
               onConfirm={() => onConfirmAssets(message.assetCandidates as AssetCandidates)}
-              onConfirmOne={onConfirmAsset}
               onUploadAsset={onUploadAsset}
+              onRegenerateAsset={onRegenerateAsset}
+              regeneratingSlots={regeneratingSlots}
             />
           ) : null}
         </article>
+      ))}
+    </div>
+  );
+}
+
+function AssetProgressList({ steps }: { steps: NonNullable<StudioChatMessage["assetProgress"]> }) {
+  return (
+    <div className="asset-progress-list" aria-label="素材生成进度">
+      {steps.map((step) => (
+        <div className="asset-progress-step" key={step.slot}>
+          <span className="asset-progress-dot" />
+          <strong>{step.label}</strong>
+          <span>生成中</span>
+        </div>
       ))}
     </div>
   );
@@ -2286,9 +2617,12 @@ function PromptDock({
   revisionText,
   modelStatusLabel,
   canGenerate,
+  canStartAssets,
   isGenerating,
+  isGeneratingAssets,
   isSubmittingRevision,
   onGenerate,
+  onStartAssets,
   onIdeaChange,
   onSubmitRevision
   ,
@@ -2298,9 +2632,12 @@ function PromptDock({
   revisionText: string;
   modelStatusLabel: string;
   canGenerate: boolean;
+  canStartAssets: boolean;
   isGenerating: boolean;
+  isGeneratingAssets: boolean;
   isSubmittingRevision: boolean;
   onGenerate: () => void;
+  onStartAssets: () => void;
   onIdeaChange: (idea: string) => void;
   onSubmitRevision: () => void;
   onUploadMaterials: (files: File[], preferredSlot?: UserMaterialSlot) => Promise<void>;
@@ -2349,12 +2686,12 @@ function PromptDock({
           {messages.prompt.sendFollowup}
         </button>
         <button
-          className={isGenerating ? "send-button generating" : "send-button"}
-          title={messages.prompt.generateNext}
-          onClick={onGenerate}
-          disabled={!canGenerate}
+          className={isGenerating || isGeneratingAssets ? "send-button generating" : "send-button"}
+          title={canStartAssets ? "生成素材方案" : messages.prompt.generateNext}
+          onClick={canStartAssets ? onStartAssets : onGenerate}
+          disabled={isGeneratingAssets || (!canStartAssets && !canGenerate)}
         >
-          {isGenerating ? <RefreshCcw size={18} /> : <Send size={18} />}
+          {isGenerating || isGeneratingAssets ? <RefreshCcw size={18} /> : canStartAssets ? <ImageIcon size={18} /> : <Send size={18} />}
         </button>
       </div>
     </div>
@@ -2364,58 +2701,112 @@ function PromptDock({
 function AssetCandidateReview({
   assetCandidates,
   onConfirm,
-  onConfirmOne,
-  onUploadAsset
+  onUploadAsset,
+  onRegenerateAsset,
+  regeneratingSlots
 }: {
   assetCandidates: AssetCandidates;
   onConfirm: () => void;
-  onConfirmOne: (assetCandidate: AssetCandidates["candidates"][number]) => void;
   onUploadAsset: (slot: UserMaterialSlot, files: File[]) => Promise<void>;
+  onRegenerateAsset: (assetCandidate: AssetCandidates["candidates"][number]) => void;
+  regeneratingSlots: Set<UserMaterialSlot>;
 }) {
+  const confirmableAssets = buildConfirmedCoreAssets(assetCandidates);
+  const canConfirmDirection = hasConfirmedCoreAssets(confirmableAssets);
   return (
     <section className="asset-candidate-review">
       <div className="asset-candidate-header">
         <span>素材确认</span>
-        <strong>AI 已生成首版素材提示词和占位预览</strong>
-        <button type="button" onClick={onConfirm}>
+        <strong>AI 已生成四张核心图片素材</strong>
+        <button type="button" onClick={onConfirm} disabled={!canConfirmDirection}>
           确认素材方向
         </button>
+        {!canConfirmDirection ? <small>补齐四个核心素材后可确认；失败素材可重试或上传替换。</small> : null}
       </div>
       <div className="asset-candidate-grid">
-        {assetCandidates.candidates.map((candidate) => (
-          <article className="asset-candidate-card" key={`${candidate.slot}-${candidate.assetKey}`}>
-            {candidate.type === "image" || candidate.type === "ui" ? (
-              <img src={candidate.previewUrl} alt={candidate.label} />
-            ) : (
-              <div className="asset-audio-preview">
-                <Zap size={20} />
-                <span>{candidate.type.toUpperCase()}</span>
+        {assetCandidates.candidates.map((candidate) => {
+          const canConfirm =
+            isRuntimeImageUrl(candidate.fileUrl) &&
+            isRuntimeImageUrl(candidate.previewUrl) &&
+            candidate.validationStatus !== "failed" &&
+            !candidate.error;
+          const hasWarning = canConfirm && candidate.validationStatus === "warning";
+          const hasOriginalLibrary = typeof candidate.generationParams?.originalLibraryUrl === "string";
+          const cutoutApplied = candidate.generationParams?.cutoutApplied === true;
+          const isRegenerating = regeneratingSlots.has(candidate.slot);
+          const fullPrompt =
+            typeof candidate.generationParams?.finalPrompt === "string"
+              ? candidate.generationParams.finalPrompt
+              : candidate.prompt;
+          const candidateVersionKey =
+            candidate.fileUrl || candidate.previewUrl || String(candidate.generationParams?.assetBatchId ?? "");
+          return (
+            <article
+              className="asset-candidate-card"
+              key={`${candidate.slot}-${candidate.assetKey}-${candidateVersionKey}`}
+            >
+              {candidate.type === "image" || candidate.type === "ui" ? (
+                candidate.previewUrl ? <img src={candidate.previewUrl} alt={candidate.label} /> : <div className="asset-audio-preview">生成失败</div>
+              ) : (
+                <div className="asset-audio-preview">
+                  <Zap size={20} />
+                  <span>{candidate.type.toUpperCase()}</span>
+                </div>
+              )}
+              <div>
+                <span>{materialSlotLabels[candidate.slot]}</span>
+                <strong>{candidate.label}</strong>
+                <p>{candidate.prompt}</p>
+                <details className="asset-candidate-prompt">
+                  <summary>查看完整提示词</summary>
+                  <p>{fullPrompt}</p>
+                </details>
+                <div className="asset-candidate-meta">
+                  {candidate.requiresTransparency ? (
+                    <small>
+                      {cutoutApplied ? "已生成透明 PNG" : "透明 PNG 校验中"}
+                      {typeof candidate.alphaCoverage === "number" ? ` · ${(candidate.alphaCoverage * 100).toFixed(0)}%` : ""}
+                    </small>
+                  ) : null}
+                  {hasOriginalLibrary ? <small>原图已入库</small> : null}
+                  {typeof candidate.generationParams?.processedLibraryUrl === "string" ? <small>游戏用图已入库</small> : null}
+                </div>
+                {candidate.error ? <small className="asset-candidate-error">{candidate.error}</small> : null}
+                  {hasWarning && candidate.validationErrors?.length ? (
+                    <small className="asset-candidate-warning">{candidate.validationErrors.join(" ")}</small>
+                  ) : null}
+                <div className="asset-candidate-actions">
+                  <span className={canConfirm ? "asset-candidate-status ready" : "asset-candidate-status failed"}>
+                    {canConfirm ? (hasWarning ? "可用但建议优化" : "素材可用") : "需要重试或替换"}
+                  </span>
+                  {!canConfirm ? (
+                    <button type="button" onClick={() => onRegenerateAsset(candidate)} disabled={isRegenerating}>
+                      <RefreshCcw size={13} />
+                      {isRegenerating ? "生成中" : "重新生成此素材"}
+                    </button>
+                  ) : null}
+                  {typeof candidate.generationParams?.originalLibraryUrl === "string" ? (
+                    <a href={candidate.generationParams.originalLibraryUrl} download>
+                      下载原图
+                    </a>
+                  ) : null}
+                  <label>
+                    <Upload size={13} />
+                    上传替换
+                    <input
+                      type="file"
+                      accept={candidate.acceptedFileTypes.join(",")}
+                      onChange={async (event) => {
+                        await onUploadAsset(candidate.slot, Array.from(event.target.files ?? []));
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
-            )}
-            <div>
-              <span>{candidate.slot}</span>
-              <strong>{candidate.label}</strong>
-              <p>{candidate.prompt}</p>
-              <div className="asset-candidate-actions">
-                <button type="button" onClick={() => onConfirmOne(candidate)}>
-                  确认此素材
-                </button>
-                <label>
-                  <Upload size={13} />
-                  上传替换
-                  <input
-                    type="file"
-                    accept={candidate.acceptedFileTypes.join(",")}
-                    onChange={async (event) => {
-                      await onUploadAsset(candidate.slot, Array.from(event.target.files ?? []));
-                      event.currentTarget.value = "";
-                    }}
-                  />
-                </label>
-              </div>
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -2425,28 +2816,39 @@ function PreviewWorkspace({
   project,
   messages,
   phase,
-  notice
+  notice,
+  canGenerate,
+  canStartAssets,
+  onGenerate,
+  onStartAssets
 }: {
   project: MockProject | null;
   messages: ReturnType<typeof getMessages>;
   phase: CreationPhase;
   notice: GenerationNotice | null;
+  canGenerate: boolean;
+  canStartAssets: boolean;
+  onGenerate: () => void;
+  onStartAssets: () => void;
 }) {
   const isCooking = phase === "cooking";
   const isPlayableReady = phase === "ready" && project;
+  const isAssetGenerating = phase === "asset_generating";
+  const isAssetReview = phase === "asset_review";
+  const isAssetsConfirmed = phase === "assets_confirmed";
   return (
     <div className="preview-workspace">
-      {isCooking ? (
+      {isCooking || isAssetGenerating ? (
         <div className="cooking-state" role="status" aria-live="polite">
           <div className="cooking-orbit">
             <span />
             <span />
             <span />
           </div>
-          <p>{messages.preview.cookingEyebrow}</p>
-          <h2>{messages.preview.cookingTitle}</h2>
-          <strong>{messages.preview.cookingSubtitle}</strong>
-          <small>{messages.preview.cookingDetail}</small>
+          <p>{isAssetGenerating ? "素材生成中" : messages.preview.cookingEyebrow}</p>
+          <h2>{isAssetGenerating ? "正在生成背景、角色、障碍和收集物" : messages.preview.cookingTitle}</h2>
+          <strong>{isAssetGenerating ? "完成后会在左侧对话中确认素材" : messages.preview.cookingSubtitle}</strong>
+          <small>{isAssetGenerating ? "Agnes 生图通常需要几十秒，请等待左侧素材卡出现。" : messages.preview.cookingDetail}</small>
         </div>
       ) : notice && notice.tone !== "working" && (
         <div className={`preview-result-banner ${notice.tone}`}>
@@ -2457,14 +2859,35 @@ function PreviewWorkspace({
           </div>
         </div>
       )}
-      {!isCooking && !isPlayableReady && (
+      {!isCooking && !isAssetGenerating && !isPlayableReady && (
         <div className="preview-empty-state">
           <div className="preview-empty-icon">
             <Gamepad2 size={30} />
           </div>
-          <p>{messages.preview.waitingEyebrow}</p>
-          <h2>{messages.preview.waitingTitle}</h2>
-          <span>{messages.preview.waitingDetail}</span>
+          <p>{isAssetsConfirmed ? "素材已确认" : isAssetReview ? "素材确认" : messages.preview.waitingEyebrow}</p>
+          <h2>
+            {isAssetsConfirmed
+              ? "现在可以生成可玩游戏"
+              : isAssetReview
+                ? "请先在左侧确认核心素材"
+                : messages.preview.waitingTitle}
+          </h2>
+          <span>
+            {isAssetsConfirmed
+              ? "点击下方按钮开始构建 Phaser 试玩版本。"
+              : isAssetReview
+                ? "确认背景、主角、危险物和收集物后，这里会进入生成游戏状态。"
+                : messages.preview.waitingDetail}
+          </span>
+          {isAssetsConfirmed ? (
+            <button className="preview-primary-action" type="button" disabled={!canGenerate} onClick={onGenerate}>
+              生成可玩游戏
+            </button>
+          ) : canStartAssets ? (
+            <button className="preview-primary-action" type="button" onClick={onStartAssets}>
+              生成素材方案
+            </button>
+          ) : null}
         </div>
       )}
       {!isCooking && isPlayableReady && (

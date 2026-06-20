@@ -1,4 +1,5 @@
 import type {
+  AssetCandidate,
   AssetCandidates,
   ConfirmedAssets,
   DesignBrief,
@@ -56,6 +57,26 @@ export interface DesignBriefRequest {
 
 export interface AssetCandidatesRequest extends DesignBriefRequest {
   designBrief?: DesignBrief;
+  answers?: UserAnswer[];
+}
+
+export interface RegenerateAssetCandidateRequest {
+  idea: string;
+  templateFamily: TemplateFamily;
+  candidate: AssetCandidate;
+}
+
+export interface ProcessUploadedMaterialRequest {
+  idea: string;
+  templateFamily: TemplateFamily;
+  slot: AssetCandidate["slot"];
+  assetKey: string;
+  fileName: string;
+  fileBase64: string;
+  contentType: string;
+  label?: string;
+  prompt?: string;
+  style?: string;
 }
 
 export interface RevisionAnalysisRequest extends DesignBriefRequest {
@@ -241,6 +262,50 @@ export async function requestAssetCandidates(
     confirmedAssets: ConfirmedAssets;
     modelTask: Record<string, any>;
     fallbackUsed: boolean;
+  };
+}
+
+export async function requestRegenerateAssetCandidate(
+  input: RegenerateAssetCandidateRequest,
+  fetcher: BrowserFetcher = fetch
+): Promise<{
+  assetCandidate: AssetCandidate;
+}> {
+  const response = await fetcher("/api/regenerate-asset-candidate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Regenerate asset candidate request failed: ${readError(payload, response)}`);
+  }
+  return payload as {
+    assetCandidate: AssetCandidate;
+  };
+}
+
+export async function requestProcessUploadedMaterial(
+  input: ProcessUploadedMaterialRequest,
+  fetcher: BrowserFetcher = fetch
+): Promise<{
+  assetCandidate: AssetCandidate;
+}> {
+  const response = await fetcher("/api/process-uploaded-material", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Process uploaded material request failed: ${readError(payload, response)}`);
+  }
+  return payload as {
+    assetCandidate: AssetCandidate;
   };
 }
 

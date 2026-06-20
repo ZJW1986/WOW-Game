@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   createStartGameDraft,
+  createStartTemplateTiles,
   modelOptions,
   templateOptions
 } from "../src/core/start";
+import { getOfficialTemplates } from "../src/core/templateCatalog";
 
 describe("start page draft", () => {
   it("uses DeepSeek v4 flash and top_down template by default", () => {
@@ -36,5 +38,21 @@ describe("start page draft", () => {
 
     expect(draft.templateFamily).toBe("platformer");
     expect(draft.uploadedFileNames).toEqual(["character.png", "music.mp3"]);
+  });
+
+  it("keeps official templates behind a library entry and uses compact game type icons", () => {
+    const tiles = createStartTemplateTiles();
+
+    expect(tiles).toHaveLength(5);
+    expect(tiles.map((tile) => tile.templateFamily)).toEqual([
+      "top_down",
+      "platformer",
+      "grid_logic",
+      "tower_defense",
+      "ui_heavy"
+    ]);
+    expect(tiles.every((tile) => tile.icon.length <= 2)).toBe(true);
+    expect(tiles.every((tile) => tile.shortLabel.length <= 6)).toBe(true);
+    expect(getOfficialTemplates().length).toBeGreaterThan(0);
   });
 });

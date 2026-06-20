@@ -73,4 +73,103 @@ describe("mature game experience generation", () => {
     expect(report.scores.gameFeel).toBeGreaterThanOrEqual(80);
     expect(report.checks).toEqual(expect.arrayContaining(["first 30 seconds include goal, reward, risk, and outcome"]));
   });
+
+  it("normalizes shallow DeepSeek hooks into richer playable stage rules", async () => {
+    const service = createGenerationService({
+      deepseekApiKey: "server-key",
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body);
+        const prompt = body.messages?.at(-1)?.content ?? "";
+        if (prompt.includes("Task: llm.game_hooks.")) {
+          return JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    enemyRules: { movement: "static", speed: 80, waveIntervalMs: 0 },
+                    collectibleRules: { placement: "line", value: 1, respawn: false },
+                    winCondition: { mode: "collect_score", target: 6 },
+                    failCondition: { mode: "hit_hazard", lives: 1 },
+                    numberTuning: { playerSpeed: 220, jumpVelocity: 430, hazardSpeed: 100 },
+                    levelLayout: { platforms: [], lanes: [], grid: { columns: 0, rows: 0 } }
+                  })
+                }
+              }
+            ]
+          });
+        }
+        return JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "{}"
+              }
+            }
+          ]
+        });
+      }
+    });
+
+    const result = await service.generatePlayableVersion({
+      idea: "太空猫驾驶飞船躲避陨石，收集鱼干，会有爆炸和冲刺",
+      answers: [],
+      templateFamily: "top_down",
+      projectId: "project-commercial-hooks",
+      baseUrl: "https://wow-game.example",
+      model: "deepseek-v4-flash"
+    });
+
+    const hooks = result.project.gameHooks;
+
+    expect(new Set(hooks.enemyArchetypes?.map((enemy) => enemy.type)).size).toBeGreaterThanOrEqual(2);
+    expect(hooks.stageGoals?.map((stage) => stage.objective)).toEqual(["learn_controls", "collect", "finale"]);
+    expect(hooks.encounterTimeline?.map((event) => event.event)).toEqual(
+      expect.arrayContaining(["spawn_wave", "reward_burst", "projectile_burst"])
+    );
+    expect(hooks.impactRules?.explosionParticles).toBeGreaterThanOrEqual(22);
+    expect(hooks.feedbackRules?.comboText).toBe(true);
+  });
+
+  it("clamps oversized DeepSeek explosion radius for playable visibility", async () => {
+    const service = createGenerationService({
+      deepseekApiKey: "server-key",
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body);
+        const prompt = body.messages?.at(-1)?.content ?? "";
+        if (prompt.includes("Task: llm.game_hooks.")) {
+          return JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    attackRules: {
+                      contactDamage: 1,
+                      dashDamage: 0,
+                      projectileSpeed: 180,
+                      projectileCooldownMs: 1400,
+                      explosionRadius: 360,
+                      explosionDelayMs: 650,
+                      warningMs: 420
+                    }
+                  })
+                }
+              }
+            ]
+          });
+        }
+        return JSON.stringify({ choices: [{ message: { content: "{}" } }] });
+      }
+    });
+
+    const result = await service.generatePlayableVersion({
+      idea: "太空飞船躲避爆炸陨石",
+      answers: [],
+      templateFamily: "top_down",
+      projectId: "project-clamped-explosion",
+      baseUrl: "https://wow-game.example",
+      model: "deepseek-v4-flash"
+    });
+
+    expect(result.project.gameHooks.attackRules?.explosionRadius).toBeLessThanOrEqual(96);
+  });
 });

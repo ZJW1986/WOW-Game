@@ -45,6 +45,40 @@ export default defineConfig(({ mode }) => {
             res.setHeader("Content-Type", contentTypeForPath(match[3]));
             res.end(Buffer.from(bytes));
           });
+          server.middlewares.use("/projects", async (req: any, res: any, next: () => void) => {
+            const url = req.url ?? "";
+            const match = url.match(/^\/([^/]+)\/([^/]+)\/assets\/(.+)$/);
+            if (!match) {
+              next();
+              return;
+            }
+            const bytes = await store.readProjectAsset(match[1], match[2], decodeURIComponent(match[3]));
+            if (!bytes) {
+              next();
+              return;
+            }
+            res.statusCode = 200;
+            res.setHeader("Content-Type", contentTypeForPath(match[3]));
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            res.end(Buffer.from(bytes));
+          });
+          server.middlewares.use("/asset-library", async (req: any, res: any, next: () => void) => {
+            const url = req.url ?? "";
+            const match = url.match(/^\/assets\/(.+)$/);
+            if (!match) {
+              next();
+              return;
+            }
+            const bytes = await store.readLibraryAsset(decodeURIComponent(match[1]));
+            if (!bytes) {
+              next();
+              return;
+            }
+            res.statusCode = 200;
+            res.setHeader("Content-Type", contentTypeForPath(match[1]));
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            res.end(Buffer.from(bytes));
+          });
           server.middlewares.use("/api", async (req: any, res: any, next: () => void) => {
             const url = req.url ?? "";
             if (!isWowGameApiPath(url)) {

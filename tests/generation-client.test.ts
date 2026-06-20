@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   requestPlayableGeneration,
+  requestProcessUploadedMaterial,
   requestPlayableProject,
   requestPackageEditPlan,
   replacePackageAsset,
@@ -71,7 +72,7 @@ describe("browser generation client", () => {
     ).rejects.toThrow("Generation request failed: missing idea");
   });
 
-  it("times out generation requests so the UI can fall back locally", async () => {
+  it("times out generation requests so the UI can show a retryable error", async () => {
     await expect(
       requestPlayableGeneration(
         {
@@ -185,6 +186,52 @@ describe("browser generation client", () => {
     expect(result.project.contentType).toBe("uploaded_package");
     expect(result.project.editable).toBe(true);
     expect(result.project.shareable).toBe(true);
+  });
+
+  it("posts uploaded material processing requests for server-side cutout", async () => {
+    let requestUrl = "";
+    let requestBody = "";
+    const result = await requestProcessUploadedMaterial(
+      {
+        idea: "space cat game",
+        templateFamily: "top_down",
+        slot: "hazard",
+        assetKey: "hazard.enemy",
+        fileName: "asteroid.png",
+        fileBase64: "abc123",
+        contentType: "image/png",
+        label: "Asteroid",
+        prompt: "uploaded asteroid",
+        style: "neon"
+      },
+      async (url, init) => {
+        requestUrl = String(url);
+        requestBody = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({
+            assetCandidate: {
+              slot: "hazard",
+              assetKey: "hazard.enemy",
+              type: "image",
+              label: "Asteroid",
+              prompt: "uploaded asteroid",
+              style: "neon",
+              purpose: "hazard",
+              acceptedFileTypes: ["image/*"],
+              previewUrl: "/projects/uploads/processed/hazard.enemy.cutout.png",
+              fileUrl: "/projects/uploads/processed/hazard.enemy.cutout.png",
+              source: "uploaded",
+              validationStatus: "passed"
+            }
+          }),
+          { status: 200 }
+        );
+      }
+    );
+
+    expect(requestUrl).toBe("/api/process-uploaded-material");
+    expect(requestBody).toContain("asteroid.png");
+    expect(result.assetCandidate.source).toBe("uploaded");
   });
 
   it("requests an AI edit plan for an uploaded package", async () => {

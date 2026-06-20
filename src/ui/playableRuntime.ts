@@ -1,5 +1,7 @@
 export type PlayablePhase = "idle" | "playing" | "won" | "lost";
 
+export const PREVIEW_PRIMARY_ACTION_EVENT = "wow-game-preview-primary-action";
+
 export interface PlayableRuntimeState {
   phase: PlayablePhase;
   score: number;
@@ -24,6 +26,12 @@ export interface FeedbackRules {
   collectBurstCount: number;
 }
 
+export function readPreviewActionLabel(phase: PlayablePhase): string | undefined {
+  if (phase === "idle") return "Start game";
+  if (phase === "won" || phase === "lost") return "Restart";
+  return undefined;
+}
+
 export function createPlayableRuntimeState(): PlayableRuntimeState {
   return {
     phase: "idle",
@@ -38,9 +46,11 @@ export function createPlayableRules(input: {
   collectibleValue?: number;
   hookLives?: number;
 }): PlayableRules {
+  const winScore = Math.max(1, Math.round(input.hookWinTarget || input.configWinScore || 1));
+  const requestedCollectibleValue = Math.max(1, Math.round(input.collectibleValue || 1));
   return {
-    winScore: Math.max(1, Math.round(input.hookWinTarget || input.configWinScore || 1)),
-    collectibleValue: Math.max(1, Math.round(input.collectibleValue || 1)),
+    winScore,
+    collectibleValue: requestedCollectibleValue >= winScore ? 1 : requestedCollectibleValue,
     lives: Math.max(1, Math.round(input.hookLives || 1))
   };
 }
@@ -54,11 +64,6 @@ export function createFeedbackRules(input: Partial<FeedbackRules> = {}): Feedbac
     screenShakeIntensity: clampNumber(input.screenShakeIntensity, 0, 0.06, 0.012),
     collectBurstCount: clampNumber(input.collectBurstCount, 1, 36, 12)
   };
-}
-
-function clampNumber(value: number | undefined, min: number, max: number, fallback: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, value));
 }
 
 export function startPlayableRuntime(
@@ -134,4 +139,9 @@ export function restartPlayableRuntime(state: PlayableRuntimeState): PlayableRun
     endedAt: undefined,
     result: undefined
   };
+}
+
+function clampNumber(value: number | undefined, min: number, max: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
 }
