@@ -43,6 +43,7 @@ export interface ThreeGameGenerationResult {
 }
 
 const THREE_CORE_MODEL_KEYS = ["three.model.player", "three.model.hazard", "three.model.collectible"] as const;
+type ThreeCoreModelSlot = "player" | "hazard" | "collectible";
 
 export function generateThreeGameMvp(input: ThreeGameGenerationRequest): ThreeGameGenerationResult {
   const genre = input.gameType3d ?? classifyThreeGenre(input.idea);
@@ -115,17 +116,17 @@ export function createThreeAssetCandidates(input: {
     {
       assetKey: "three.model.player",
       purpose: "玩家可控制 3D 主体",
-      prompt: `${input.idea}. Create the playable hero model for ${input.brief.title}. ${input.brief.playerFantasy}. ${input.brief.movementIntent}. Mobile game ready GLB, clear silhouette, centered, low-poly readable style.`
+      prompt: buildTripoModelPrompt("player", input)
     },
     {
       assetKey: "three.model.hazard",
       purpose: "玩家需要躲避或对抗的 3D 危险物",
-      prompt: `${input.idea}. Create the main hazard/enemy model for ${input.brief.title}. Enemy behaviors: ${input.director.enemies.map((enemy) => `${enemy.type}-${enemy.behavior}`).join(", ")}. GLB, readable from mobile camera, distinct from player.`
+      prompt: buildTripoModelPrompt("hazard", input)
     },
     {
       assetKey: "three.model.collectible",
       purpose: "玩家需要收集的 3D 奖励物",
-      prompt: `${input.idea}. Create the collectible reward model for ${input.brief.title}. Goal: collect ${input.director.objectives.collectTarget}. GLB, glowing readable pickup, small but visible in 3D mobile scene.`
+      prompt: buildTripoModelPrompt("collectible", input)
     }
   ] as const;
 
@@ -145,12 +146,86 @@ export function createThreeAssetCandidates(input: {
         {
           assetBatchId: input.assetBatchId,
           slotRevisionId: `${input.assetBatchId}-${index + 1}`,
+          finalPrompt: slot.prompt,
+          modelPrompt: slot.prompt,
           status: "pending",
           tripoPrompt: slot.prompt
         }
       )
     )
   };
+}
+
+function buildTripoModelPrompt(
+  slot: ThreeCoreModelSlot,
+  input: { idea: string; brief: ThreeGameBrief; director: ThreeSceneDirector }
+): string {
+  const genre = describeThreeGenre(input.brief.genre);
+  const theme = inferThreeModelTheme(input);
+  const common =
+    `Create a single 3D model for a ${genre}. ` +
+    `${theme}. Game ready low-poly style, clean silhouette, centered object, readable on a mobile screen. ` +
+    "No text, no UI, no logo, no scene, no full environment, no background, no game screenshot.";
+  const slotPrompt: Record<ThreeCoreModelSlot, string> = {
+    player:
+      "The model is the controllable hero vehicle or character. Make it friendly, directional, and easy to recognize from a chase camera.",
+    hazard:
+      `The model is the primary dangerous obstacle or enemy. Make it threatening and visually distinct. Behaviors include ${describeEnemyBehaviors(
+        input.director
+      )}.`,
+    collectible:
+      `The model is a small reward pickup. Make it bright, valuable, and easy to collect. Target pickup count is ${Math.max(
+        1,
+        input.director.objectives.collectTarget
+      )}.`
+  };
+  return sanitizeTripoPrompt(`${common} ${slotPrompt[slot]} Export intent: GLB compatible asset.`);
+}
+
+function sanitizeTripoPrompt(prompt: string): string {
+  return prompt
+    .replace(/three\.model\.[a-z.]+/gi, "")
+    .replace(/three\.js/gi, "")
+    .replace(/请生成|生成一款|玩家|游戏/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 680);
+}
+
+function describeThreeGenre(genre: ThreeGameGenre): string {
+  if (genre === "runner") return "3D runner";
+  if (genre === "exploration") return "3D exploration";
+  if (genre === "dodge_collect") return "3D dodge and collect";
+  if (genre === "third_person_collect") return "3D third-person collect";
+  return "3D flight shooter";
+}
+
+function inferThreeModelTheme(input: { idea: string; brief: ThreeGameBrief }): string {
+  const text = [
+    input.idea,
+    input.brief.title,
+    input.brief.playerFantasy,
+    input.brief.spaceLayout,
+    input.brief.assetNeeds.join(" ")
+  ]
+    .join(" ")
+    .toLowerCase();
+  const tags: string[] = [];
+  if (/太空猫|space cat|cat/.test(text)) tags.push("space cat theme");
+  if (/太空|宇宙|星|space|sci-fi|sci fi/.test(text)) tags.push("sci-fi space theme");
+  if (/飞船|飞机|战机|ship|airplane|jet|fighter/.test(text)) tags.push("small flying ship theme");
+  if (/陨石|小行星|asteroid|meteor/.test(text)) tags.push("asteroid danger theme");
+  if (/鱼干|fish/.test(text)) tags.push("dried fish reward motif");
+  if (/金币|coin/.test(text)) tags.push("coin reward motif");
+  if (/能量|energy|orb/.test(text)) tags.push("glowing energy motif");
+  if (/机器人|robot|mecha/.test(text)) tags.push("robotic mechanical theme");
+  if (/恐龙|dinosaur/.test(text)) tags.push("stylized dinosaur theme");
+  return tags.length > 0 ? `Theme keywords: ${tags.slice(0, 4).join(", ")}` : "Theme keywords: arcade sci-fi adventure";
+}
+
+function describeEnemyBehaviors(director: ThreeSceneDirector): string {
+  const behaviors = director.enemies.map((enemy) => enemy.behavior).filter(Boolean);
+  return behaviors.length > 0 ? Array.from(new Set(behaviors)).slice(0, 3).join(", ") : "patrol, chase";
 }
 
 export function buildConfirmedThreeAssets(assets: AssetRequirement[]): ConfirmedThreeAssets {
@@ -528,7 +603,7 @@ function threeAsset(
     copyrightStatus: uploaded ? "user_provided" : generated ? "generated" : "placeholder",
     spec,
     status: uploaded ? "uploaded" : generated && !fileUrl ? "missing" : "generated",
-    prompt: `${assetKey}: ${purpose}. ${spec}.`,
+    prompt: spec,
     acceptedFileTypes: type === "audio" ? ["audio/*", ".mp3", ".wav"] : [".glb", ".gltf", "image/*"],
     previewUrl,
     source: uploaded ? "uploaded" : generated ? "generated" : "preset",

@@ -1,4 +1,11 @@
-﻿import type { AssetCandidates, ConversationSession, DesignBrief, MockProject, RevisionAnalysis } from "../core/types";
+import type {
+  AssetCandidates,
+  ConversationSession,
+  DesignBrief,
+  MockProject,
+  RevisionAnalysis,
+  ThreeAssetCandidates
+} from "../core/types";
 import type { getMessages } from "./i18n";
 
 export type StudioChatPhase =
@@ -8,6 +15,9 @@ export type StudioChatPhase =
   | "asset_generating"
   | "asset_review"
   | "assets_confirmed"
+  | "three_asset_generating"
+  | "three_asset_review"
+  | "three_assets_confirmed"
   | "revision"
   | "revision_thinking"
   | "cooking"
@@ -26,6 +36,7 @@ export interface StudioChatMessage {
   content: string;
   meta: string;
   assetCandidates?: AssetCandidates;
+  threeAssetCandidates?: ThreeAssetCandidates;
   assetProgress?: AssetProgressStep[];
 }
 
@@ -64,6 +75,7 @@ export function buildStudioChatMessages({
   designBrief,
   revisionHistory,
   assetCandidates,
+  threeAssetCandidates,
   assetCandidateStatus
 }: {
   idea: string;
@@ -76,6 +88,7 @@ export function buildStudioChatMessages({
   designBrief?: DesignBrief | null;
   revisionHistory?: RevisionAnalysis[];
   assetCandidates?: AssetCandidates | null;
+  threeAssetCandidates?: ThreeAssetCandidates | null;
   assetCandidateStatus?: "idle" | "loading" | "ready" | "failed";
 }): StudioChatMessage[] {
   const splitIdea = splitIdeaTurns(idea);
@@ -165,22 +178,28 @@ export function buildStudioChatMessages({
 
   if (assetCandidateStatus === "loading") {
     const assetProgress = createAssetProgressSteps();
+    const isThreeAssets = phase === "three_asset_generating";
     result.push({
-      id: "asset-candidates-loading",
+      id: isThreeAssets ? "three-asset-candidates-loading" : "asset-candidates-loading",
       role: "assistant",
-      meta: "素材生成",
-      content: [
-        "AI 正在根据开发提示词生成核心素材。",
-        ...assetProgress.map((step) => `${step.label}生成中`)
-      ].join("\n"),
-      assetProgress
+      meta: isThreeAssets ? "3D模型生成" : "素材生成",
+      content: isThreeAssets
+        ? "Tripo3D 正在生成玩家、障碍物和收集物模型。"
+        : [
+            "AI 正在根据开发提示词生成核心素材。",
+            ...assetProgress.map((step) => `${step.label}生成中`)
+          ].join("\n"),
+      assetProgress: isThreeAssets ? undefined : assetProgress
     });
   } else if (assetCandidateStatus === "failed") {
     result.push({
       id: "asset-candidates-failed",
       role: "assistant",
-      meta: "素材生成失败",
-      content: "图片生成失败。请重试、上传替换素材，或在素材卡中使用占位图继续；确认核心素材前不会生成游戏。"
+      meta: phase === "three_asset_review" ? "3D模型生成失败" : "素材生成失败",
+      content:
+        phase === "three_asset_review"
+          ? "3D 模型生成失败。请检查 TRIPO_API_KEY，或上传 GLB/GLTF 替换后再生成游戏。"
+          : "图片生成失败。请重试、上传替换素材，或在素材卡中使用占位图继续；确认核心素材前不会生成游戏。"
     });
   } else if (assetCandidates) {
     result.push({
@@ -189,6 +208,14 @@ export function buildStudioChatMessages({
       meta: "素材确认",
       content: "请确认背景、主角、危险物和收集物。确认后，最终游戏会通过 asset-pack.json 使用这些素材。",
       assetCandidates
+    });
+  } else if (threeAssetCandidates) {
+    result.push({
+      id: "three-asset-candidates",
+      role: "assistant",
+      meta: "3D模型确认",
+      content: "请确认玩家、障碍物和收集物三个 Tripo3D 模型。确认后，Three.js 会从 three-asset-pack.json 加载这些模型。",
+      threeAssetCandidates
     });
   }
 
@@ -200,6 +227,16 @@ export function buildStudioChatMessages({
       content: "核心素材已确认。现在可以生成可玩游戏，Phaser 运行时会从最终 asset-pack.json 读取这些素材。"
     });
   }
+
+  if (phase === "three_assets_confirmed") {
+    result.push({
+      id: "assistant-three-assets-confirmed",
+      role: "assistant",
+      meta: "3D模型已确认",
+      content: "三个核心 3D 模型已确认。现在可以生成 Three.js 可玩游戏。"
+    });
+  }
+
   if (phase === "ready") {
     const matureBrief = project.artifacts.find((artifact) => artifact.fileName === "mature-game-brief.json");
     const matureSummary =
@@ -209,7 +246,7 @@ export function buildStudioChatMessages({
     result.push({
       id: `assistant-${phase}`,
       role: "assistant",
-      meta: phase === "ready" ? messages.thinking.completeTitle : messages.thinking.title,
+      meta: messages.thinking.completeTitle,
       content: [
         `${project.title} ${messages.agent.readySuffix}`,
         `${messages.thinking.goal}: ${project.gameConfig.playerGoal}`,
@@ -242,4 +279,3 @@ function dedupeFollowups(followups: StudioFollowup[]): StudioFollowup[] {
     return true;
   });
 }
-

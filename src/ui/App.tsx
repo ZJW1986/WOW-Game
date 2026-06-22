@@ -1384,12 +1384,20 @@ export function App() {
                 designBrief,
                 revisionHistory,
                 assetCandidates,
+                threeAssetCandidates,
                 assetCandidateStatus
               })}
               onConfirmAssets={(candidates) => {
                 const nextConfirmedAssets = buildConfirmedCoreAssets(candidates, activeDraft.uploadedMaterials);
                 setConfirmedAssets(nextConfirmedAssets);
                 setCreationPhase(hasConfirmedCoreAssets(nextConfirmedAssets) ? "assets_confirmed" : "asset_review");
+              }}
+              onConfirmThreeAssets={(candidates) => {
+                const nextConfirmedThreeAssets = buildConfirmedThreeAssets(candidates);
+                setConfirmedThreeAssets(nextConfirmedThreeAssets);
+                setCreationPhase(
+                  hasConfirmedThreeCoreAssets(nextConfirmedThreeAssets) ? "three_assets_confirmed" : "three_asset_review"
+                );
               }}
               onUploadAsset={uploadAssetCandidateReplacement}
               onRegenerateAsset={regenerateAssetCandidate}
@@ -2925,12 +2933,14 @@ function UserPrompt({ text }: { text: string }) {
 function StudioChatFlow({
   messages,
   onConfirmAssets,
+  onConfirmThreeAssets,
   onUploadAsset,
   onRegenerateAsset,
   regeneratingSlots
 }: {
   messages: StudioChatMessage[];
   onConfirmAssets: (assetCandidates: AssetCandidates) => void;
+  onConfirmThreeAssets: (assetCandidates: ThreeAssetCandidates) => void;
   onUploadAsset: (slot: UserMaterialSlot, files: File[]) => Promise<void>;
   onRegenerateAsset: (assetCandidate: AssetCandidates["candidates"][number]) => void;
   regeneratingSlots: Set<UserMaterialSlot>;
@@ -2949,6 +2959,12 @@ function StudioChatFlow({
               onUploadAsset={onUploadAsset}
               onRegenerateAsset={onRegenerateAsset}
               regeneratingSlots={regeneratingSlots}
+            />
+          ) : null}
+          {message.threeAssetCandidates ? (
+            <ThreeAssetCandidateReview
+              assetCandidates={message.threeAssetCandidates}
+              onConfirm={() => onConfirmThreeAssets(message.threeAssetCandidates as ThreeAssetCandidates)}
             />
           ) : null}
         </article>
@@ -3171,6 +3187,73 @@ function AssetCandidateReview({
                       }}
                     />
                   </label>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ThreeAssetCandidateReview({
+  assetCandidates,
+  onConfirm
+}: {
+  assetCandidates: ThreeAssetCandidates;
+  onConfirm: () => void;
+}) {
+  const confirmableAssets = buildConfirmedThreeAssets(assetCandidates);
+  const canConfirmDirection = hasConfirmedThreeCoreAssets(confirmableAssets);
+  const labelForAsset = (assetKey: string) => {
+    if (assetKey === "three.model.player") return "玩家模型";
+    if (assetKey === "three.model.hazard") return "障碍/敌人模型";
+    if (assetKey === "three.model.collectible") return "收集物模型";
+    return assetKey;
+  };
+  return (
+    <section className="asset-candidate-review three-asset-candidate-review">
+      <div className="asset-candidate-header">
+        <span>3D模型确认</span>
+        <strong>Tripo3D 核心模型素材</strong>
+        <button type="button" onClick={onConfirm} disabled={!canConfirmDirection}>
+          确认 3D 模型方向
+        </button>
+        {!canConfirmDirection ? <small>需要三个核心模型都有 GLB/GLTF 地址后才能确认。</small> : null}
+      </div>
+      <div className="asset-candidate-grid">
+        {assetCandidates.assets.map((candidate) => {
+          const canConfirm =
+            candidate.type === "model" &&
+            /\.(glb|gltf)(?:$|\?)/i.test(candidate.fileUrl) &&
+            candidate.status !== "failed" &&
+            !candidate.error;
+          return (
+            <article className="asset-candidate-card" key={`${candidate.assetKey}-${candidate.fileUrl || candidate.generationParams.taskId || candidate.prompt}`}>
+              <div className="asset-audio-preview">
+                <Database size={20} />
+                <span>GLB</span>
+              </div>
+              <div>
+                <span>{labelForAsset(candidate.assetKey)}</span>
+                <strong>{candidate.purpose}</strong>
+                <p>{candidate.prompt}</p>
+                <div className="asset-candidate-meta">
+                  <small>{candidate.provider}</small>
+                  {candidate.generationParams.taskId ? <small>任务 {candidate.generationParams.taskId}</small> : null}
+                  {candidate.fileUrl ? <small>模型地址已返回</small> : null}
+                </div>
+                {candidate.error ? <small className="asset-candidate-error">{candidate.error}</small> : null}
+                <div className="asset-candidate-actions">
+                  <span className={canConfirm ? "asset-candidate-status ready" : "asset-candidate-status failed"}>
+                    {canConfirm ? "模型可用" : "等待模型或需要重试"}
+                  </span>
+                  {candidate.fileUrl ? (
+                    <a href={candidate.fileUrl} target="_blank" rel="noreferrer">
+                      打开模型
+                    </a>
+                  ) : null}
                 </div>
               </div>
             </article>

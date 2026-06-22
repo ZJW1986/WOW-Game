@@ -22,7 +22,8 @@ function memoryStore() {
     },
     readBytes: async (path: string) => binaryWrites.get(path) ?? null,
     ensureDir: async () => undefined,
-    writes
+    writes,
+    binaryWrites
   };
 }
 
@@ -171,6 +172,83 @@ describe("threejs 3D generation", () => {
     expect(candidates.assets.every((asset) => asset.generationParams.assetBatchId === "three-assets-test")).toBe(true);
   });
 
+  it("sanitizes Tripo prompts so UI/game text is not sent as model generation text", () => {
+    const candidates = createThreeAssetCandidates({
+      idea: "3.模型,玩家: 玩家可控制 3D 主体，请生成一款 3D Three.js 游戏。",
+      brief: {
+        ...brief,
+        title: "3.模型,收集品: 玩家需要收集的 3D 奖励物。请生成一款 3D Three.js 游戏。",
+        playerFantasy: "玩家可控制 3D 主体。请生成一款 3D Three.js 游戏。",
+        movementIntent: "玩家通过键盘或触屏移动。"
+      },
+      director: normalizeThreeSceneDirector({} as ThreeSceneDirector, brief),
+      assetBatchId: "three-assets-sanitize"
+    });
+
+    for (const asset of candidates.assets) {
+      expect(asset.prompt).not.toContain("three.model");
+      expect(asset.prompt).not.toContain("Three.js");
+      expect(asset.prompt).not.toContain("请生成");
+      expect(asset.prompt).not.toContain("玩家");
+      expect(asset.prompt).toContain("single 3D model");
+      expect(asset.prompt.length).toBeLessThan(700);
+    }
+  });
+
+  it("sends sanitized model-only prompts to Tripo when creating 3D asset candidates", async () => {
+    const prompts: string[] = [];
+    let taskIndex = 0;
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-three-test",
+        PUBLIC_BASE_URL: "https://wow.example",
+        TRIPO_API_KEY: "test-tripo-key",
+        TRIPO_BASE_URL: "https://openapi.tripo3d.com",
+        TRIPO_POLL_INTERVAL_MS: "0"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ url, init }) => {
+        if (url.includes("/v3/generation/text-to-model")) {
+          const body = JSON.parse(init.body);
+          prompts.push(body.prompt);
+          taskIndex += 1;
+          return JSON.stringify({ code: 0, data: { task_id: `task-${taskIndex}` } });
+        }
+        return JSON.stringify({
+          code: 0,
+          data: {
+            status: "success",
+            output: {
+              model_url: `https://cdn.example.com/model-${taskIndex}.glb`,
+              rendered_image_url: `https://cdn.example.com/model-${taskIndex}.png`
+            }
+          }
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/three-asset-candidates",
+      body: {
+        idea: "three.model.player: player controllable 3D subject. Please generate a Three.js game.",
+        projectId: "three-api-prompts",
+        gameType3d: "flight_shooter"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(prompts).toHaveLength(3);
+    expect(new Set(prompts).size).toBe(3);
+    for (const prompt of prompts) {
+      expect(prompt).toContain("single 3D model");
+      expect(prompt).not.toContain("three.model");
+      expect(prompt).not.toContain("Three.js");
+      expect(prompt).not.toContain("Please generate");
+      expect(prompt.length).toBeLessThan(700);
+    }
+  });
+
   it("uses confirmed Tripo models in the 3D asset pack", () => {
     const confirmedThreeAssets = confirmedCoreModels();
     const result = generateThreeGameMvp({
@@ -239,6 +317,58 @@ describe("threejs 3D generation", () => {
     expect(response.body.assetLoadReport.ready).toBe(true);
     expect(response.body.project.playUrl).toBe("/play/three-project-api/v1");
     expect(Array.from(store.writes.keys()).some((path) => path.includes("three-project-api"))).toBe(true);
+  });
+
+  it("localizes remote Tripo model URLs before saving a 3D playable", async () => {
+    const store = memoryStore();
+    const confirmedThreeAssets = buildConfirmedThreeAssets([
+      confirmedModel("three.model.player", "player"),
+      confirmedModel("three.model.hazard", "hazard"),
+      {
+        ...confirmedModel("three.model.collectible", "collectible"),
+        fileUrl: "https://openapi.cdn.tripo3d.com/task/collectible.glb?auth_key=temporary"
+      }
+    ]);
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-three-test", PUBLIC_BASE_URL: "https://wow.example" },
+      storeIO: store,
+      remoteAssetFetcher: async (url) => {
+        expect(url).toContain("collectible.glb");
+        return {
+          contentType: "model/gltf-binary",
+          bytes: new Uint8Array([0x67, 0x6c, 0x54, 0x46])
+        };
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/generate-three-game",
+      body: {
+        idea: "3D collectible localization",
+        projectId: "three-localized-models",
+        baseUrl: "https://wow.example",
+        viewportMode: "app_9_16",
+        gameType3d: "flight_shooter",
+        confirmedThreeAssets
+      }
+    });
+
+    const collectible = response.body.project.threeAssetPack.assets.find(
+      (asset: AssetRequirement) => asset.assetKey === "three.model.collectible"
+    );
+
+    expect(response.status).toBe(200);
+    expect(collectible.fileUrl).toBe(
+      "/projects/three-localized-models/v1/assets/three-models/three.model.collectible.glb"
+    );
+    expect(collectible.generationParams.originalRemoteUrl).toContain("openapi.cdn.tripo3d.com");
+    expect(collectible.generationParams.localized).toBe(true);
+    expect(
+      store.binaryWrites.has(
+        "data-three-test/projects/three-localized-models/versions/v1/assets/three-models/three.model.collectible.glb"
+      )
+    ).toBe(true);
   });
 
   it("rejects /api/generate-three-game until all core 3D models are confirmed", async () => {

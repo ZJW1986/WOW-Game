@@ -57,6 +57,7 @@ export interface GenerationApiResponse {
 export interface GenerationApiOptions {
   env?: Record<string, string | undefined>;
   fetcher?: GenerationServiceOptions["fetcher"];
+  remoteAssetFetcher?: (url: string) => Promise<{ contentType?: string; bytes: Uint8Array }>;
   storeIO?: Pick<PlayableStoreOptions, "writeText" | "readText" | "writeBytes" | "readBytes" | "ensureDir">;
 }
 
@@ -607,9 +608,24 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
             }
           };
         }
+        const projectId = optionalString(request.body.projectId) ?? `three-project-${Date.now()}`;
+        const versionId = "v1";
+        const localizationError = await localizeRemoteThreeModelAssets(
+          store,
+          projectId,
+          versionId,
+          confirmedThreeAssets,
+          options.remoteAssetFetcher
+        );
+        if (localizationError) {
+          return {
+            status: 400,
+            body: { error: localizationError }
+          };
+        }
         const result = generateThreeGameMvp({
           idea: requireString(request.body.idea, "idea"),
-          projectId: optionalString(request.body.projectId) ?? `three-project-${Date.now()}`,
+          projectId,
           baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
           viewportMode:
             request.body.viewportMode === "web_16_9" || request.body.viewportMode === "app_9_16"
@@ -767,6 +783,41 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       };
     }
   };
+}
+
+async function localizeRemoteThreeModelAssets(
+  store: ReturnType<typeof createPlayableStore>,
+  projectId: string,
+  versionId: string,
+  confirmedThreeAssets: ConfirmedThreeAssets | undefined,
+  remoteAssetFetcher?: GenerationApiOptions["remoteAssetFetcher"]
+): Promise<string | null> {
+  const errors: string[] = [];
+  await Promise.all(
+    (confirmedThreeAssets?.assets ?? []).map(async (asset) => {
+      if (asset.type !== "model" || !/^https?:\/\//.test(asset.fileUrl)) return;
+      try {
+        const downloaded = await readRemoteAsset(asset.fileUrl, remoteAssetFetcher);
+        const extension = extensionForModelUrl(downloaded.contentType ?? "", asset.fileUrl);
+        const assetPath = `three-models/${safeAssetFileName(asset.assetKey)}.${extension}`;
+        await store.saveProjectAsset(projectId, versionId, assetPath, downloaded.bytes);
+        asset.generationParams = {
+          ...asset.generationParams,
+          originalRemoteUrl: asset.fileUrl,
+          localized: true,
+          localModelPath: assetPath
+        };
+        asset.fileUrl = `/projects/${projectId}/${versionId}/assets/${assetPath}`;
+      } catch (error) {
+        errors.push(
+          `Remote 3D model could not be localized for ${asset.assetKey}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    })
+  );
+  return errors.length > 0 ? errors.join("; ") : null;
 }
 
 async function localizeRemoteImageAssets(
@@ -1022,6 +1073,25 @@ async function readImageInput(url: string): Promise<{ contentType: string; bytes
   };
 }
 
+async function readRemoteAsset(
+  url: string,
+  remoteAssetFetcher?: GenerationApiOptions["remoteAssetFetcher"]
+): Promise<{ contentType: string; bytes: Uint8Array }> {
+  if (remoteAssetFetcher) {
+    const result = await remoteAssetFetcher(url);
+    return {
+      contentType: result.contentType ?? "",
+      bytes: result.bytes
+    };
+  }
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return {
+    contentType: response.headers.get("content-type") ?? "",
+    bytes: new Uint8Array(await response.arrayBuffer())
+  };
+}
+
 async function processUploadedMaterialCandidate(
   store: ReturnType<typeof createPlayableStore>,
   input: {
@@ -1221,6 +1291,13 @@ function extensionForContentType(contentType: string, url: string): string {
   if (lowerUrl.endsWith(".jpg") || lowerUrl.endsWith(".jpeg")) return "jpg";
   if (lowerUrl.endsWith(".svg")) return "svg";
   return "png";
+}
+
+function extensionForModelUrl(contentType: string, url: string): "glb" | "gltf" {
+  const lowerType = contentType.toLowerCase();
+  const lowerUrl = url.toLowerCase().split("?")[0];
+  if (lowerType.includes("gltf+json") || lowerUrl.endsWith(".gltf")) return "gltf";
+  return "glb";
 }
 
 async function readReferencePackageSummary(
