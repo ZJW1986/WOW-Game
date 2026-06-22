@@ -117,7 +117,6 @@ export function readIdeaDialogActionState(input: {
 
   const canStartAssets =
     hasAnsweredQuestions &&
-    input.hasDesignBrief &&
     !input.hasAssetCandidates &&
     ["chatting", "guided_questions", "asset_review", "revision"].includes(input.creationPhase);
 

@@ -52,6 +52,9 @@ export function createPromptForTask(
       "Task: llm.three_scene_director.",
       "Convert threeDesignBrief and answers into a constrained Three.js scene director.",
       "Do not output JavaScript. Use declarative camera, controls, player, world, objectives, enemies, and feedback.",
+      "The director must include at least 3 stages covering learn_controls, collect, survive, and finale pacing.",
+      "Include at least 2 enemy entries using behavior falling, patrol, chase, or orbit.",
+      "Define keyboard and touch_drag controls, collect target, time limit, hit feedback, and restart-safe win/loss rules.",
       "Return strict JSON matching the WOW Game three-scene-director artifact."
     ].join("\n"),
     "llm.three_asset_plan": [

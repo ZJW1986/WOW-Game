@@ -2,6 +2,7 @@ import type {
   AssetCandidate,
   AssetCandidates,
   ConfirmedAssets,
+  ConfirmedThreeAssets,
   DesignBrief,
   DesignQuestion,
   EngineType,
@@ -10,6 +11,7 @@ import type {
   TemplateFamily,
   ThreeGameGenre,
   ThreeGameBrief,
+  ThreeAssetCandidates,
   ViewportMode,
   UserMaterial
 } from "../core/types";
@@ -39,6 +41,20 @@ export interface ThreeGameGenerationRequest {
   gameType3d?: ThreeGameGenre;
   answers?: UserAnswer[];
   threeDesignBrief?: ThreeGameBrief;
+  userMaterials?: UserMaterial[];
+  confirmedThreeAssets?: ConfirmedThreeAssets;
+}
+
+export interface ThreeAssetCandidatesRequest {
+  idea: string;
+  projectId: string;
+  baseUrl: string;
+  engineType?: EngineType;
+  viewportMode?: ViewportMode;
+  gameType3d?: ThreeGameGenre;
+  answers?: UserAnswer[];
+  threeDesignBrief?: ThreeGameBrief;
+  userMaterials?: UserMaterial[];
 }
 
 export interface UploadPlayablePackageRequest {
@@ -158,6 +174,74 @@ export async function requestThreeGameGeneration(
   const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(`Three.js generation request failed: ${readError(payload, response)}`);
+  }
+  return payload;
+}
+
+export async function requestThreeAssetCandidates(
+  input: ThreeAssetCandidatesRequest,
+  fetcher: BrowserFetcher = fetch,
+  options: RequestClientOptions = {}
+): Promise<{
+  threeAssetCandidates: ThreeAssetCandidates;
+  threeDesignBrief: ThreeGameBrief;
+  threeSceneDirector: Record<string, any>;
+}> {
+  const response = await withTimeout(
+    fetcher("/api/three-asset-candidates", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(input)
+    }),
+    options.timeoutMs ?? 180000,
+    "Three.js asset candidate request timed out"
+  );
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Three.js asset candidate request failed: ${readError(payload, response)}`);
+  }
+  return payload as {
+    threeAssetCandidates: ThreeAssetCandidates;
+    threeDesignBrief: ThreeGameBrief;
+    threeSceneDirector: Record<string, any>;
+  };
+}
+
+export async function requestTripoBalance(fetcher: BrowserFetcher = fetch) {
+  const response = await fetcher("/api/tripo/balance", {
+    method: "GET"
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Tripo balance request failed: ${readError(payload, response)}`);
+  }
+  return payload;
+}
+
+export async function requestTripoTextToModel(prompt: string, fetcher: BrowserFetcher = fetch) {
+  const response = await fetcher("/api/tripo/text-to-model", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ prompt })
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Tripo text-to-model request failed: ${readError(payload, response)}`);
+  }
+  return payload;
+}
+
+export async function requestTripoTask(taskId: string, fetcher: BrowserFetcher = fetch) {
+  const response = await fetcher(`/api/tripo/tasks/${encodeURIComponent(taskId)}`, {
+    method: "GET"
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Tripo task request failed: ${readError(payload, response)}`);
   }
   return payload;
 }

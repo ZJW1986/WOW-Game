@@ -84,7 +84,7 @@ export function createStartTemplateTiles(): StartTemplateTile[] {
 export function createStartThreeGameTypeTiles(): StartThreeGameTypeTile[] {
   return [
     { genre: "flight_shooter", icon: "FS", shortLabel: "飞行射击", hint: "躲避/射击", visualClass: "type-flight" },
-    { genre: "runner", icon: "RN", shortLabel: "3D跑酷", hint: "冲刺收集", visualClass: "type-runner" },
+    { genre: "runner", icon: "RN", shortLabel: "3D 跑酷", hint: "冲刺收集", visualClass: "type-runner" },
     { genre: "third_person_collect", icon: "TP", shortLabel: "第三人称", hint: "探索收集", visualClass: "type-third-person" },
     { genre: "exploration", icon: "EX", shortLabel: "探索展示", hint: "场景漫游", visualClass: "type-exploration" }
   ];
@@ -124,15 +124,15 @@ export function buildOptimizedGamePrompt(draft: StartGameDraft): string {
   const viewport = draft.viewportMode === "app_9_16" ? "APP 9:16" : "Web 16:9";
   const model = modelOptions.find((item) => item.id === draft.model)?.label ?? draft.model;
   return [
-    `请生成一款${engine}游戏。`,
+    `请生成一款 ${engine} 游戏。`,
     `原始创意：${draft.idea.trim() || "玩家输入的游戏创意"}`,
     `游戏类型：${gameType}`,
     `画布比例：${viewport}`,
     `策划模型：${model}`,
-    "核心循环：玩家进入后 5 秒内理解目标，通过清晰操作完成移动、躲避/互动、收集/推进，并能看到胜利、失败和重开。",
+    "核心循环：玩家进入后 5 秒内理解目标，通过清晰操作完成移动、躲避、互动、收集推进，并能看到胜利、失败和重开。",
     draft.engineType === "threejs3d"
-      ? "3D要求：明确镜头、空间路线、移动手感、障碍压力、收集奖励、手机触控可读性，并优先使用程序化 MVP 保障可玩。"
-      : "2D要求：明确角色、背景、危险物、收集物、阶段节奏、碰撞反馈，并在生成游戏前完成核心素材确认。",
+      ? "3D 要求：明确镜头、空间路线、移动手感、障碍压力、收集奖励、手机触控可读性，并优先使用程序化 MVP 保障可玩。"
+      : "2D 要求：明确角色、背景、危险物、收集物、阶段节奏、碰撞反馈，并在生成游戏前完成核心素材确认。",
     "输出要求：玩法目标清楚，前 30 秒有奖励和压力变化，HUD 不遮挡主体，失败要公平，反馈要明显。"
   ].join("\n");
 }

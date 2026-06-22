@@ -48,8 +48,10 @@ import { getOfficialTemplates, startDraftFromTemplate, type TemplateRecord } fro
 import type {
   AssetCandidates,
   ConfirmedAssets,
+  ConfirmedThreeAssets,
   DesignBrief,
   AssetRequirement,
+  ThreeAssetCandidates,
   ConversationSession,
   MockProject,
   PipelineArtifact,
@@ -58,7 +60,9 @@ import type {
   RevisionAnalysis,
   EngineType,
   TemplateFamily,
-  UserMaterialSlot
+  ThreeGameGenre,
+  UserMaterialSlot,
+  ViewportMode
 } from "../core/types";
 import { getMessages, type Locale } from "./i18n";
 import { buildIdeaDialogModel, readIdeaDialogActionState } from "./ideaDialogModel";
@@ -75,6 +79,7 @@ import {
   requestDesignBrief,
   requestPlayableGeneration,
   requestGuidedQuestions,
+  requestThreeAssetCandidates,
   requestProcessUploadedMaterial,
   requestRegenerateAssetCandidate,
   requestRevisionAnalysis,
@@ -101,6 +106,9 @@ type CreationPhase =
   | "asset_generating"
   | "asset_review"
   | "assets_confirmed"
+  | "three_asset_generating"
+  | "three_asset_review"
+  | "three_assets_confirmed"
   | "revision"
   | "revision_thinking"
   | "cooking"
@@ -272,6 +280,58 @@ export function buildConfirmedCoreAssets(
   return { assets: Array.from(assets.values()) };
 }
 
+function hasConfirmedThreeCoreAssets(confirmedThreeAssets?: ConfirmedThreeAssets | null): boolean {
+  const required = new Set(["three.model.player", "three.model.hazard", "three.model.collectible"]);
+  for (const asset of confirmedThreeAssets?.assets ?? []) {
+    if (
+      required.has(asset.assetKey) &&
+      asset.type === "model" &&
+      asset.approvalStatus !== "rejected" &&
+      /\.(glb|gltf)(?:$|\?)/i.test(asset.fileUrl) &&
+      !asset.error
+    ) {
+      required.delete(asset.assetKey);
+    }
+  }
+  return required.size === 0;
+}
+
+function buildConfirmedThreeAssets(threeAssetCandidates?: ThreeAssetCandidates | null): ConfirmedThreeAssets {
+  return {
+    assets: (threeAssetCandidates?.assets ?? [])
+      .filter(
+        (asset) =>
+          ["three.model.player", "three.model.hazard", "three.model.collectible"].includes(asset.assetKey) &&
+          asset.type === "model" &&
+          /\.(glb|gltf)(?:$|\?)/i.test(asset.fileUrl) &&
+          asset.status !== "failed" &&
+          !asset.error
+      )
+      .map((asset) => ({ ...asset, approvalStatus: "approved" as const }))
+  };
+}
+
+function resultThreeBriefFromDesignBrief(
+  designBrief: DesignBrief,
+  genre: ThreeGameGenre,
+  viewportMode: ViewportMode
+) {
+  return {
+    genre,
+    title: designBrief.playerGoal || "Three.js 3D 游戏",
+    coreLoop: [designBrief.coreGameplay, designBrief.playerGoal].filter(Boolean),
+    playerFantasy: designBrief.coreGameplay || designBrief.developerPrompt,
+    mobileFormat: viewportMode === "web_16_9" ? "landscape_16_9" as const : "portrait_9_16" as const,
+    cameraIntent: designBrief.developerPrompt || "清晰展示玩家、危险物和收集物。",
+    movementIntent: designBrief.playerGoal || "玩家通过键盘或触屏移动。",
+    spaceLayout: designBrief.developerPrompt || "第一分钟包含教学、收集、压力和高潮阶段。",
+    interactionFeedback: ["收集发光", "碰撞震屏", "失败重开", "胜利提示"],
+    mobileControlPlan: "手机端使用触屏拖动，桌面端使用键盘。",
+    assetNeeds: ["玩家 GLB 模型", "危险物 GLB 模型", "收集物 GLB 模型"],
+    skillWorkflow: ["threejs-game-director", "tripo-model-generation", "threejs-game-qa"]
+  };
+}
+
 function isConfirmableImageAsset(asset: ConfirmedAssets["assets"][number]): boolean {
   return (
     ["background", "player", "hazard", "collectible"].includes(asset.slot) &&
@@ -326,7 +386,6 @@ function canStartAssetGeneration(
   const hasAnsweredGuidedQuestions = session.answers.length >= session.questions.length;
   return (
     hasAnsweredGuidedQuestions &&
-    Boolean(designBrief) &&
     !assetCandidates &&
     ["chatting", "guided_questions", "asset_review", "revision"].includes(creationPhase)
   );
@@ -389,6 +448,8 @@ export function App() {
   const [designBrief, setDesignBrief] = useState<DesignBrief | null>(null);
   const [assetCandidates, setAssetCandidates] = useState<AssetCandidates | null>(null);
   const [confirmedAssets, setConfirmedAssets] = useState<ConfirmedAssets | null>(null);
+  const [threeAssetCandidates, setThreeAssetCandidates] = useState<ThreeAssetCandidates | null>(null);
+  const [confirmedThreeAssets, setConfirmedThreeAssets] = useState<ConfirmedThreeAssets | null>(null);
   const [assetCandidateStatus, setAssetCandidateStatus] = useState<AssetCandidateStatus>("idle");
   const [regeneratingAssetSlots, setRegeneratingAssetSlots] = useState<Set<UserMaterialSlot>>(() => new Set());
   const regeneratingAssetSlotsRef = useRef<Set<UserMaterialSlot>>(new Set());
@@ -410,7 +471,18 @@ export function App() {
     Boolean(designBrief) &&
     hasConfirmedCoreAssets(confirmedAssets) &&
     ["assets_confirmed", "ready"].includes(creationPhase);
-  const canGenerateThreeGame = engineType === "threejs3d" && idea.trim().length > 0 && creationPhase !== "cooking";
+  const canStartThreeAssets =
+    engineType === "threejs3d" &&
+    hasAnsweredGuidedQuestions &&
+    Boolean(designBrief) &&
+    !threeAssetCandidates &&
+    assetCandidateStatus !== "loading" &&
+    ["chatting", "guided_questions", "revision", "three_asset_review"].includes(creationPhase);
+  const canGenerateThreeGame =
+    engineType === "threejs3d" &&
+    idea.trim().length > 0 &&
+    hasConfirmedThreeCoreAssets(confirmedThreeAssets) &&
+    ["three_assets_confirmed", "ready"].includes(creationPhase);
   const ideaDialogActionState = readIdeaDialogActionState({
     session,
     hasDesignBrief: Boolean(designBrief),
@@ -565,6 +637,8 @@ export function App() {
     setGenerationNotice(null);
     setAssetCandidates(null);
     setConfirmedAssets(null);
+    setThreeAssetCandidates(null);
+    setConfirmedThreeAssets(null);
     setAssetCandidateStatus("idle");
     setCreationPhase("revision");
     window.requestAnimationFrame(() => {
@@ -653,7 +727,7 @@ export function App() {
       setGenerationNotice({
         tone: "error",
         title: "无法生成 3D 游戏",
-        detail: "请输入游戏想法，并等待当前生成任务完成。"
+        detail: "请先生成并确认玩家、障碍物、收集物三个 3D 模型。"
       });
       return;
     }
@@ -675,7 +749,9 @@ export function App() {
         engineType: "threejs3d",
         viewportMode: activeDraft.viewportMode,
         gameType3d: activeDraft.threeGameGenre,
-        answers: session.answers
+        answers: session.answers,
+        userMaterials: activeDraft.uploadedMaterials,
+        confirmedThreeAssets: confirmedThreeAssets ?? undefined
       })) as GenerationResult;
       setGenerationResult(result);
       setGeneratedProject(result.project);
@@ -689,7 +765,7 @@ export function App() {
       window.setTimeout(() => setGenerationNotice(null), 4200);
     } catch (error) {
       setGeneratedProject(null);
-      setCreationPhase("chatting");
+      setCreationPhase(hasConfirmedThreeCoreAssets(confirmedThreeAssets) ? "three_assets_confirmed" : "three_asset_review");
       setGenerationNotice({
         tone: "error",
         title: "3D 生成失败",
@@ -781,10 +857,17 @@ export function App() {
     const hasAnsweredAllQuestions = session.answers.length >= session.questions.length;
     const canRequestAssets =
       hasAnsweredAllQuestions &&
-      Boolean(currentDesignBrief) &&
       assetCandidateStatus !== "loading" &&
       ["chatting", "guided_questions", "asset_review", "assets_confirmed", "revision"].includes(creationPhase);
-    if (!currentDesignBrief || !canRequestAssets) return;
+    if (!canRequestAssets) return;
+    if (!currentDesignBrief) {
+      setGenerationNotice({
+        tone: "error",
+        title: "设计方案还未准备好",
+        detail: "请等待 AI 完成方案分析后再生成素材。"
+      });
+      return;
+    }
     const nextIdea = buildGenerationIdea(idea, followups);
     setPage("studio");
     setActiveTab("preview");
@@ -819,6 +902,54 @@ export function App() {
       setConfirmedAssets(null);
       setAssetCandidateStatus("failed");
       setCreationPhase("asset_review");
+    }
+  };
+
+  const startThreeAssetGeneration = async () => {
+    if (!canStartThreeAssets || !designBrief) return;
+    const nextIdea = buildGenerationIdea(idea, followups);
+    setPage("studio");
+    setActiveTab("preview");
+    setThreeAssetCandidates(null);
+    setConfirmedThreeAssets(null);
+    setAssetCandidateStatus("loading");
+    setCreationPhase("three_asset_generating");
+    setGenerationNotice({
+      tone: "working",
+      title: "正在生成 3D 模型素材",
+      detail: "Tripo3D 会生成玩家、障碍物和收集物三个核心 GLB/GLTF 模型。"
+    });
+    try {
+      const result = await requestThreeAssetCandidates({
+        idea: nextIdea,
+        projectId: `three-assets-${Date.now()}`,
+        baseUrl: getBrowserBaseUrl(),
+        engineType: "threejs3d",
+        viewportMode: activeDraft.viewportMode,
+        gameType3d: activeDraft.threeGameGenre,
+        answers: session.answers,
+        userMaterials: activeDraft.uploadedMaterials,
+        threeDesignBrief: resultThreeBriefFromDesignBrief(designBrief, activeDraft.threeGameGenre, activeDraft.viewportMode)
+      });
+      setThreeAssetCandidates(result.threeAssetCandidates);
+      setConfirmedThreeAssets(null);
+      setAssetCandidateStatus("ready");
+      setCreationPhase("three_asset_review");
+      setGenerationNotice({
+        tone: "success",
+        title: "3D 模型素材已生成",
+        detail: "请确认三个核心模型后，再生成 Three.js 可玩游戏。"
+      });
+    } catch (error) {
+      setThreeAssetCandidates(null);
+      setConfirmedThreeAssets(null);
+      setAssetCandidateStatus("failed");
+      setCreationPhase("three_asset_review");
+      setGenerationNotice({
+        tone: "error",
+        title: "3D 模型素材生成失败",
+        detail: readGenerationError(error)
+      });
     }
   };
 
@@ -941,6 +1072,8 @@ export function App() {
     setDesignBrief(null);
     setAssetCandidates(null);
     setConfirmedAssets(null);
+    setThreeAssetCandidates(null);
+    setConfirmedThreeAssets(null);
     setAssetCandidateStatus("idle");
     setRevisionHistory([]);
     setCreationPhase("chatting");
@@ -972,6 +1105,8 @@ export function App() {
     setDesignBrief(null);
     setAssetCandidates(null);
     setConfirmedAssets(null);
+    setThreeAssetCandidates(null);
+    setConfirmedThreeAssets(null);
     setAssetCandidateStatus("idle");
     setRevisionHistory([]);
     setCreationPhase(nextProject ? "ready" : "chatting");
@@ -1144,14 +1279,24 @@ export function App() {
         draft={activeDraft}
         revisionText={revisionText}
         canGenerate={engineType === "threejs3d" ? canGenerateThreeGame : canGeneratePlayable}
-        canStartAssets={engineType === "threejs3d" ? false : canStartAssets || ideaDialogActionState.canStartAssets}
+        canStartAssets={
+          engineType === "threejs3d"
+            ? canStartThreeAssets
+            : canStartAssets || ideaDialogActionState.canStartAssets || ideaDialogActionState.isPreparingAssets
+        }
         isPreparingAssets={ideaDialogActionState.isPreparingAssets}
-        actionLabel={engineType === "threejs3d" && canGenerateThreeGame ? "生成 3D MVP" : ideaDialogActionState.buttonLabel}
-        isGenerating={creationPhase === "cooking"}
+        actionLabel={
+          engineType === "threejs3d"
+            ? canGenerateThreeGame
+              ? "生成 3D 可玩游戏"
+              : "生成 3D 素材方案"
+            : ideaDialogActionState.buttonLabel
+        }
+        isGenerating={creationPhase === "cooking" || creationPhase === "three_asset_generating"}
         onRevisionTextChange={setRevisionText}
         onAnswer={answerCurrentDialogQuestion}
         onGenerate={engineType === "threejs3d" ? startThreeGameGeneration : startResourceGeneration}
-        onStartAssets={startAssetGeneration}
+        onStartAssets={engineType === "threejs3d" ? startThreeAssetGeneration : startAssetGeneration}
         onClose={() => setPage("create")}
       />
     );
@@ -1967,10 +2112,12 @@ function IdeaDialogPage({
   const currentQuestion = dialog.currentQuestion;
   const answerValue = revisionText.trim() || currentQuestion?.defaultAnswer || "";
   const progressText = `${dialog.answeredCount}/${dialog.totalQuestions}`;
-  const canRunPrimaryAction = canGenerate || canStartAssets;
+  const isAssetAction = canStartAssets || isPreparingAssets;
+  const canRunPrimaryAction = canGenerate || isAssetAction;
+  const primaryActionLabel = isAssetAction ? messages.ideaDialog.generateAssets : canGenerate ? actionLabel : messages.ideaDialog.send;
   const runPrimaryAction = () => {
-    if (canGenerate) onGenerate();
-    else if (canStartAssets) onStartAssets();
+    if (isAssetAction) onStartAssets();
+    else if (canGenerate) onGenerate();
     else submitAnswer();
   };
 
@@ -2070,8 +2217,8 @@ function IdeaDialogPage({
                 disabled={isGenerating || (!canRunPrimaryAction && !currentQuestion)}
                 onClick={runPrimaryAction}
               >
-                {isGenerating ? <RefreshCcw size={18} /> : canRunPrimaryAction ? <Wand2 size={18} /> : <Send size={18} />}
-                <span>{actionLabel}</span>
+                {isGenerating ? <RefreshCcw size={18} /> : isAssetAction ? <ImageIcon size={18} /> : canRunPrimaryAction ? <Wand2 size={18} /> : <Send size={18} />}
+                <span>{primaryActionLabel}</span>
               </button>
             </div>
           </footer>
@@ -2946,10 +3093,20 @@ function AssetCandidateReview({
           const hasOriginalLibrary = typeof candidate.generationParams?.originalLibraryUrl === "string";
           const cutoutApplied = candidate.generationParams?.cutoutApplied === true;
           const isRegenerating = regeneratingSlots.has(candidate.slot);
-          const fullPrompt =
+          const hasFinalImagePrompt = typeof candidate.generationParams?.finalImagePrompt === "string";
+          const fallbackPrompt =
             typeof candidate.generationParams?.finalPrompt === "string"
               ? candidate.generationParams.finalPrompt
               : candidate.prompt;
+          const fullPrompt = hasFinalImagePrompt
+            ? String(candidate.generationParams?.finalImagePrompt)
+            : isImagePromptContaminated(fallbackPrompt)
+              ? "旧版本提示词已隐藏，请重新生成此素材。"
+              : fallbackPrompt;
+          const promptSummary =
+            typeof candidate.generationParams?.displayPromptSummary === "string"
+              ? candidate.generationParams.displayPromptSummary
+              : candidate.purpose;
           const candidateVersionKey =
             candidate.fileUrl || candidate.previewUrl || String(candidate.generationParams?.assetBatchId ?? "");
           return (
@@ -2968,7 +3125,7 @@ function AssetCandidateReview({
               <div>
                 <span>{materialSlotLabels[candidate.slot]}</span>
                 <strong>{candidate.label}</strong>
-                <p>{candidate.prompt}</p>
+                <p>{promptSummary}</p>
                 <details className="asset-candidate-prompt">
                   <summary>查看完整提示词</summary>
                   <p>{fullPrompt}</p>
@@ -3021,6 +3178,12 @@ function AssetCandidateReview({
         })}
       </div>
     </section>
+  );
+}
+
+function isImagePromptContaminated(prompt: string): boolean {
+  return /create\s+a\s+(?:phaser|three\.?js)|phaser|three\.?js|top_down|platformer|tower_defense|grid_logic|ui_heavy|controls?|arrow keys?|wasd|score|win condition|lose condition|template|gameplay loop|developer prompt/i.test(
+    prompt
   );
 }
 
@@ -3151,7 +3314,12 @@ function PreviewWorkspace({
         <>
           <div className={`preview-canvas-shell ${viewportMode}`}>
             {project.engineType === "threejs3d" && project.threeSceneDirector ? (
-              <ThreePreview director={project.threeSceneDirector} viewportMode={viewportMode} />
+              <ThreePreview
+                director={project.threeSceneDirector}
+                assetPack={project.threeAssetPack ?? { versionId: project.version.id, fallbackProviders: ["procedural-three"], assets: project.assetPack.assets }}
+                assetLoadReport={project.threeAssetLoadReport}
+                viewportMode={viewportMode}
+              />
             ) : (
               <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} gameHooks={project.gameHooks} />
             )}

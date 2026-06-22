@@ -128,6 +128,17 @@ function confirmedAssetsFixture() {
   };
 }
 
+function designBriefFixture() {
+  return {
+    coreGameplay: "玩家控制太空猫飞船躲避陨石并收集鱼干。",
+    playerGoal: "收集鱼干并存活到目标分数。",
+    referenceTakeaways: [],
+    risks: [],
+    questionFocus: ["角色", "障碍", "奖励"],
+    developerPrompt: "太空猫驾驶蓝色飞船，在星空中躲避粉色陨石，收集金色鱼干。"
+  };
+}
+
 describe("generation api handler", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -686,6 +697,397 @@ describe("generation api handler", () => {
       expect(candidate.generationParams.finalPrompt).toBe(candidate.prompt);
       expect(candidate.generationParams.modelPrompt).toContain("翻转格子");
       expect(agnesPrompts.some((prompt) => prompt.includes(candidate.prompt))).toBe(true);
+    }
+  });
+
+  it("drops model asset suggestions that conflict with the user idea", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "image/png" }),
+        arrayBuffer: async () => whiteBackgroundSpriteBytes()
+      }))
+    );
+    const agnesPrompts: string[] = [];
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "image-key",
+        IMAGE_BASE_URL: "https://agnes.test",
+        IMAGE_ENDPOINT: "/v1/images/generations"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as { prompt?: string };
+        const prompt = body.prompt ?? "";
+        agnesPrompts.push(prompt);
+        if (prompt.includes("world.background") || prompt.includes("player.ship") || prompt.includes("hazard.enemy") || prompt.includes("item.collectible")) {
+          return JSON.stringify({ data: [{ url: "https://assets.test/sprite.png" }] });
+        }
+        return JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  candidates: [
+                    {
+                      slot: "background",
+                      assetKey: "world.background",
+                      type: "image",
+                      label: "Top-down Forest Floor",
+                      prompt: "lush green forest floor with moss-covered rocks and a small stream",
+                      style: "forest background",
+                      purpose: "background",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "player",
+                      assetKey: "player.ship",
+                      type: "image",
+                      label: "Top-down Spaceship",
+                      prompt: "small agile spaceship with glowing blue thrusters",
+                      style: "ship sprite",
+                      purpose: "player",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "hazard",
+                      assetKey: "hazard.enemy",
+                      type: "image",
+                      label: "Spike Trap",
+                      prompt: "circular metallic spike trap with runic symbols",
+                      style: "trap sprite",
+                      purpose: "hazard",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "collectible",
+                      assetKey: "item.collectible",
+                      type: "image",
+                      label: "Crystal Gem",
+                      prompt: "faceted crystal gem with inner glowing cyan light",
+                      style: "gem sprite",
+                      purpose: "collectible",
+                      acceptedFileTypes: ["image/*"]
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "太空猫驾驶飞船躲避陨石，收集鱼干",
+        templateFamily: "top_down",
+        model: "deepseek-v4-flash",
+        designBrief: designBriefFixture()
+      }
+    });
+
+    expect(response.status).toBe(200);
+    const finalPrompts = response.body.assetCandidates.candidates.map((candidate: { prompt: string }) => candidate.prompt).join("\n");
+    expect(finalPrompts).toContain("太空猫驾驶飞船躲避陨石，收集鱼干");
+    expect(finalPrompts).toContain("陨石危险物");
+    expect(finalPrompts).toContain("鱼干收集物");
+    expect(finalPrompts).not.toMatch(/forest|moss|stream|spike trap|runic|crystal gem/i);
+    expect(agnesPrompts.join("\n")).not.toMatch(/forest|moss|stream|spike trap|runic|crystal gem/i);
+  });
+
+  it("stores generated assets under safe library keyword paths", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "image/png" }),
+        arrayBuffer: async () => whiteBackgroundSpriteBytes()
+      }))
+    );
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "image-key",
+        IMAGE_BASE_URL: "https://agnes.test",
+        IMAGE_ENDPOINT: "/v1/images/generations"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as { prompt?: string };
+        const prompt = body.prompt ?? "";
+        if (prompt.includes("world.background") || prompt.includes("player.ship") || prompt.includes("hazard.enemy") || prompt.includes("item.collectible")) {
+          return JSON.stringify({ data: [{ url: "https://assets.test/sprite.png" }] });
+        }
+        return JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  candidates: ["background", "player", "hazard", "collectible"].map((slot) => ({
+                    slot,
+                    assetKey:
+                      slot === "background"
+                        ? "world.background"
+                        : slot === "player"
+                          ? "player.ship"
+                          : slot === "hazard"
+                            ? "hazard.enemy"
+                            : "item.collectible",
+                    type: "image",
+                    label: `${slot} test`,
+                    prompt: `${slot} for 太空猫驾驶飞船躲避陨石，收集鱼干`,
+                    style: "arcade",
+                    purpose: slot,
+                    acceptedFileTypes: ["image/*"]
+                  }))
+                })
+              }
+            }
+          ]
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "太空猫驾驶飞船躲避陨石，收集鱼干",
+        templateFamily: "top_down",
+        model: "deepseek-v4-flash",
+        designBrief: designBriefFixture()
+      }
+    });
+
+    expect(response.status).toBe(200);
+    for (const candidate of response.body.assetCandidates.candidates as Array<{ generationParams: Record<string, string> }>) {
+      expect(candidate.generationParams.libraryFileUrl).toMatch(/^\/asset-library\/assets\/[a-z0-9._/-]+$/);
+      expect(candidate.generationParams.libraryFileUrl).not.toContain("?");
+    }
+  });
+
+  it("returns short display summaries separate from full image prompts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "image/png" }),
+        arrayBuffer: async () => whiteBackgroundSpriteBytes()
+      }))
+    );
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "image-key",
+        IMAGE_BASE_URL: "https://agnes.test",
+        IMAGE_ENDPOINT: "/v1/images/generations"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as { prompt?: string };
+        if ((body.prompt ?? "").includes("assetKey")) {
+          return JSON.stringify({ data: [{ url: "https://assets.test/sprite.png" }] });
+        }
+        return JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  candidates: ["background", "player", "hazard", "collectible"].map((slot) => ({
+                    slot,
+                    assetKey:
+                      slot === "background"
+                        ? "world.background"
+                        : slot === "player"
+                          ? "player.ship"
+                          : slot === "hazard"
+                            ? "hazard.enemy"
+                            : "item.collectible",
+                    type: "image",
+                    label: `${slot} label`,
+                    prompt: `${slot} model prompt`,
+                    style: "arcade",
+                    purpose: slot,
+                    acceptedFileTypes: ["image/*"]
+                  }))
+                })
+              }
+            }
+          ]
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "space cat ship dodges meteors and collects fish snacks",
+        templateFamily: "top_down",
+        model: "deepseek-v4-flash"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    for (const candidate of response.body.assetCandidates.candidates as Array<{ prompt: string; generationParams: Record<string, string> }>) {
+      expect(candidate.prompt).toContain("assetKey:");
+      expect(candidate.generationParams.finalPrompt).toBe(candidate.prompt);
+      expect(candidate.generationParams.finalImagePrompt).toBe(candidate.prompt);
+      expect(candidate.generationParams.displayPromptSummary).toBeTruthy();
+      expect(candidate.generationParams.displayPromptSummary).not.toContain("WOW Game");
+      expect(candidate.generationParams.displayPromptSummary.length).toBeLessThan(140);
+    }
+  });
+
+  it("proxies Tripo balance checks through the backend using the server api key", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const handler = createGenerationApiHandler({
+      env: {
+        TRIPO_API_KEY: "server-tripo-key",
+        TRIPO_BASE_URL: "https://openapi.tripo3d.com"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ url, init }) => {
+        calls.push({ url, init });
+        return JSON.stringify({ code: 0, data: { balance: 42 } });
+      }
+    });
+
+    const response = await handler({
+      method: "GET",
+      path: "/api/tripo/balance",
+      body: {}
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.balance).toBe(42);
+    expect(calls[0].url).toBe("https://openapi.tripo3d.com/v3/account/balance");
+    expect(calls[0].init.headers).toEqual({ Authorization: "Bearer server-tripo-key" });
+  });
+
+  it("keeps image prompts isolated from game developer prompts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "image/png" }),
+        arrayBuffer: async () => whiteBackgroundSpriteBytes()
+      }))
+    );
+    const agnesPrompts: string[] = [];
+    const pollutedDeveloperPrompt =
+      "Create a Phaser 2D top-down game with arrow keys, WASD controls, score, win condition, and top_down template.";
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-api-test",
+        IMAGE_PROVIDER: "agnes",
+        IMAGE_API_KEY: "image-key",
+        IMAGE_BASE_URL: "https://agnes.test",
+        IMAGE_ENDPOINT: "/v1/images/generations"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ url, init }) => {
+        if (String(url).includes("agnes.test")) {
+          const body = JSON.parse(init.body) as { prompt?: string };
+          agnesPrompts.push(body.prompt ?? "");
+          return JSON.stringify({ data: [{ url: "https://assets.test/sprite.png" }] });
+        }
+        return JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  candidates: [
+                    {
+                      slot: "background",
+                      assetKey: "world.background",
+                      type: "image",
+                      label: "Space background",
+                      prompt: `${pollutedDeveloperPrompt} Draw a neon starfield background.`,
+                      style: "neon sci-fi",
+                      purpose: "background",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "player",
+                      assetKey: "player.ship",
+                      type: "image",
+                      label: "Player ship",
+                      prompt: `${pollutedDeveloperPrompt} Draw a single cat spaceship sprite.`,
+                      style: "neon sci-fi",
+                      purpose: "player",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "hazard",
+                      assetKey: "hazard.enemy",
+                      type: "image",
+                      label: "Meteor enemy",
+                      prompt: `${pollutedDeveloperPrompt} Draw a single meteor hazard sprite.`,
+                      style: "neon sci-fi",
+                      purpose: "hazard",
+                      acceptedFileTypes: ["image/*"]
+                    },
+                    {
+                      slot: "collectible",
+                      assetKey: "item.collectible",
+                      type: "image",
+                      label: "Fish snack",
+                      prompt: `${pollutedDeveloperPrompt} Draw a single glowing fish snack collectible.`,
+                      style: "neon sci-fi",
+                      purpose: "collectible",
+                      acceptedFileTypes: ["image/*"]
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/asset-candidates",
+      body: {
+        idea: "space cat ship dodges meteors and collects fish snacks",
+        templateFamily: "top_down",
+        model: "deepseek-v4-flash",
+        designBrief: {
+          ...designBriefFixture(),
+          developerPrompt: pollutedDeveloperPrompt
+        }
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(agnesPrompts).toHaveLength(4);
+    const allPrompts = [
+      ...agnesPrompts,
+      ...response.body.assetCandidates.candidates.map((candidate: { prompt: string }) => candidate.prompt)
+    ].join("\n");
+    expect(allPrompts).toContain("world.background");
+    expect(allPrompts).toContain("player.ship");
+    expect(allPrompts).toContain("hazard.enemy");
+    expect(allPrompts).toContain("item.collectible");
+    expect(new Set(agnesPrompts).size).toBe(4);
+    expect(allPrompts).not.toMatch(/Create a Phaser|top_down|controls|WASD|arrow keys|score|win condition|template/i);
+    for (const candidate of response.body.assetCandidates.candidates as Array<{ generationParams: Record<string, string | boolean> }>) {
+      expect(candidate.generationParams.finalImagePrompt).toBeTruthy();
+      expect(candidate.generationParams.promptSanitized).toBe(true);
     }
   });
 

@@ -8,10 +8,12 @@ describe("three preview layout", () => {
     const layoutStyles = readFileSync("src/ui/preview-layout.css", "utf8");
 
     expect(source).toContain("ResizeObserver");
-    expect(source).toContain("camera.aspect = width / height");
+    expect(source).toContain("camera.aspect = nextWidth / nextHeight");
     expect(source).toContain("camera.updateProjectionMatrix()");
-    expect(source).toContain("renderer.setSize(width, height, false)");
-    expect(source).toContain("}, [director, viewportMode]);");
+    expect(source).toContain("renderer.setSize(nextWidth, nextHeight, false)");
+    expect(source).toContain("GLTFLoader");
+    expect(source).toContain("three-preview-asset-error");
+    expect(source).toContain("}, [assetLoadReport, assetPack, director, viewportMode]);");
 
     expect(baseStyles).toContain(".three-preview-shell.web_16_9");
     expect(baseStyles).toContain("aspect-ratio: 16 / 9");

@@ -685,10 +685,10 @@ function createFallbackAssetCandidates(input: GenerateAssetCandidatesInput): Ass
   const commonStyle = brief.developerPrompt.includes("cat") || input.idea.includes("猫") ? "cute sci-fi" : "arcade sci-fi";
   return withCandidatePreviews({
     candidates: [
-      createCandidate("background", "world.background", "image", labelForAssetSlot("background", input.idea), `${brief.developerPrompt}; ${promptForAssetSlot("background", input.idea)}`, commonStyle, "游戏背景", ["image/*"]),
-      createCandidate("player", "player.ship", "image", labelForAssetSlot("player", input.idea), `${brief.developerPrompt}; ${promptForAssetSlot("player", input.idea)}`, commonStyle, "玩家角色", ["image/*"]),
-      createCandidate("hazard", "hazard.enemy", "image", labelForAssetSlot("hazard", input.idea), `${brief.developerPrompt}; ${promptForAssetSlot("hazard", input.idea)}`, commonStyle, "危险物", ["image/*"]),
-      createCandidate("collectible", "item.collectible", "image", labelForAssetSlot("collectible", input.idea), `${brief.developerPrompt}; ${promptForAssetSlot("collectible", input.idea)}`, commonStyle, "得分道具", ["image/*"])
+      createCandidate("background", "world.background", "image", labelForAssetSlot("background", input.idea), promptForAssetSlot("background", input.idea), commonStyle, "游戏背景", ["image/*"]),
+      createCandidate("player", "player.ship", "image", labelForAssetSlot("player", input.idea), promptForAssetSlot("player", input.idea), commonStyle, "玩家角色", ["image/*"]),
+      createCandidate("hazard", "hazard.enemy", "image", labelForAssetSlot("hazard", input.idea), promptForAssetSlot("hazard", input.idea), commonStyle, "危险物", ["image/*"]),
+      createCandidate("collectible", "item.collectible", "image", labelForAssetSlot("collectible", input.idea), promptForAssetSlot("collectible", input.idea), commonStyle, "得分道具", ["image/*"])
     ]
   });
 }
@@ -725,23 +725,50 @@ function finalizeAssetCandidatePrompts(
   return {
     candidates: assetCandidates.candidates.map((candidate) => {
       const modelPrompt = candidate.prompt;
-      const finalPrompt = buildSlotSpecificImagePrompt(candidate, {
+      const finalImagePrompt = buildSlotSpecificImagePrompt(candidate, {
         idea: input.idea,
         designBrief: "designBrief" in input ? input.designBrief : undefined,
         answers: "answers" in input ? input.answers : undefined,
         modelPrompt
       });
+      const promptSanitized = didSanitizeImagePrompt(candidate, {
+        designBrief: "designBrief" in input ? input.designBrief : undefined,
+        answers: "answers" in input ? input.answers : undefined,
+        modelPrompt
+      });
+      const removedPromptContamination = collectPromptContamination([
+        modelPrompt,
+        "designBrief" in input ? input.designBrief?.developerPrompt : undefined,
+        "answers" in input ? input.answers?.map((answer) => answer.value).join(" ") : undefined
+      ]);
       return {
         ...candidate,
-        prompt: finalPrompt,
+        label: shouldReplaceGenericAssetText(candidate.label, candidate.slot)
+          ? labelForAssetSlot(candidate.slot, input.idea)
+          : candidate.label,
+        prompt: finalImagePrompt,
         generationParams: {
           ...(candidate.generationParams ?? {}),
           modelPrompt,
-          finalPrompt
+          modelAssetPrompt: modelPrompt,
+          finalPrompt: finalImagePrompt,
+          finalImagePrompt,
+          displayPromptSummary: buildAssetPromptSummary(candidate.slot, input.idea),
+          promptSanitized,
+          ...(removedPromptContamination ? { removedPromptContamination } : {})
         }
       };
     })
   };
+}
+
+function buildAssetPromptSummary(slot: AssetCandidate["slot"], idea: string): string {
+  const concept = idea.trim() || "当前游戏创意";
+  if (slot === "background") return `生成 ${concept} 的 16:9 游戏背景图，不包含角色、敌人、UI 或文字。`;
+  if (slot === "player") return `生成 ${concept} 的玩家主角单体精灵，主体清晰居中，和敌人、收集物明显不同。`;
+  if (slot === "hazard") return `生成 ${concept} 的危险物或敌人单体精灵，外形有威胁感，和主角、收集物明显区分。`;
+  if (slot === "collectible") return `生成 ${concept} 的奖励收集物单体精灵，小尺寸也能辨认，和危险物明显不同。`;
+  return `生成 ${concept} 的游戏素材。`;
 }
 
 function buildSlotSpecificImagePrompt(
@@ -754,29 +781,75 @@ function buildSlotSpecificImagePrompt(
   }
 ): string {
   const slotInstruction = promptForAssetSlot(candidate.slot, input.idea);
-  const answerSummary = (input.answers ?? [])
+  const answerSummary = sanitizeImagePromptText((input.answers ?? [])
     .map((answer) => answer.value.trim())
     .filter(Boolean)
-    .join("；");
+    .join("；")).text;
+  const sanitizedModelPrompt = sanitizeImagePromptText(input.modelPrompt).text;
   const modelPrompt =
-    input.modelPrompt && !shouldReplaceGenericAssetText(input.modelPrompt, candidate.slot)
-      ? `模型原始素材建议：${input.modelPrompt}`
+    input.modelPrompt &&
+    sanitizedModelPrompt &&
+    !shouldReplaceGenericAssetText(sanitizedModelPrompt, candidate.slot) &&
+    isModelPromptAlignedWithIdea(sanitizedModelPrompt, candidate.slot, input.idea)
+      ? `图片视觉参考：${sanitizedModelPrompt}`
       : "";
   return [
-    `WOW Game 核心图片素材：${labelForAssetSlot(candidate.slot, input.idea)}`,
+    "Image generation prompt",
+    `asset title: ${labelForAssetSlot(candidate.slot, input.idea)}`,
     `slot: ${candidate.slot}`,
     `assetKey: ${assetKeyForSlot(candidate.slot)}`,
-    `玩家创意：${input.idea}`,
-    input.designBrief?.developerPrompt ? `设计理解：${input.designBrief.developerPrompt}` : "",
-    answerSummary ? `玩家补充答案：${answerSummary}` : "",
+    `visual concept: ${input.idea}`,
+    answerSummary ? `visual notes: ${answerSummary}` : "",
     modelPrompt,
     slotInstruction,
     candidate.slot === "background"
       ? "输出要求：16:9 游戏场景背景，不要主角、敌人、UI、文字，不要测试网格或纯色块。"
-      : "输出要求：独立居中的游戏精灵，纯绿幕背景便于抠图，不要文字、UI、测试网格、方块占位图。"
+      : "输出要求：单个独立居中的游戏精灵，只画一个主体，不要场景背景、不要多个物体、不要插画构图；纯绿幕背景便于抠图，不要文字、UI、测试网格、方块占位图。"
   ]
     .filter(Boolean)
     .join("。");
+}
+
+function sanitizeImagePromptText(text: string | undefined): { text: string; sanitized: boolean; removed?: string } {
+  const value = (text ?? "").trim();
+  if (!value) return { text: "", sanitized: false };
+  const contamination = collectPromptContamination([value]);
+  if (contamination) return { text: "", sanitized: true, removed: contamination };
+  return { text: value, sanitized: false };
+}
+
+function didSanitizeImagePrompt(
+  candidate: AssetCandidate,
+  input: {
+    designBrief?: DesignBrief;
+    answers?: UserAnswer[];
+    modelPrompt?: string;
+  }
+): boolean {
+  const rawText = [
+    input.modelPrompt,
+    input.designBrief?.developerPrompt,
+    ...(input.answers ?? []).map((answer) => answer.value)
+  ];
+  if (collectPromptContamination(rawText)) return true;
+  const sanitizedModelPrompt = sanitizeImagePromptText(input.modelPrompt).text;
+  return Boolean(
+    input.modelPrompt &&
+      (!sanitizedModelPrompt ||
+        shouldReplaceGenericAssetText(sanitizedModelPrompt, candidate.slot) ||
+        !isModelPromptAlignedWithIdea(sanitizedModelPrompt, candidate.slot, ""))
+  );
+}
+
+function collectPromptContamination(values: Array<string | undefined>): string {
+  const contaminationPattern =
+    /create\s+a\s+(?:phaser|three\.?js)|phaser|three\.?js|top_down|platformer|tower_defense|grid_logic|ui_heavy|controls?|arrow keys?|wasd|score|win condition|lose condition|template|gameplay loop|developer prompt/i;
+  return values
+    .filter((value): value is string => Boolean(value))
+    .flatMap((value) => value.match(contaminationPattern)?.[0] ?? [])
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(", ");
 }
 
 function labelForAssetSlot(slot: AssetCandidate["slot"], idea: string): string {
@@ -839,6 +912,28 @@ function shouldReplaceGenericAssetText(text: string | undefined, slot: AssetCand
   if (genericFragments.some((fragment) => lower === fragment || lower.includes(fragment))) return true;
   if (slot === "hazard" && lower.includes("spike")) return true;
   return false;
+}
+
+function isModelPromptAlignedWithIdea(text: string, slot: AssetCandidate["slot"], idea: string): boolean {
+  const lower = text.toLowerCase();
+  const ideaText = idea.toLowerCase();
+  if (slot === "background" && includesAny(ideaText, ["太空", "星", "space", "飞船", "ship"])) {
+    return includesAny(text, ["太空", "星空", "星云", "宇宙", "科幻"]) ||
+      includesAny(lower, ["space", "star", "cosmic", "nebula", "galaxy", "asteroid", "planet", "spaceship"]);
+  }
+  if (slot === "player" && includesAny(ideaText, ["太空猫", "猫", "飞船", "space cat", "ship"])) {
+    return includesAny(text, ["太空猫", "猫", "飞船", "战机"]) ||
+      includesAny(lower, ["cat", "ship", "spaceship", "rocket", "fighter", "pilot"]);
+  }
+  if (slot === "hazard" && includesAny(ideaText, ["陨石", "meteor", "asteroid"])) {
+    return includesAny(text, ["陨石", "流星", "小行星"]) ||
+      includesAny(lower, ["meteor", "asteroid", "rock", "comet"]);
+  }
+  if (slot === "collectible" && includesAny(ideaText, ["鱼干", "fish", "星星", "金币", "coin", "star"])) {
+    return includesAny(text, ["鱼干", "星星", "金币"]) ||
+      includesAny(lower, ["fish", "snack", "treat", "star", "coin"]);
+  }
+  return true;
 }
 
 function includesAny(text: string, tokens: string[]): boolean {
@@ -958,7 +1053,8 @@ async function generateCandidateMedia(
         generationParams: {
           ...(candidate.generationParams ?? {}),
           ...(generated.generationParams ?? {}),
-          finalPrompt: candidate.prompt
+          finalPrompt: candidate.prompt,
+          finalImagePrompt: candidate.prompt
         },
         error: generated.error,
         approvalStatus: "pending" as const
@@ -982,7 +1078,7 @@ function createCandidateAssetRequirement(
     generationMode: "model",
     copyrightStatus: "generated",
     spec: [
-      `${candidate.label} for ${templateFamily}`,
+      `${candidate.label} image asset`,
       idea ? `user idea: ${idea}` : "",
       transparent
         ? "solid chroma green background, isolated centered sprite, readable silhouette, no shadow, no glow, no ground, no border, no checkerboard; use chroma magenta background if the subject is green"

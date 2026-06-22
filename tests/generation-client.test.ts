@@ -5,6 +5,9 @@ import {
   requestPlayableProject,
   requestPackageEditPlan,
   replacePackageAsset,
+  requestTripoBalance,
+  requestTripoTask,
+  requestTripoTextToModel,
   submitPlayableFeedback,
   uploadPlayablePackage
 } from "../src/services/generationClient";
@@ -232,6 +235,38 @@ describe("browser generation client", () => {
     expect(requestUrl).toBe("/api/process-uploaded-material");
     expect(requestBody).toContain("asteroid.png");
     expect(result.assetCandidate.source).toBe("uploaded");
+  });
+
+  it("checks Tripo balance through the local API without sending the api key from the browser", async () => {
+    const result = await requestTripoBalance(async (url, init) => {
+      expect(url).toBe("/api/tripo/balance");
+      expect(init?.method).toBe("GET");
+      expect(JSON.stringify(init)).not.toContain("TRIPO_API_KEY");
+      expect(JSON.stringify(init)).not.toContain("tripo-key");
+      return new Response(JSON.stringify({ code: 0, data: { balance: 88 } }), { status: 200 });
+    });
+
+    expect(result.data.balance).toBe(88);
+  });
+
+  it("creates and reads Tripo tasks through local API wrappers", async () => {
+    const taskResult = await requestTripoTextToModel("low-poly player ship", async (url, init) => {
+      expect(url).toBe("/api/tripo/text-to-model");
+      expect(init?.method).toBe("POST");
+      expect(String(init?.body)).toContain("low-poly player ship");
+      expect(String(init?.body)).not.toContain("tripo-key");
+      return new Response(JSON.stringify({ taskId: "task-123" }), { status: 200 });
+    });
+    const statusResult = await requestTripoTask("task-123", async (url, init) => {
+      expect(url).toBe("/api/tripo/tasks/task-123");
+      expect(init?.method).toBe("GET");
+      return new Response(JSON.stringify({ task: { status: "success", output: { model_url: "https://tmp/model.glb" } } }), {
+        status: 200
+      });
+    });
+
+    expect(taskResult.taskId).toBe("task-123");
+    expect(statusResult.task.output.model_url).toBe("https://tmp/model.glb");
   });
 
   it("requests an AI edit plan for an uploaded package", async () => {

@@ -445,12 +445,29 @@ export interface ThreeAssetPlan {
   requiredApiKeys: string[];
 }
 
+export interface ThreeAssetCandidates {
+  versionId: string;
+  engineType: "threejs3d";
+  assets: AssetRequirement[];
+}
+
+export interface ConfirmedThreeAssets {
+  assets: AssetRequirement[];
+}
+
 export interface ThreeSceneDirector {
   version: "1";
   genre: ThreeGameGenre;
   title: string;
   camera: "follow_chase" | "top_down" | "orbit_showcase";
   controls: Array<"keyboard" | "touch_drag" | "touch_buttons">;
+  stages?: Array<{
+    id: string;
+    label: string;
+    startsAtMs: number;
+    durationMs: number;
+    objective: "learn_controls" | "collect" | "survive" | "finale";
+  }>;
   player: {
     speed: number;
     radius: number;
@@ -470,7 +487,7 @@ export interface ThreeSceneDirector {
   enemies: Array<{
     id: string;
     type: "asteroid" | "drone" | "gate";
-    behavior: "falling" | "patrol" | "chase";
+    behavior: "falling" | "patrol" | "chase" | "orbit";
     count: number;
     speed: number;
   }>;
@@ -485,6 +502,21 @@ export interface ThreeAssetPack {
   versionId: string;
   assets: AssetRequirement[];
   fallbackProviders: Array<"procedural-three" | "agnes" | "gemini-image" | "elevenlabs" | "tripo">;
+}
+
+export interface ThreeAssetLoadReport {
+  ready: boolean;
+  assets: Array<{
+    assetKey: string;
+    type: AssetType;
+    source: AssetSource;
+    provider: string;
+    fileUrl: string;
+    runtimeStatus: "procedural" | "ready" | "browser_pending" | "missing" | "unsupported";
+    fallback: boolean;
+    error?: string;
+  }>;
+  errors: string[];
 }
 
 export interface ThreeVerificationReport {
@@ -525,6 +557,7 @@ export interface MockProject {
   threeAssetPlan?: ThreeAssetPlan;
   threeAssetPack?: ThreeAssetPack;
   threeVerificationReport?: ThreeVerificationReport;
+  threeAssetLoadReport?: ThreeAssetLoadReport;
   playUrl: string;
   feedback: {
     rating: number;

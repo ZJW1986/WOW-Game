@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createConversationSession, createGuidedQuestions, createThreeGuidedQuestions } from "../src/core/conversation";
+import {
+  answerDesignQuestion,
+  createConversationSession,
+  createGuidedQuestions,
+  createThreeGuidedQuestions
+} from "../src/core/conversation";
 
 describe("engine-aware guided questions", () => {
   it("asks different professional questions for 2D and 3D ideas", () => {
@@ -27,5 +32,20 @@ describe("engine-aware guided questions", () => {
       "three_hazard_feedback",
       "three_asset_style"
     ]);
+  });
+
+  it("updates an existing 3D answer instead of appending duplicate turns", () => {
+    let session = createConversationSession("手机竖屏飞机射击，躲避陨石并收集能量", {
+      engineType: "threejs3d",
+      threeGameGenre: "flight_shooter"
+    });
+
+    session = answerDesignQuestion(session, "three_camera", "追尾飞行镜头");
+    session = answerDesignQuestion(session, "three_camera", "俯视飞行镜头");
+
+    expect(session.answers).toHaveLength(1);
+    expect(session.answers[0]).toMatchObject({ questionId: "three_camera", value: "俯视飞行镜头" });
+    expect(session.turns.filter((turn) => turn.content.includes("3D视角与镜头"))).toHaveLength(1);
+    expect(session.turns.map((turn) => turn.content).join(" ")).not.toContain("锟");
   });
 });

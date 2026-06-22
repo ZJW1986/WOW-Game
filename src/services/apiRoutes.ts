@@ -4,6 +4,7 @@ export function isWowGameApiPath(url: string): boolean {
     url.startsWith("/generate-three-game") ||
     url.startsWith("/three-asset-candidates") ||
     url.startsWith("/verify-three-game") ||
+    url.startsWith("/tripo/") ||
     url.startsWith("/guided-questions") ||
     url.startsWith("/design-brief") ||
     url.startsWith("/asset-candidates") ||

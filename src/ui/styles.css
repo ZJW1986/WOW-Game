@@ -222,6 +222,21 @@
   overflow-wrap: anywhere;
 }
 
+.three-preview-asset-error {
+  position: absolute;
+  right: 12px;
+  bottom: 52px;
+  left: 12px;
+  z-index: 4;
+  padding: 8px 10px;
+  border: 1px solid rgb(255 93 93 / 58%);
+  border-radius: 6px;
+  background: rgb(37 8 12 / 86%);
+  color: #ffd1d1;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .three-preview-hud strong {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2812,11 +2827,41 @@ button {
   gap: 18px;
 }
 
+.preview-workspace > .viewport-switch {
+  grid-column: 1 / -1;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.preview-workspace > .viewport-switch span {
+  flex: 0 0 auto;
+  min-width: 76px;
+  line-height: 30px;
+}
+
+.preview-workspace > .viewport-switch button {
+  height: 30px;
+  white-space: nowrap;
+}
+
+.preview-workspace > .preview-result-banner {
+  position: relative;
+  z-index: 1;
+  top: auto;
+  right: auto;
+  left: auto;
+  grid-column: 1 / -1;
+  pointer-events: auto;
+}
+
 .cooking-state {
   position: relative;
   display: grid;
   grid-column: 1 / -1;
-  min-height: calc(100vh - 176px);
+  min-height: calc(100vh - 230px);
   place-items: center;
   align-content: center;
   gap: 12px;
@@ -2927,7 +2972,7 @@ button {
 .preview-empty-state {
   display: grid;
   grid-column: 1 / -1;
-  min-height: calc(100vh - 176px);
+  min-height: calc(100vh - 230px);
   place-items: center;
   align-content: center;
   gap: 14px;

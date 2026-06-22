@@ -106,7 +106,7 @@ describe("idea dialog flow", () => {
     expect(state.statusLabel).toBe("Questions are complete. Generate core assets next.");
   });
 
-  it("blocks local fallback generation when design brief is missing", () => {
+  it("keeps asset generation as the primary action after answers even if design brief state is delayed", () => {
     let session = createConversationSession("生成一个飞船小游戏");
     for (const question of session.questions) {
       session = answerDesignQuestion(session, question.id, question.defaultAnswer);
@@ -121,8 +121,9 @@ describe("idea dialog flow", () => {
     });
 
     expect(state.canGenerate).toBe(false);
-    expect(state.buttonLabel).toBe("Send");
-    expect(state.statusLabel).toBe("");
+    expect(state.canStartAssets).toBe(true);
+    expect(state.buttonLabel).toBe("Generate assets");
+    expect(state.statusLabel).toBe("Questions are complete. Generate core assets next.");
   });
 
   it("allows asset generation when answered questions recover to chatting phase", () => {
@@ -142,6 +143,25 @@ describe("idea dialog flow", () => {
     expect(state.canGenerate).toBe(false);
     expect(state.canStartAssets).toBe(true);
     expect(state.buttonLabel).toBe("Generate assets");
+  });
+
+  it("keeps the asset action label while candidates wait for confirmation", () => {
+    let session = createConversationSession("生成一个飞船小游戏");
+    for (const question of session.questions) {
+      session = answerDesignQuestion(session, question.id, question.defaultAnswer);
+    }
+
+    const state = readIdeaDialogActionState({
+      session,
+      hasDesignBrief: true,
+      hasAssetCandidates: true,
+      hasConfirmedAssets: false,
+      creationPhase: "asset_review"
+    });
+
+    expect(state.isPreparingAssets).toBe(true);
+    expect(state.buttonLabel).toBe("Generate assets");
+    expect(state.statusLabel).toBe("Confirm background, player, hazard, and collectible before generating the game.");
   });
 
   it("blocks generation if questions are answered before model thinking finishes", () => {
