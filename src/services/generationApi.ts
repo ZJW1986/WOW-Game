@@ -27,6 +27,7 @@ import {
 } from "./uploadedPackageService";
 import { createRuntimeAssetReport } from "../ui/previewAssets";
 import { processGeneratedImageForSlot } from "./imageCutoutService";
+import { generateThreeGameMvp } from "./threeGameService";
 
 export interface GenerationApiRequest {
   method: string;
@@ -263,6 +264,40 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
 
     if (request.method === "POST" && request.path === "/api/design-brief") {
       try {
+        if (request.body.engineType === "threejs3d") {
+          const idea = requireString(request.body.idea, "idea");
+          const result = generateThreeGameMvp({
+            idea,
+            projectId: optionalString(request.body.projectId) ?? `three-brief-${Date.now()}`,
+            baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
+            viewportMode:
+              request.body.viewportMode === "web_16_9" || request.body.viewportMode === "app_9_16"
+                ? request.body.viewportMode
+                : "app_9_16",
+            gameType3d: parseThreeGameGenre(request.body.gameType3d)
+          });
+          return {
+            status: 200,
+            body: {
+              designBrief: {
+                coreGameplay: result.threeGameBrief.coreLoop.join(" / "),
+                playerGoal: result.project.gameConfig.playerGoal,
+                referenceTakeaways: result.threeGameBrief.skillWorkflow,
+                risks: ["3D model/audio providers may fall back to procedural assets until API keys are configured."],
+                questionFocus: ["camera", "movement", "space", "hazard", "feedback", "assets"],
+                developerPrompt: `${result.threeGameBrief.cameraIntent}\n${result.threeGameBrief.movementIntent}\n${result.threeGameBrief.spaceLayout}`
+              },
+              threeDesignBrief: result.threeGameBrief,
+              modelTask: {
+                taskType: "llm.three_design_brief",
+                provider: "mock",
+                model: "three-skill-director-fallback",
+                status: "fallback"
+              },
+              fallbackUsed: true
+            }
+          };
+        }
         const service = createGenerationService({
           deepseekApiKey: env.DEEPSEEK_API_KEY,
           deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
@@ -430,8 +465,54 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       }
     }
 
+    if (request.method === "POST" && request.path === "/api/generate-three-game") {
+      try {
+        const result = generateThreeGameMvp({
+          idea: requireString(request.body.idea, "idea"),
+          projectId: optionalString(request.body.projectId) ?? `three-project-${Date.now()}`,
+          baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
+          viewportMode:
+            request.body.viewportMode === "web_16_9" || request.body.viewportMode === "app_9_16"
+              ? request.body.viewportMode
+              : "app_9_16",
+          gameType3d: parseThreeGameGenre(request.body.gameType3d),
+          answers: parseAnswers(request.body.answers)
+        });
+        await store.savePlayable({
+          project: result.project,
+          publishRecord: result.publishRecord,
+          feedback: []
+        });
+        return { status: 200, body: result as unknown as Record<string, any> };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
     if (request.method === "POST" && request.path === "/api/guided-questions") {
       try {
+        if (request.body.engineType === "threejs3d") {
+          const { createThreeGuidedQuestions } = await import("../core/conversation");
+          return {
+            status: 200,
+            body: {
+              questions: createThreeGuidedQuestions(
+                requireString(request.body.idea, "idea"),
+                parseThreeGameGenre(request.body.gameType3d)
+              ),
+              modelTask: {
+                taskType: "llm.three_guided_questions",
+                provider: "mock",
+                model: "three-skill-director-fallback",
+                status: "fallback"
+              },
+              fallbackUsed: true
+            }
+          };
+        }
         const service = createGenerationService({
           deepseekApiKey: env.DEEPSEEK_API_KEY,
           deepseekBaseUrl: env.DEEPSEEK_BASE_URL,
@@ -1070,6 +1151,19 @@ function parseTemplateFamily(value: unknown): TemplateFamily {
   return "top_down";
 }
 
+function parseThreeGameGenre(value: unknown) {
+  if (
+    value === "runner" ||
+    value === "dodge_collect" ||
+    value === "flight_shooter" ||
+    value === "third_person_collect" ||
+    value === "exploration"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function parseUserMaterialSlot(value: unknown): AssetCandidate["slot"] {
   if (
     value === "background" ||
@@ -1094,7 +1188,12 @@ function runtimeAssetKeyForSlot(slot: AssetCandidate["slot"]): string {
 }
 
 function parseModel(value: unknown): StartModelId {
-  if (value === "deepseek-v4-flash" || value === "mock-designer" || value === "custom-provider") {
+  if (
+    value === "deepseek-v4-flash" ||
+    value === "gemini-flash" ||
+    value === "mock-designer" ||
+    value === "custom-provider"
+  ) {
     return value;
   }
   return "deepseek-v4-flash";

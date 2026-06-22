@@ -37,4 +37,21 @@ Vite is configured to accept external tunnel hosts during development. Share lin
 ```powershell
 npm.cmd test
 npm.cmd run build
+npm.cmd run build:analyze
 ```
+
+For real browser acceptance, start the dev server first and run the browser check:
+
+```powershell
+npm.cmd run dev -- --host 0.0.0.0 --port 5176 --strictPort
+npm.cmd run verify:browser
+```
+
+`verify:browser` tries Playwright Chromium first, then system Microsoft Edge, then system Google Chrome. If none can launch, install the Playwright browser runtime:
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH=".playwright-browsers"
+npx playwright install chromium
+```
+
+`verify:browser` skips with a clear message when no browser can launch, so it does not block the normal unit/build regression path. Restart the dev server after changing `.env.local` or installing new dependencies.

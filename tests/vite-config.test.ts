@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDemoServerConfig } from "../src/services/demoServerConfig";
 import { isWowGameApiPath } from "../src/services/apiRoutes";
+import { createManualChunks } from "../src/services/buildChunks";
 
 describe("vite demo host configuration", () => {
   it("allows public tunnel hosts for external demos", () => {
@@ -14,5 +15,12 @@ describe("vite demo host configuration", () => {
     expect(isWowGameApiPath("/revision-analysis")).toBe(true);
     expect(isWowGameApiPath("/guided-questions")).toBe(true);
     expect(isWowGameApiPath("/generate-playable")).toBe(true);
+  });
+
+  it("splits large game engines into separate build chunks", () => {
+    expect(createManualChunks("D:/repo/node_modules/phaser/dist/phaser.js")).toBe("phaser");
+    expect(createManualChunks("D:/repo/node_modules/three/build/three.module.js")).toBe("three");
+    expect(createManualChunks("D:/repo/node_modules/react/index.js")).toBe("react-vendor");
+    expect(createManualChunks("D:/repo/src/ui/App.tsx")).toBeUndefined();
   });
 });

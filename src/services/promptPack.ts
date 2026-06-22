@@ -12,11 +12,11 @@ export function createPromptForTask(
   const taskInstruction: Record<PromptTaskType, string> = {
     "llm.design_brief": [
       "Task: llm.design_brief.",
-      "Act as a professional 2D game designer before asking the player questions.",
-      "Analyze the idea, uploaded reference summary, user materials, target template, and phase-1 constraints.",
+      "Act as a professional game designer before asking the player questions.",
+      "Analyze engineType, idea, uploaded reference summary, user materials, target template or 3D genre, and phase-1 constraints.",
       "Produce a practical developer prompt that can drive the later GDD, asset prompts, config, and hooks.",
       'Return exactly this JSON shape: {"coreGameplay":"...","playerGoal":"...","referenceTakeaways":["..."],"risks":["..."],"questionFocus":["gameplay","character","visual","audio","pacing"],"developerPrompt":"..."}.',
-      "developerPrompt must be specific enough to generate a first playable Phaser template game."
+      "For phaser2d, developerPrompt must be specific enough to generate a first playable Phaser template game. For threejs3d, use llm.three_design_brief instead."
     ].join("\n"),
     "llm.classification": [
       "Task: llm.classification.",
@@ -33,6 +33,32 @@ export function createPromptForTask(
       "Each question must help the player make a concrete design decision for a first playable 2D game.",
       'inputType must be "single_choice", "multi_choice", "short_text", or "number".',
       'Return exactly this JSON shape: {"questions":[{"id":"goal","label":"Goal","prompt":"...","inputType":"short_text","options":[],"defaultAnswer":"...","required":true}]}'
+    ].join("\n"),
+    "llm.three_design_brief": [
+      "Task: llm.three_design_brief.",
+      "Act as a senior Three.js game director for a first playable 3D web/mobile MVP.",
+      "Analyze idea, gameType3d, viewportMode, player psychology, mobile controls, scene readability, and provider availability.",
+      "Return strict JSON with title, genre, coreLoop, cameraIntent, movementIntent, spaceLayout, interactionFeedback, mobileControlPlan, assetNeeds, and skillWorkflow.",
+      "The brief must be practical enough to drive three-scene-director, three-asset-plan, and verification."
+    ].join("\n"),
+    "llm.three_guided_questions": [
+      "Task: llm.three_guided_questions.",
+      "Generate exactly 5 concise but professional questions for a 3D game idea.",
+      "Cover camera/view, movement feel/mobile controls, spatial route/pacing, hazard pressure, feedback, and 3D asset style.",
+      "Questions must reflect player psychology: clear goal, fair failure, first 30 seconds achievement, replay motivation.",
+      'Return exactly this JSON shape: {"questions":[{"id":"three_camera","label":"3D Camera","prompt":"...","inputType":"single_choice","options":["..."],"defaultAnswer":"...","required":true}]}'
+    ].join("\n"),
+    "llm.three_scene_director": [
+      "Task: llm.three_scene_director.",
+      "Convert threeDesignBrief and answers into a constrained Three.js scene director.",
+      "Do not output JavaScript. Use declarative camera, controls, player, world, objectives, enemies, and feedback.",
+      "Return strict JSON matching the WOW Game three-scene-director artifact."
+    ].join("\n"),
+    "llm.three_asset_plan": [
+      "Task: llm.three_asset_plan.",
+      "Plan 3D assets for Tripo, Gemini image, ElevenLabs, and procedural fallback.",
+      "Include model, texture, skybox, audio, and icon requirements with provider, prompt, purpose, and fallback flag.",
+      "Do not invent frontend asset URLs. Return an asset plan only."
     ].join("\n"),
     "llm.gdd": [
       "Task: llm.gdd.",

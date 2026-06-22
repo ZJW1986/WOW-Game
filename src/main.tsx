@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./ui/App";
 import "./ui/styles.css";
+import "./ui/preview-layout.css";
 
 const root = document.getElementById("root");
 

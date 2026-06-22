@@ -47,6 +47,7 @@ import type {
   UserMaterial,
   UserAnswer
 } from "../core/types";
+import type { StartModelId } from "../core/start";
 import type { ModelTaskRequest } from "./backend";
 import { createDeepSeekExecutor, type DeepSeekExecutorOptions } from "./deepSeekExecutor";
 import { createMediaGateway, type MediaGatewayOptions } from "./mediaGateway";
@@ -68,7 +69,7 @@ export interface GeneratePlayableInput {
   templateFamily: TemplateFamily;
   projectId: string;
   baseUrl: string;
-  model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
+  model?: StartModelId;
   referencePackageSummary?: ReferencePackageSummary;
   userMaterials?: UserMaterial[];
   designBrief?: DesignBrief;
@@ -80,7 +81,7 @@ export interface GenerateGuidedQuestionsInput {
   idea: string;
   templateFamily: TemplateFamily;
   projectId?: string;
-  model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
+  model?: StartModelId;
   designBrief?: DesignBrief;
   referencePackageSummary?: ReferencePackageSummary;
   userMaterials?: UserMaterial[];
@@ -90,7 +91,7 @@ export interface GenerateGuidedQuestionsInput {
 export interface GenerateDesignBriefInput {
   idea: string;
   templateFamily: TemplateFamily;
-  model?: "deepseek-v4-flash" | "mock-designer" | "custom-provider";
+  model?: StartModelId;
   referencePackageSummary?: ReferencePackageSummary;
   userMaterials?: UserMaterial[];
 }

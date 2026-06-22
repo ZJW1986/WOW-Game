@@ -1,0 +1,88 @@
+.preview-workspace.playable-ready {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.preview-workspace.playable-ready .preview-canvas-shell {
+  align-items: center;
+  justify-items: center;
+  width: 100%;
+  min-height: min(52vh, 520px);
+  aspect-ratio: auto;
+}
+
+.preview-workspace.playable-ready .preview-canvas-shell.web_16_9,
+.preview-workspace.playable-ready .preview-canvas-shell.app_9_16 {
+  aspect-ratio: auto;
+}
+
+.preview-workspace.playable-ready .three-preview-shell.web_16_9 {
+  width: min(100%, 760px, calc((100vh - 270px) * 16 / 9));
+  aspect-ratio: 16 / 9;
+}
+
+.preview-workspace.playable-ready .three-preview-shell.app_9_16 {
+  width: min(100%, 360px, calc((100vh - 270px) * 9 / 16));
+  aspect-ratio: 9 / 16;
+}
+
+.preview-workspace.playable-ready .floating-status {
+  position: static;
+  justify-self: center;
+  max-width: none;
+  padding: 7px 12px;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.preview-workspace.playable-ready .verification-rail {
+  display: grid;
+  grid-template-columns: auto repeat(3, minmax(120px, 1fr));
+  align-items: center;
+  gap: 8px 12px;
+  width: min(100%, 860px);
+  margin: 0 auto;
+  padding: 9px 12px;
+  border-color: rgb(69 246 200 / 24%);
+  background: rgb(3 13 20 / 72%);
+  box-shadow: none;
+}
+
+.preview-workspace.playable-ready .verification-rail h3 {
+  margin: 0;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.preview-workspace.playable-ready .score-row {
+  grid-template-columns: 38px minmax(80px, 1fr) 26px;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.preview-workspace.playable-ready .score-bar {
+  height: 6px;
+}
+
+.preview-workspace.playable-ready .protocol-list {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  margin-top: 0;
+  overflow-x: auto;
+}
+
+.preview-workspace.playable-ready .protocol-list span {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  font-size: 10px;
+}
+
+@media (max-width: 900px) {
+  .preview-workspace.playable-ready .verification-rail {
+    grid-template-columns: 1fr;
+  }
+}

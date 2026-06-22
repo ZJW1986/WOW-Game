@@ -4,6 +4,7 @@ import { createGenerationApiHandler } from "./src/services/generationApi";
 import { createDemoServerConfig } from "./src/services/demoServerConfig";
 import { createPlayableStore } from "./src/services/playableStore";
 import { isWowGameApiPath } from "./src/services/apiRoutes";
+import { createManualChunks } from "./src/services/buildChunks";
 
 export default defineConfig(({ mode }) => {
   const nodeProcess = globalThis as {
@@ -98,6 +99,13 @@ export default defineConfig(({ mode }) => {
         }
       }
     ],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: createManualChunks
+        }
+      }
+    },
     test: {
       environment: "jsdom",
       globals: true

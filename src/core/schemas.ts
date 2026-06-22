@@ -70,9 +70,24 @@ export const gddSchema = z.object({
   implementationRoute: z.string()
 });
 
+const assetTypeSchema = z.enum([
+  "image",
+  "sfx",
+  "bgm",
+  "effect",
+  "ui",
+  "build",
+  "model",
+  "texture",
+  "skybox",
+  "material",
+  "audio",
+  "icon"
+]);
+
 export const assetRequirementSchema = z.object({
   assetKey: z.string(),
-  type: z.enum(["image", "sfx", "bgm", "effect", "ui", "build"]),
+  type: assetTypeSchema,
   purpose: z.string(),
   style: z.string(),
   generationMode: z.enum(["mock", "model", "uploaded", "preset"]),
@@ -101,7 +116,7 @@ export const assetRequirementsSchema = z.array(assetRequirementSchema);
 export const assetCandidateSchema = z.object({
   slot: z.enum(["player", "background", "hazard", "collectible", "cover", "bgm", "sfx"]),
   assetKey: z.string(),
-  type: z.enum(["image", "sfx", "bgm", "effect", "ui", "build"]),
+  type: assetTypeSchema,
   label: z.string(),
   prompt: z.string(),
   style: z.string(),

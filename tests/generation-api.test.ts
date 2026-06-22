@@ -898,6 +898,28 @@ describe("generation api handler", () => {
     expect(response.body.questions).toHaveLength(3);
   });
 
+  it("accepts the reserved Gemini model and falls back without blocking guided questions", async () => {
+    const handler = createGenerationApiHandler({
+      env: {},
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/guided-questions",
+      body: {
+        idea: "手机竖屏太空飞船躲避陨石收集能量",
+        templateFamily: "top_down",
+        model: "gemini-flash"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.fallbackUsed).toBe(true);
+    expect(["mock-designer", "schema-fallback"]).toContain(response.body.modelTask.model);
+    expect(response.body.questions.length).toBeGreaterThan(0);
+  });
+
   it("saves player feedback for a persisted playable", async () => {
     const storeIO = memoryStore();
     const handler = createGenerationApiHandler({

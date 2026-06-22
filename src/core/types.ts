@@ -5,6 +5,12 @@ export type TemplateFamily =
   | "tower_defense"
   | "ui_heavy";
 
+export type EngineType = "phaser2d" | "threejs3d";
+
+export type ViewportMode = "web_16_9" | "app_9_16";
+
+export type ThreeGameGenre = "runner" | "dodge_collect" | "flight_shooter" | "third_person_collect" | "exploration";
+
 export type PipelineStage =
   | "idea-intake"
   | "guided-questions"
@@ -24,13 +30,18 @@ export type PipelineStage =
   | "visual-asset-report"
   | "browser-verification-report"
   | "playability-report"
+  | "three-game-brief"
+  | "three-scene-director"
+  | "three-asset-plan"
+  | "three-asset-pack"
+  | "three-verification-report"
   | "gameplay-dsl"
   | "sandbox-plugin"
   | "qa-report"
   | "publish-record"
   | "iteration-report";
 
-export type AssetType = "image" | "sfx" | "bgm" | "effect" | "ui" | "build";
+export type AssetType = "image" | "sfx" | "bgm" | "effect" | "ui" | "build" | "model" | "texture" | "skybox" | "material" | "audio" | "icon";
 export type AssetStatus = "missing" | "mock" | "uploaded" | "generated" | "failed";
 export type AssetSource = "mock" | "preset" | "uploaded" | "generated" | "library";
 
@@ -405,6 +416,89 @@ export interface QaReport {
   };
 }
 
+export interface ThreeGameBrief {
+  genre: ThreeGameGenre;
+  title: string;
+  coreLoop: string[];
+  playerFantasy: string;
+  mobileFormat: "portrait_9_16" | "landscape_16_9";
+  cameraIntent: string;
+  movementIntent: string;
+  spaceLayout: string;
+  interactionFeedback: string[];
+  mobileControlPlan: string;
+  assetNeeds: string[];
+  skillWorkflow: string[];
+}
+
+export interface ThreeAssetPlan {
+  versionId: string;
+  engineType: "threejs3d";
+  assets: Array<{
+    assetKey: string;
+    type: "model" | "texture" | "skybox" | "audio" | "icon";
+    provider: "tripo" | "gemini-image" | "elevenlabs" | "procedural-three";
+    purpose: string;
+    prompt: string;
+    fallback: boolean;
+  }>;
+  requiredApiKeys: string[];
+}
+
+export interface ThreeSceneDirector {
+  version: "1";
+  genre: ThreeGameGenre;
+  title: string;
+  camera: "follow_chase" | "top_down" | "orbit_showcase";
+  controls: Array<"keyboard" | "touch_drag" | "touch_buttons">;
+  player: {
+    speed: number;
+    radius: number;
+    start: { x: number; y: number; z: number };
+  };
+  world: {
+    width: number;
+    depth: number;
+    skyColor: string;
+    groundColor: string;
+  };
+  objectives: {
+    collectTarget: number;
+    avoidDamage: boolean;
+    timeLimitMs: number;
+  };
+  enemies: Array<{
+    id: string;
+    type: "asteroid" | "drone" | "gate";
+    behavior: "falling" | "patrol" | "chase";
+    count: number;
+    speed: number;
+  }>;
+  feedback: {
+    collectPulse: boolean;
+    hitShake: boolean;
+    proceduralAudio: boolean;
+  };
+}
+
+export interface ThreeAssetPack {
+  versionId: string;
+  assets: AssetRequirement[];
+  fallbackProviders: Array<"procedural-three" | "agnes" | "gemini-image" | "elevenlabs" | "tripo">;
+}
+
+export interface ThreeVerificationReport {
+  passed: boolean;
+  deliveryReady: boolean;
+  canvasNonEmpty: boolean;
+  inputMoved: boolean;
+  mobileViewportChecked: boolean;
+  consoleErrorCount: number;
+  screenshotCaptured: boolean;
+  checks: Array<{ id: string; passed: boolean; detail: string }>;
+  viewports: Array<{ name: "desktop" | "mobile_portrait"; width: number; height: number; checked: boolean }>;
+}
+
 export interface GameVersion {
   id: string;
   label: string;
@@ -414,6 +508,7 @@ export interface GameVersion {
 export interface MockProject {
   id: string;
   title: string;
+  engineType?: EngineType;
   contentType: "ai_project" | "uploaded_package";
   editable: boolean;
   shareable: boolean;
@@ -425,6 +520,11 @@ export interface MockProject {
   gameConfig: GameConfig;
   gameHooks: GameHooks;
   qaReport: QaReport;
+  threeGameBrief?: ThreeGameBrief;
+  threeSceneDirector?: ThreeSceneDirector;
+  threeAssetPlan?: ThreeAssetPlan;
+  threeAssetPack?: ThreeAssetPack;
+  threeVerificationReport?: ThreeVerificationReport;
   playUrl: string;
   feedback: {
     rating: number;

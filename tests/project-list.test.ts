@@ -41,6 +41,7 @@ describe("generated project list records", () => {
       plays: 12,
       likes: 3,
       templateFamily: oldProject.classification.templateFamily,
+      engineType: "phaser2d",
       project: oldProject
     };
 

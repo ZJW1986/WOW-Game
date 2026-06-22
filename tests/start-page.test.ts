@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildOptimizedGamePrompt,
   createStartGameDraft,
   createStartTemplateTiles,
+  createStartThreeGameTypeTiles,
+  getGenerationPrompt,
   modelOptions,
   templateOptions
 } from "../src/core/start";
@@ -14,12 +17,35 @@ describe("start page draft", () => {
     });
 
     expect(draft.model).toBe("deepseek-v4-flash");
+    expect(draft.engineType).toBe("phaser2d");
+    expect(draft.viewportMode).toBe("web_16_9");
     expect(draft.templateFamily).toBe("top_down");
     expect(draft.idea).toContain("飞船");
   });
 
+  it("supports explicit 3D game type and mobile canvas defaults", () => {
+    const draft = createStartGameDraft({
+      idea: "做一个手机竖屏 3D 飞船躲避陨石游戏",
+      engineType: "threejs3d",
+      threeGameGenre: "flight_shooter"
+    });
+    const threeTypes = createStartThreeGameTypeTiles();
+
+    expect(draft.engineType).toBe("threejs3d");
+    expect(draft.viewportMode).toBe("app_9_16");
+    expect(draft.threeGameGenre).toBe("flight_shooter");
+    expect(threeTypes.map((tile) => tile.genre)).toEqual([
+      "flight_shooter",
+      "runner",
+      "third_person_collect",
+      "exploration"
+    ]);
+  });
+
   it("keeps selectable models and templates explicit for the create dialog", () => {
     expect(modelOptions.map((model) => model.id)).toContain("deepseek-v4-flash");
+    expect(modelOptions.map((model) => model.id)).toContain("gemini-flash");
+    expect(modelOptions.map((model) => model.id)).toContain("mock-designer");
     expect(templateOptions.map((template) => template.id)).toEqual([
       "top_down",
       "platformer",
@@ -53,6 +79,33 @@ describe("start page draft", () => {
     ]);
     expect(tiles.every((tile) => tile.icon.length <= 2)).toBe(true);
     expect(tiles.every((tile) => tile.shortLabel.length <= 6)).toBe(true);
+    expect(tiles.every((tile) => tile.visualClass.startsWith("type-"))).toBe(true);
+    expect(createStartThreeGameTypeTiles().every((tile) => tile.visualClass.startsWith("type-"))).toBe(true);
     expect(getOfficialTemplates().length).toBeGreaterThan(0);
+  });
+
+  it("builds editable optimized prompts and uses them for generation", () => {
+    const twoD = createStartGameDraft({
+      idea: "太空猫驾驶飞船躲避陨石并收集鱼干",
+      templateFamily: "top_down"
+    });
+    const threeD = createStartGameDraft({
+      idea: "太空猫驾驶飞船躲避陨石并收集鱼干",
+      engineType: "threejs3d",
+      threeGameGenre: "flight_shooter",
+      viewportMode: "app_9_16",
+      model: "gemini-flash"
+    });
+
+    const twoDPrompt = buildOptimizedGamePrompt(twoD);
+    const threeDPrompt = buildOptimizedGamePrompt(threeD);
+
+    expect(twoDPrompt).toContain("2D Phaser");
+    expect(twoDPrompt).toContain("top_down");
+    expect(threeDPrompt).toContain("3D Three.js");
+    expect(threeDPrompt).toContain("APP 9:16");
+    expect(threeDPrompt).not.toBe(twoDPrompt);
+    expect(getGenerationPrompt({ ...twoD, optimizedPrompt: "优化后的正式提示词" })).toBe("优化后的正式提示词");
+    expect(getGenerationPrompt(twoD)).toBe(twoD.idea);
   });
 });

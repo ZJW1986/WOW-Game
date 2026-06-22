@@ -4,9 +4,13 @@ import type {
   ConfirmedAssets,
   DesignBrief,
   DesignQuestion,
+  EngineType,
   RevisionAnalysis,
   UserAnswer,
   TemplateFamily,
+  ThreeGameGenre,
+  ThreeGameBrief,
+  ViewportMode,
   UserMaterial
 } from "../core/types";
 import type { StartModelId } from "../core/start";
@@ -26,6 +30,17 @@ export interface PlayableGenerationRequest {
   revisionHistory?: RevisionAnalysis[];
 }
 
+export interface ThreeGameGenerationRequest {
+  idea: string;
+  projectId: string;
+  baseUrl: string;
+  engineType?: EngineType;
+  viewportMode?: ViewportMode;
+  gameType3d?: ThreeGameGenre;
+  answers?: UserAnswer[];
+  threeDesignBrief?: ThreeGameBrief;
+}
+
 export interface UploadPlayablePackageRequest {
   packageName: string;
   packageFileName: string;
@@ -36,7 +51,9 @@ export interface UploadPlayablePackageRequest {
 
 export interface GuidedQuestionsRequest {
   idea: string;
+  engineType?: EngineType;
   templateFamily: TemplateFamily;
+  gameType3d?: ThreeGameGenre;
   projectId?: string;
   model: StartModelId;
   designBrief?: DesignBrief;
@@ -48,7 +65,9 @@ export interface GuidedQuestionsRequest {
 
 export interface DesignBriefRequest {
   idea: string;
+  engineType?: EngineType;
   templateFamily: TemplateFamily;
+  gameType3d?: ThreeGameGenre;
   model: StartModelId;
   referencePackageId?: string;
   referenceVersionId?: string;
@@ -116,6 +135,29 @@ export async function requestPlayableGeneration(
         ? payload.error
         : response.statusText || `HTTP ${response.status}`;
     throw new Error(`Generation request failed: ${message}`);
+  }
+  return payload;
+}
+
+export async function requestThreeGameGeneration(
+  input: ThreeGameGenerationRequest,
+  fetcher: BrowserFetcher = fetch,
+  options: RequestClientOptions = {}
+) {
+  const response = await withTimeout(
+    fetcher("/api/generate-three-game", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(input)
+    }),
+    options.timeoutMs ?? 60000,
+    "Three.js generation request timed out"
+  );
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Three.js generation request failed: ${readError(payload, response)}`);
   }
   return payload;
 }

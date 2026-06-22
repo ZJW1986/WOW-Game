@@ -35,8 +35,12 @@ import {
 } from "../core/playCatalog";
 import { runMockPipeline } from "../core/pipeline";
 import {
+  buildOptimizedGamePrompt,
   createStartTemplateTiles,
+  createStartThreeGameTypeTiles,
   createStartGameDraft,
+  getGenerationPrompt,
+  modelOptions,
   type StartGameDraft,
   type StartUploadedMaterial
 } from "../core/start";
@@ -52,6 +56,7 @@ import type {
   PublishRecord,
   ReferencePackageSummary,
   RevisionAnalysis,
+  EngineType,
   TemplateFamily,
   UserMaterialSlot
 } from "../core/types";
@@ -73,12 +78,14 @@ import {
   requestProcessUploadedMaterial,
   requestRegenerateAssetCandidate,
   requestRevisionAnalysis,
+  requestThreeGameGeneration,
   replacePackageAsset,
   requestPlayableProject,
   submitPlayableFeedback,
   uploadPlayablePackage
 } from "../services/generationClient";
 import { createGenerationService } from "../services/generationService";
+import { ThreePreview } from "./ThreePreview";
 
 const rightTabs = [
   { id: "preview", labelKey: "preview", icon: Gamepad2 },
@@ -125,6 +132,7 @@ export interface ProjectRecord {
   plays: number;
   likes: number;
   templateFamily: TemplateFamily;
+  engineType: EngineType;
   project: MockProject;
 }
 
@@ -144,6 +152,7 @@ function createProjectRecord(idea: string, index: number): ProjectRecord {
     plays: 1200 - index * 73,
     likes: 180 - index * 9,
     templateFamily: project.classification.templateFamily,
+    engineType: "phaser2d",
     project
   };
 }
@@ -197,6 +206,7 @@ export function upsertGeneratedProjectRecord(
     plays: 0,
     likes: 0,
     templateFamily: project.classification.templateFamily,
+    engineType: project.engineType ?? "phaser2d",
     project
   };
   const exists = current.some((item) => item.id === project.id);
@@ -366,6 +376,7 @@ export function App() {
   const [activeDraft, setActiveDraft] = useState<StartGameDraft>(() =>
     createStartGameDraft({ idea: t.prompt.defaultIdea })
   );
+  const [engineType, setEngineType] = useState<EngineType>("phaser2d");
   const [creationPhase, setCreationPhase] = useState<CreationPhase>("chatting");
   const [revisionText, setRevisionText] = useState("");
   const [followups, setFollowups] = useState<StudioFollowup[]>([]);
@@ -394,10 +405,12 @@ export function App() {
   const hasAnsweredGuidedQuestions = session.answers.length >= session.questions.length;
   const canStartAssets = canStartAssetGeneration(session, designBrief, assetCandidates, creationPhase);
   const canGeneratePlayable =
+    engineType === "phaser2d" &&
     hasAnsweredGuidedQuestions &&
     Boolean(designBrief) &&
     hasConfirmedCoreAssets(confirmedAssets) &&
     ["assets_confirmed", "ready"].includes(creationPhase);
+  const canGenerateThreeGame = engineType === "threejs3d" && idea.trim().length > 0 && creationPhase !== "cooking";
   const ideaDialogActionState = readIdeaDialogActionState({
     session,
     hasDesignBrief: Boolean(designBrief),
@@ -635,6 +648,57 @@ export function App() {
     }
   };
 
+  const startThreeGameGeneration = async () => {
+    if (!canGenerateThreeGame) {
+      setGenerationNotice({
+        tone: "error",
+        title: "无法生成 3D 游戏",
+        detail: "请输入游戏想法，并等待当前生成任务完成。"
+      });
+      return;
+    }
+    setCreationPhase("cooking");
+    setActiveTab("preview");
+    setPage("studio");
+    setGeneratedProject(null);
+    setGenerationResult(null);
+    setGenerationNotice({
+      tone: "working",
+      title: "正在生成 Three.js 3D MVP",
+      detail: "系统会创建独立 Three.js director、3D 素材包和可操作预览，不使用 Phaser。"
+    });
+    try {
+      const result = (await requestThreeGameGeneration({
+        idea: buildGenerationIdea(idea, followups),
+        projectId: `three-project-${Date.now()}`,
+        baseUrl: getBrowserBaseUrl(),
+        engineType: "threejs3d",
+        viewportMode: activeDraft.viewportMode,
+        gameType3d: activeDraft.threeGameGenre,
+        answers: session.answers
+      })) as GenerationResult;
+      setGenerationResult(result);
+      setGeneratedProject(result.project);
+      setProjects((current) => upsertGeneratedProjectRecord(current, result.project, result.publishRecord));
+      setCreationPhase("ready");
+      setGenerationNotice({
+        tone: result.deliveryReady ? "success" : "fallback",
+        title: result.deliveryReady ? "3D MVP 已生成" : "3D MVP 以草稿生成",
+        detail: "Three.js 预览已创建；外部 3D 模型和音频 API 未配置时会显示程序化 fallback。"
+      });
+      window.setTimeout(() => setGenerationNotice(null), 4200);
+    } catch (error) {
+      setGeneratedProject(null);
+      setCreationPhase("chatting");
+      setGenerationNotice({
+        tone: "error",
+        title: "3D 生成失败",
+        detail: readGenerationError(error)
+      });
+      window.setTimeout(() => setGenerationNotice(null), 5200);
+    }
+  };
+
   const answerCurrentDialogQuestion = (value: string) => {
     const nextQuestion = session.questions.find(
       (question) => !session.answers.some((answer) => answer.questionId === question.id)
@@ -646,7 +710,8 @@ export function App() {
   const loadGuidedQuestions = async (
     nextIdea: string,
     templateFamily: TemplateFamily,
-    model: StartGameDraft["model"]
+    model: StartGameDraft["model"],
+    draft: StartGameDraft = activeDraft
   ) => {
     setGuidedQuestionStatus("loading");
     setCreationPhase("ai_thinking");
@@ -654,11 +719,13 @@ export function App() {
     try {
       const briefResult = await requestDesignBrief({
         idea: nextIdea,
+        engineType: draft.engineType,
         templateFamily,
+        gameType3d: draft.threeGameGenre,
         model,
         referencePackageId: referencePackage?.projectId,
         referenceVersionId: referencePackage?.versionId,
-        userMaterials: activeDraft.uploadedMaterials.map((material) => ({
+        userMaterials: draft.uploadedMaterials.map((material) => ({
           assetKey: material.assetKey,
           slot: material.slot,
           fileName: material.fileName,
@@ -671,13 +738,15 @@ export function App() {
       setDesignBrief(briefResult.designBrief);
       const result = await requestGuidedQuestions({
         idea: nextIdea,
+        engineType: draft.engineType,
         templateFamily,
+        gameType3d: draft.threeGameGenre,
         model,
         projectId: `project-${Date.now()}`,
         designBrief: briefResult.designBrief,
         referencePackageId: referencePackage?.projectId,
         referenceVersionId: referencePackage?.versionId,
-        userMaterials: activeDraft.uploadedMaterials.map((material) => ({
+        userMaterials: draft.uploadedMaterials.map((material) => ({
           assetKey: material.assetKey,
           slot: material.slot,
           fileName: material.fileName,
@@ -689,7 +758,9 @@ export function App() {
       setSession((current) => {
         if (current.idea !== nextIdea || current.answers.length > 0) return current;
         return createConversationSession(nextIdea, {
+          engineType: draft.engineType,
           preferredTemplate: templateFamily,
+          threeGameGenre: draft.threeGameGenre,
           questions: result.questions
         });
       });
@@ -853,7 +924,14 @@ export function App() {
     const nextDraft = { ...startDraft, idea: normalizedIdea, templateFamily: nextTemplate };
     setIdea(normalizedIdea);
     setActiveDraft(nextDraft);
-    setSession(createConversationSession(normalizedIdea, { preferredTemplate: nextTemplate }));
+    setEngineType(nextDraft.engineType);
+    setSession(
+      createConversationSession(normalizedIdea, {
+        engineType: nextDraft.engineType,
+        preferredTemplate: nextTemplate,
+        threeGameGenre: nextDraft.threeGameGenre
+      })
+    );
     setGuidedQuestionStatus("loading");
     setGeneratedProject(null);
     setGenerationResult(null);
@@ -868,7 +946,7 @@ export function App() {
     setCreationPhase("chatting");
     setActiveTab("preview");
     setPage("idea_dialog");
-    loadGuidedQuestions(normalizedIdea, nextTemplate, nextDraft.model);
+    loadGuidedQuestions(normalizedIdea, nextTemplate, nextDraft.model, nextDraft);
   };
 
   const openStudio = (nextIdea: string, templateFamily?: TemplateFamily, nextProject?: MockProject) => {
@@ -877,7 +955,14 @@ export function App() {
     const nextDraft = { ...startDraft, idea: normalizedIdea, templateFamily: nextTemplate };
     setIdea(normalizedIdea);
     setActiveDraft(nextDraft);
-    setSession(createConversationSession(normalizedIdea, { preferredTemplate: nextTemplate }));
+    setEngineType(nextDraft.engineType);
+    setSession(
+      createConversationSession(normalizedIdea, {
+        engineType: nextDraft.engineType,
+        preferredTemplate: nextTemplate,
+        threeGameGenre: nextDraft.threeGameGenre
+      })
+    );
     setGuidedQuestionStatus(nextProject ? "idle" : "loading");
     setGeneratedProject(nextProject ?? null);
     setGenerationResult(null);
@@ -893,7 +978,7 @@ export function App() {
     setActiveTab("preview");
     setPage("studio");
     if (!nextProject) {
-      loadGuidedQuestions(normalizedIdea, nextTemplate, nextDraft.model);
+      loadGuidedQuestions(normalizedIdea, nextTemplate, nextDraft.model, nextDraft);
     }
   };
 
@@ -902,6 +987,7 @@ export function App() {
       window.history.pushState({}, "", record.project.playUrl);
     }
     setGeneratedProject(record.project);
+    setEngineType(record.engineType);
     setGenerationResult(null);
     setCreationPhase("ready");
     setActiveTab("preview");
@@ -924,6 +1010,7 @@ export function App() {
         plays: 0,
         likes: 0,
         templateFamily: project.classification.templateFamily,
+        engineType: project.engineType ?? "phaser2d",
         project
       },
       ...current
@@ -1014,12 +1101,14 @@ export function App() {
           setUploadedPackageMessage("");
         }}
         onCreate={() => {
-          const nextIdea = startDraft.idea.trim() || t.prompt.defaultIdea;
+          const nextIdea = getGenerationPrompt(startDraft) || t.prompt.defaultIdea;
+          setActiveDraft(startDraft);
           openIdeaDialog(nextIdea, startDraft.templateFamily);
         }}
         onUseTemplate={(template) => {
           const draft = startDraftFromTemplate(template, startDraft.idea);
           setStartDraft(draft);
+          setActiveDraft(draft);
           openIdeaDialog(draft.idea, draft.templateFamily);
         }}
         onPreviewTemplate={(template) => {
@@ -1054,14 +1143,14 @@ export function App() {
         messages={t}
         draft={activeDraft}
         revisionText={revisionText}
-        canGenerate={canGeneratePlayable}
-        canStartAssets={canStartAssets || ideaDialogActionState.canStartAssets}
+        canGenerate={engineType === "threejs3d" ? canGenerateThreeGame : canGeneratePlayable}
+        canStartAssets={engineType === "threejs3d" ? false : canStartAssets || ideaDialogActionState.canStartAssets}
         isPreparingAssets={ideaDialogActionState.isPreparingAssets}
-        actionLabel={ideaDialogActionState.buttonLabel}
+        actionLabel={engineType === "threejs3d" && canGenerateThreeGame ? "生成 3D MVP" : ideaDialogActionState.buttonLabel}
         isGenerating={creationPhase === "cooking"}
         onRevisionTextChange={setRevisionText}
         onAnswer={answerCurrentDialogQuestion}
-        onGenerate={startResourceGeneration}
+        onGenerate={engineType === "threejs3d" ? startThreeGameGeneration : startResourceGeneration}
         onStartAssets={startAssetGeneration}
         onClose={() => setPage("create")}
       />
@@ -1180,6 +1269,30 @@ export function App() {
         </aside>
 
         <section className="stage-panel">
+          <div className="engine-switch" role="group" aria-label="Game engine">
+            <button
+              type="button"
+              data-testid="engine-phaser2d"
+              className={engineType === "phaser2d" ? "active" : ""}
+              onClick={() => {
+                setEngineType("phaser2d");
+                setActiveDraft((current) => ({ ...current, engineType: "phaser2d", viewportMode: "web_16_9" }));
+              }}
+            >
+              2D Phaser
+            </button>
+            <button
+              type="button"
+              data-testid="engine-threejs3d"
+              className={engineType === "threejs3d" ? "active" : ""}
+              onClick={() => {
+                setEngineType("threejs3d");
+                setActiveDraft((current) => ({ ...current, engineType: "threejs3d", viewportMode: "app_9_16" }));
+              }}
+            >
+              3D Three.js
+            </button>
+          </div>
           <nav className="stage-tabs" aria-label="Workspace tabs">
             {rightTabs.map((tab) => {
               const Icon = tab.icon;
@@ -1221,8 +1334,13 @@ export function App() {
                 phase={creationPhase}
                 notice={generationNotice}
                 canGenerate={canGeneratePlayable}
+                canGenerateThree={canGenerateThreeGame}
                 canStartAssets={canStartAssets}
+                engineType={engineType}
+                viewportMode={activeDraft.viewportMode}
+                onViewportModeChange={(viewportMode) => setActiveDraft((current) => ({ ...current, viewportMode }))}
                 onGenerate={startResourceGeneration}
+                onGenerateThree={startThreeGameGeneration}
                 onStartAssets={startAssetGeneration}
               />
             )}
@@ -1477,8 +1595,10 @@ function StartPage({
   const canCreate = draft.idea.trim().length > 0;
   const t = getMessages(locale);
   const updateDraft = (patch: Partial<StartGameDraft>) => onDraftChange({ ...draft, ...patch });
+  const optimizePrompt = () => updateDraft({ optimizedPrompt: buildOptimizedGamePrompt(draft) });
   const officialTemplates = getOfficialTemplates();
   const templateTiles = createStartTemplateTiles();
+  const threeTypeTiles = createStartThreeGameTypeTiles();
   const [showTemplateLibrary, setShowTemplateLibrary] = useState(false);
 
   return (
@@ -1525,36 +1645,97 @@ function StartPage({
         </div>
 
         <section className="create-dialog" aria-label={t.start.dialogAria}>
+          <div className="start-prompt-header">
+            <label className="field-label start-model-field">
+              策划模型
+              <select
+                className="start-model-select"
+                data-testid="start-model-select"
+                value={draft.model}
+                onChange={(event) => updateDraft({ model: event.target.value as StartGameDraft["model"] })}
+              >
+                {modelOptions.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="char-count">{draft.idea.length}/500</span>
+            <button
+              type="button"
+              className="prompt-optimize-button"
+              data-testid="start-optimize-prompt"
+              disabled={!draft.idea.trim()}
+              onClick={optimizePrompt}
+            >
+              <Sparkles size={15} />
+              优化提示词
+            </button>
+          </div>
+
           <textarea
+            className="start-idea-input"
+            data-testid="start-idea-input"
             maxLength={500}
             value={draft.idea}
             onChange={(event) => updateDraft({ idea: event.target.value })}
             placeholder={t.prompt.placeholder}
           />
 
-          <div className="create-dialog-row">
-            <label className="field-label">
-              {t.start.engine}
-              <span className="engine-pill">{t.prompt.localEngine}</span>
-            </label>
-            <span className="char-count">{draft.idea.length}/500</span>
-          </div>
+          <label className="optimized-prompt-field">
+            <span>优化后提示词</span>
+            <textarea
+              className="optimized-prompt-box"
+              data-testid="start-optimized-prompt"
+              value={draft.optimizedPrompt ?? ""}
+              onChange={(event) => updateDraft({ optimizedPrompt: event.target.value })}
+              placeholder="点击“优化提示词”后生成可编辑开发提示词，也可以直接手动编写。"
+            />
+          </label>
 
-          <div className="start-template-toolbar">
-            <span>小游戏类型</span>
-            <button type="button" className="official-template-launcher" onClick={() => setShowTemplateLibrary(true)}>
-              <Library size={15} />
-              官方模板库
+          <div className="start-engine-compact" aria-label="游戏引擎选择">
+            <button
+              type="button"
+              data-testid="start-engine-phaser2d"
+              className={draft.engineType === "phaser2d" ? "active" : ""}
+              onClick={() => updateDraft({ engineType: "phaser2d", viewportMode: "web_16_9" })}
+              title="2D Phaser 游戏"
+            >
+              <Gamepad2 size={16} />
+              <span>2D</span>
+            </button>
+            <button
+              type="button"
+              data-testid="start-engine-threejs3d"
+              className={draft.engineType === "threejs3d" ? "active" : ""}
+              onClick={() => updateDraft({ engineType: "threejs3d", viewportMode: "app_9_16" })}
+              title="3D Three.js 游戏"
+            >
+              <Code2 size={16} />
+              <span>3D</span>
             </button>
           </div>
 
+          <div className="start-template-toolbar">
+            <span>{draft.engineType === "threejs3d" ? "3D 游戏类型" : "2D 游戏类型"}</span>
+            {draft.engineType === "phaser2d" ? (
+              <button type="button" className="official-template-launcher" onClick={() => setShowTemplateLibrary(true)}>
+                <Library size={15} />
+                官方模板库
+              </button>
+            ) : null}
+          </div>
+
           <div className="template-icon-grid" aria-label="小游戏类型">
-            {templateTiles.map((template) => (
+            {draft.engineType === "phaser2d" ? templateTiles.map((template) => (
               <button
                 key={template.templateFamily}
                 type="button"
                 className={
-                  draft.templateFamily === template.templateFamily ? "template-icon-card active" : "template-icon-card"
+                  draft.templateFamily === template.templateFamily
+                    ? `template-icon-card ${template.visualClass} active`
+                    : `template-icon-card ${template.visualClass}`
                 }
                 onClick={() => {
                   const templateFamily = template.templateFamily as TemplateFamily;
@@ -1571,17 +1752,47 @@ function StartPage({
                 <strong>{template.shortLabel}</strong>
                 <span>{template.hint}</span>
               </button>
+            )) : threeTypeTiles.map((type) => (
+              <button
+                key={type.genre}
+                type="button"
+                className={
+                  draft.threeGameGenre === type.genre
+                    ? `template-icon-card ${type.visualClass} active`
+                    : `template-icon-card ${type.visualClass}`
+                }
+                onClick={() => updateDraft({ threeGameGenre: type.genre })}
+              >
+                <i>{type.icon}</i>
+                <strong>{type.shortLabel}</strong>
+                <span>{type.hint}</span>
+              </button>
             ))}
           </div>
 
           <div className="create-dialog-footer">
+            <div className="start-action-row">
+              <div className="viewport-mode-row compact" aria-label="画布比例选择">
+                <span>画布</span>
+                <button
+                  type="button"
+                  className={draft.viewportMode === "web_16_9" ? "active" : ""}
+                  onClick={() => updateDraft({ viewportMode: "web_16_9" })}
+                >
+                  Web
+                </button>
+                <button
+                  type="button"
+                  className={draft.viewportMode === "app_9_16" ? "active" : ""}
+                  onClick={() => updateDraft({ viewportMode: "app_9_16" })}
+                >
+                  APP
+                </button>
+              </div>
             <div className="upload-choice-group" aria-label={t.start.uploadOptionsAria}>
               <label className="upload-button material-upload">
                 <ImageIcon size={16} />
-                <span>
-                  {t.start.uploadMaterials}
-                  <small>{t.start.uploadMaterialsHint}</small>
-                </span>
+                <span>素材</span>
                 <input
                   multiple
                   type="file"
@@ -1598,10 +1809,7 @@ function StartPage({
               </label>
               <label className="upload-button package-upload">
                 <Upload size={16} />
-                <span>
-                  {t.start.uploadPackage}
-                  <small>{t.start.uploadPackageHint}</small>
-                </span>
+                <span>ZIP</span>
                 <input
                   type="file"
                   accept=".zip,application/zip"
@@ -1615,6 +1823,11 @@ function StartPage({
                   }}
                 />
               </label>
+            </div>
+            <button className="create-button" data-testid="start-create" disabled={!canCreate} onClick={onCreate}>
+              {t.start.create}
+              <Send size={17} />
+            </button>
             </div>
             {draft.uploadedFileNames.length > 0 ? (
               <div className="uploaded-files">
@@ -1664,10 +1877,6 @@ function StartPage({
               </div>
             ) : null}
             {uploadMessage ? <p className="upload-message">{uploadMessage}</p> : null}
-            <button className="create-button" disabled={!canCreate} onClick={onCreate}>
-              {t.start.create}
-              <Send size={17} />
-            </button>
           </div>
         </section>
       </section>
@@ -1845,6 +2054,7 @@ function IdeaDialogPage({
             <div className="idea-dialog-actions">
               <button
                 className="idea-pick-button"
+                data-testid="idea-pick-for-me"
                 disabled={!currentQuestion}
                 onClick={() => {
                   if (!currentQuestion) return;
@@ -1856,6 +2066,7 @@ function IdeaDialogPage({
               </button>
               <button
                 className={canRunPrimaryAction ? "idea-send-button generate" : "idea-send-button"}
+                data-testid="idea-primary-action"
                 disabled={isGenerating || (!canRunPrimaryAction && !currentQuestion)}
                 onClick={runPrimaryAction}
               >
@@ -2400,6 +2611,7 @@ function ProjectCard({
     <article className="project-card">
       <div className="project-cover" style={{ background: cardBackground("#0b5666,#ffbf4d") }}>
         <div className="project-badges">
+          <span>{project.engineType === "threejs3d" ? "3D Three.js" : "2D Phaser"}</span>
           <span className={`status ${project.status}`}>{messages.projects[project.status]}</span>
           <span>{messages.projects[project.visibility]}</span>
           {!project.editable ? <span>{messages.projects.readOnly}</span> : null}
@@ -2818,8 +3030,13 @@ function PreviewWorkspace({
   phase,
   notice,
   canGenerate,
+  canGenerateThree,
   canStartAssets,
+  engineType,
+  viewportMode,
+  onViewportModeChange,
   onGenerate,
+  onGenerateThree,
   onStartAssets
 }: {
   project: MockProject | null;
@@ -2827,8 +3044,13 @@ function PreviewWorkspace({
   phase: CreationPhase;
   notice: GenerationNotice | null;
   canGenerate: boolean;
+  canGenerateThree: boolean;
   canStartAssets: boolean;
+  engineType: EngineType;
+  viewportMode: "web_16_9" | "app_9_16";
+  onViewportModeChange: (viewportMode: "web_16_9" | "app_9_16") => void;
   onGenerate: () => void;
+  onGenerateThree: () => void;
   onStartAssets: () => void;
 }) {
   const isCooking = phase === "cooking";
@@ -2837,7 +3059,28 @@ function PreviewWorkspace({
   const isAssetReview = phase === "asset_review";
   const isAssetsConfirmed = phase === "assets_confirmed";
   return (
-    <div className="preview-workspace">
+    <div
+      className={`preview-workspace ${isPlayableReady ? "playable-ready" : ""} ${engineType}`}
+    >
+      <div className="viewport-switch" aria-label="预览比例">
+        <span>{engineType === "threejs3d" ? "3D Preview" : "2D Preview"}</span>
+        <button
+          type="button"
+          data-testid="viewport-web-16-9"
+          className={viewportMode === "web_16_9" ? "active" : ""}
+          onClick={() => onViewportModeChange("web_16_9")}
+        >
+          Web 16:9
+        </button>
+        <button
+          type="button"
+          data-testid="viewport-app-9-16"
+          className={viewportMode === "app_9_16" ? "active" : ""}
+          onClick={() => onViewportModeChange("app_9_16")}
+        >
+          APP 9:16
+        </button>
+      </div>
       {isCooking || isAssetGenerating ? (
         <div className="cooking-state" role="status" aria-live="polite">
           <div className="cooking-orbit">
@@ -2864,22 +3107,36 @@ function PreviewWorkspace({
           <div className="preview-empty-icon">
             <Gamepad2 size={30} />
           </div>
-          <p>{isAssetsConfirmed ? "素材已确认" : isAssetReview ? "素材确认" : messages.preview.waitingEyebrow}</p>
+          <p>{engineType === "threejs3d" ? "Three.js 3D" : isAssetsConfirmed ? "素材已确认" : isAssetReview ? "素材确认" : messages.preview.waitingEyebrow}</p>
           <h2>
-            {isAssetsConfirmed
+            {engineType === "threejs3d"
+              ? "生成独立 3D 可操作 MVP"
+              : isAssetsConfirmed
               ? "现在可以生成可玩游戏"
               : isAssetReview
                 ? "请先在左侧确认核心素材"
                 : messages.preview.waitingTitle}
           </h2>
           <span>
-            {isAssetsConfirmed
+            {engineType === "threejs3d"
+              ? "3D 使用 Three.js 独立运行时，首版生成程序化角色、收集物、危险物和手机尺寸预览。"
+              : isAssetsConfirmed
               ? "点击下方按钮开始构建 Phaser 试玩版本。"
               : isAssetReview
                 ? "确认背景、主角、危险物和收集物后，这里会进入生成游戏状态。"
                 : messages.preview.waitingDetail}
           </span>
-          {isAssetsConfirmed ? (
+          {engineType === "threejs3d" ? (
+            <button
+              className="preview-primary-action"
+              type="button"
+              data-testid="generate-three-mvp"
+              disabled={!canGenerateThree}
+              onClick={onGenerateThree}
+            >
+              生成 3D MVP
+            </button>
+          ) : isAssetsConfirmed ? (
             <button className="preview-primary-action" type="button" disabled={!canGenerate} onClick={onGenerate}>
               生成可玩游戏
             </button>
@@ -2892,8 +3149,12 @@ function PreviewWorkspace({
       )}
       {!isCooking && isPlayableReady && (
         <>
-          <div className="preview-canvas-shell">
-            <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} gameHooks={project.gameHooks} />
+          <div className={`preview-canvas-shell ${viewportMode}`}>
+            {project.engineType === "threejs3d" && project.threeSceneDirector ? (
+              <ThreePreview director={project.threeSceneDirector} viewportMode={viewportMode} />
+            ) : (
+              <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} gameHooks={project.gameHooks} />
+            )}
           </div>
           <div className="floating-status">
             <CheckCircle2 size={16} />

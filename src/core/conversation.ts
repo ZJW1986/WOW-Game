@@ -4,7 +4,9 @@ import type {
   ConversationStage,
   ConversationTurn,
   DesignQuestion,
-  TemplateFamily
+  EngineType,
+  TemplateFamily,
+  ThreeGameGenre
 } from "./types";
 
 const FIXED_TIME = "2026-06-17T00:00:00.000Z";
@@ -13,11 +15,17 @@ export function createConversationSession(
   idea: string,
   options: {
     projectId?: string;
+    engineType?: EngineType;
     preferredTemplate?: TemplateFamily;
+    threeGameGenre?: ThreeGameGenre;
     questions?: DesignQuestion[];
   } = {}
 ): ConversationSession {
-  const questions = options.questions ?? createGuidedQuestions(idea, options.preferredTemplate);
+  const questions =
+    options.questions ??
+    (options.engineType === "threejs3d"
+      ? createThreeGuidedQuestions(idea, options.threeGameGenre)
+      : createGuidedQuestions(idea, options.preferredTemplate));
   return {
     id: "session-1",
     projectId: options.projectId ?? "project-1",
@@ -174,6 +182,52 @@ export function createGuidedQuestions(idea: string, preferredTemplate?: Template
     sharedQuestion("failure", templateFamily),
     familyQuestions[templateFamily][1],
     sharedQuestion("style_audio_pacing", templateFamily)
+  ];
+}
+
+export function createThreeGuidedQuestions(
+  idea: string,
+  preferredGenre: ThreeGameGenre = "flight_shooter"
+): DesignQuestion[] {
+  const isFlight = preferredGenre === "flight_shooter" || /飞船|太空|陨石|射击/.test(idea);
+  return [
+    choiceQuestion(
+      "three_camera",
+      "3D视角与镜头",
+      "玩家第一次进入游戏时，镜头应该怎样帮助他理解空间和目标？",
+      isFlight
+        ? ["追尾飞行镜头，前方陨石和能量清晰可见", "俯视角飞行镜头，更容易判断左右躲避", "固定轨道镜头，突出手机单指操作"]
+        : ["第三人称跟随镜头，角色和目标都清楚", "俯视角镜头，强调路线规划", "轻量轨道镜头，适合探索展示"],
+      isFlight ? "追尾飞行镜头，前方陨石和能量清晰可见" : "第三人称跟随镜头，角色和目标都清楚"
+    ),
+    choiceQuestion(
+      "three_controls",
+      "移动手感/手机操作",
+      "玩家在手机 APP 比例下主要如何操作，怎样避免误触和挫败？",
+      ["单指拖动左右移动，自动前进", "虚拟摇杆自由移动", "左右按钮加一个冲刺按钮", "重力感应/倾斜控制"],
+      "单指拖动左右移动，自动前进"
+    ),
+    choiceQuestion(
+      "three_space_route",
+      "空间路线与节奏",
+      "前 30 秒应该怎样安排路线、奖励和压力，才能让玩家快速进入状态？",
+      ["5秒教学收集，15秒障碍加压，最后10秒高潮波次", "连续奖励路线，少量敌人追击", "窄通道躲避，奖励放在高风险区域"],
+      "5秒教学收集，15秒障碍加压，最后10秒高潮波次"
+    ),
+    choiceQuestion(
+      "three_hazard_feedback",
+      "敌人/障碍与反馈",
+      "玩家碰撞、收集、胜利和失败时，需要哪些反馈让结果公平且有爽感？",
+      ["碰撞震屏+闪烁无敌，收集发光脉冲，胜利烟花", "危险物预警圈，收集连击，失败慢动作", "轻量音效+粒子，避免遮挡手机画面"],
+      "碰撞震屏+闪烁无敌，收集发光脉冲，胜利烟花"
+    ),
+    choiceQuestion(
+      "three_asset_style",
+      "3D素材风格",
+      "3D 模型、天空盒、贴图和音频应该走什么风格，后续方便接入 Tripo/Gemini/ElevenLabs？",
+      ["低多边形科幻，清晰轮廓，电子音效", "卡通明亮，圆润模型，轻快音效", "写实轻量，暗色环境，电影感音效"],
+      "低多边形科幻，清晰轮廓，电子音效"
+    )
   ];
 }
 
