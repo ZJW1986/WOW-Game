@@ -141,6 +141,8 @@ export interface ProjectRecord {
   likes: number;
   templateFamily: TemplateFamily;
   engineType: EngineType;
+  coverPosterUrl?: string;
+  coverThumbnailUrl?: string;
   project: MockProject;
 }
 
@@ -215,6 +217,8 @@ export function upsertGeneratedProjectRecord(
     likes: 0,
     templateFamily: project.classification.templateFamily,
     engineType: project.engineType ?? "phaser2d",
+    coverPosterUrl: project.coverPosterUrl,
+    coverThumbnailUrl: project.coverThumbnailUrl,
     project
   };
   const exists = current.some((item) => item.id === project.id);
@@ -481,8 +485,9 @@ export function App() {
   const canGenerateThreeGame =
     engineType === "threejs3d" &&
     idea.trim().length > 0 &&
-    hasConfirmedThreeCoreAssets(confirmedThreeAssets) &&
-    ["three_assets_confirmed", "ready"].includes(creationPhase);
+    hasAnsweredGuidedQuestions &&
+    Boolean(designBrief) &&
+    ["chatting", "guided_questions", "revision", "three_asset_review", "three_assets_confirmed", "ready"].includes(creationPhase);
   const ideaDialogActionState = readIdeaDialogActionState({
     session,
     hasDesignBrief: Boolean(designBrief),
@@ -727,7 +732,7 @@ export function App() {
       setGenerationNotice({
         tone: "error",
         title: "无法生成 3D 游戏",
-        detail: "请先生成并确认玩家、障碍物、收集物三个 3D 模型。"
+        detail: "请先完成 3D 问答和设计 brief。默认会使用内置轻量模型生成可玩游戏，Tripo 模型是后续增强选项。"
       });
       return;
     }
@@ -739,7 +744,7 @@ export function App() {
     setGenerationNotice({
       tone: "working",
       title: "正在生成 Three.js 3D MVP",
-      detail: "系统会创建独立 Three.js director、3D 素材包和可操作预览，不使用 Phaser。"
+      detail: "系统会优先使用内置轻量低模创建 Three.js director、3D 素材包和可操作预览，不等待 Tripo。"
     });
     try {
       const result = (await requestThreeGameGeneration({
@@ -759,8 +764,8 @@ export function App() {
       setCreationPhase("ready");
       setGenerationNotice({
         tone: result.deliveryReady ? "success" : "fallback",
-        title: result.deliveryReady ? "3D MVP 已生成" : "3D MVP 以草稿生成",
-        detail: "Three.js 预览已创建；外部 3D 模型和音频 API 未配置时会显示程序化 fallback。"
+        title: result.deliveryReady ? "轻量 3D 游戏已生成" : "3D MVP 以草稿生成",
+        detail: "Three.js 预览已创建；默认使用内置轻量模型，Tripo 高质量模型可后续单独生成替换。"
       });
       window.setTimeout(() => setGenerationNotice(null), 4200);
     } catch (error) {
@@ -1285,10 +1290,11 @@ export function App() {
             : canStartAssets || ideaDialogActionState.canStartAssets || ideaDialogActionState.isPreparingAssets
         }
         isPreparingAssets={ideaDialogActionState.isPreparingAssets}
+        assetActionPrimary={engineType !== "threejs3d"}
         actionLabel={
           engineType === "threejs3d"
             ? canGenerateThreeGame
-              ? "生成 3D 可玩游戏"
+              ? "生成轻量 3D 游戏"
               : "生成 3D 素材方案"
             : ideaDialogActionState.buttonLabel
         }
@@ -2092,6 +2098,7 @@ function IdeaDialogPage({
   canGenerate,
   canStartAssets,
   isPreparingAssets,
+  assetActionPrimary = true,
   actionLabel,
   isGenerating,
   onRevisionTextChange,
@@ -2108,6 +2115,7 @@ function IdeaDialogPage({
   canGenerate: boolean;
   canStartAssets: boolean;
   isPreparingAssets: boolean;
+  assetActionPrimary?: boolean;
   actionLabel: string;
   isGenerating: boolean;
   onRevisionTextChange: (value: string) => void;
@@ -2120,7 +2128,7 @@ function IdeaDialogPage({
   const currentQuestion = dialog.currentQuestion;
   const answerValue = revisionText.trim() || currentQuestion?.defaultAnswer || "";
   const progressText = `${dialog.answeredCount}/${dialog.totalQuestions}`;
-  const isAssetAction = canStartAssets || isPreparingAssets;
+  const isAssetAction = assetActionPrimary && (canStartAssets || isPreparingAssets);
   const canRunPrimaryAction = canGenerate || isAssetAction;
   const primaryActionLabel = isAssetAction ? messages.ideaDialog.generateAssets : canGenerate ? actionLabel : messages.ideaDialog.send;
   const runPrimaryAction = () => {
@@ -2764,7 +2772,14 @@ function ProjectCard({
 }) {
   return (
     <article className="project-card">
-      <div className="project-cover" style={{ background: cardBackground("#0b5666,#ffbf4d") }}>
+      <div
+        className="project-cover"
+        style={
+          project.coverThumbnailUrl || project.coverPosterUrl
+            ? { backgroundImage: `url(${project.coverThumbnailUrl ?? project.coverPosterUrl})` }
+            : { background: cardBackground("#0b5666,#ffbf4d") }
+        }
+      >
         <div className="project-badges">
           <span>{project.engineType === "threejs3d" ? "3D Three.js" : "2D Phaser"}</span>
           <span className={`status ${project.status}`}>{messages.projects[project.status]}</span>

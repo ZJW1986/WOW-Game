@@ -6,6 +6,8 @@ describe("generated project list records", () => {
   it("adds generated playable projects to My Projects with the generated title", () => {
     const project = runMockPipeline("太空猫躲避陨石收集鱼干");
     const publishRecord = createPublishRecord(project.id, project.version.id, "太空猫鱼干航线");
+    project.coverPosterUrl = "/projects/project-cover/v1/assets/cover-poster.webp";
+    project.coverThumbnailUrl = "/projects/project-cover/v1/assets/cover-poster-thumb.webp";
     const records = upsertGeneratedProjectRecord([], project, publishRecord);
 
     expect(records).toHaveLength(1);
@@ -17,6 +19,8 @@ describe("generated project list records", () => {
       status: "published",
       visibility: "public",
       templateFamily: project.classification.templateFamily,
+      coverPosterUrl: "/projects/project-cover/v1/assets/cover-poster.webp",
+      coverThumbnailUrl: "/projects/project-cover/v1/assets/cover-poster-thumb.webp",
       project
     });
   });

@@ -30,6 +30,7 @@ import type {
   AssetRequirement,
   BrowserVerificationReport,
   ConfirmedAssets,
+  CoverPoster,
   DesignBrief,
   DesignQuestion,
   GameConfig,
@@ -37,6 +38,7 @@ import type {
   GameplayDsl,
   MatureGameBrief,
   MockProject,
+  PipelineArtifact,
   PlayableDirector,
   PlayFeedback,
   PublishRecord,
@@ -419,7 +421,7 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       );
       const assetPack: AssetPack = {
         versionId: "v1",
-        assets: generatedAssets
+        assets: annotateDeliveryAssets(generatedAssets, input.idea)
       };
 
       const fallbackConfig = {
@@ -521,6 +523,16 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       const playableDirector = createPlayableDirector(gameConfig, gameHooks, runtimeAssetReport);
       const verificationReport = createBrowserVerificationReport(runtimeAssetReport, playableDirector);
       const deliveryReady = verificationReport.passed && visualAssetReport.ready;
+      const developerBrief = createDeveloperBrief(input, gameConfig, playableDirector);
+      const coverPoster = createCoverPoster({
+        projectId: input.projectId,
+        versionId: "v1",
+        title: gameConfig.title,
+        pitch: gameConfig.pitch,
+        developerBrief,
+        engineType: "phaser2d",
+        templateFamily: classification.templateFamily
+      });
       const publishRecord = createPublishRecord(input.projectId, "v1", gameConfig.title, {
         visibility: "public",
         baseUrl: input.baseUrl,
@@ -570,6 +582,8 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           }
         ])
         .concat(createDeliveryArtifacts(playableDirector, runtimeAssetReport, visualAssetReport, verificationReport))
+        .concat(createDeveloperBriefArtifacts(developerBrief))
+        .concat(createCoverPosterArtifacts(coverPoster))
         .concat(
           input.referencePackageSummary
             ? [
@@ -595,6 +609,9 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         gameConfig,
         gameHooks,
         qaReport,
+        coverPoster,
+        coverPosterUrl: coverPoster.fileUrl,
+        coverThumbnailUrl: coverPoster.thumbnailUrl,
         playUrl: publishRecord.playUrl
       };
       const version = {
@@ -1271,6 +1288,162 @@ function createDeliveryArtifacts(
       title: "Playability Report",
       content: verificationReport,
       format: "json" as const
+    }
+  ];
+}
+
+function annotateDeliveryAssets(assets: AssetRequirement[], idea: string): AssetRequirement[] {
+  const backgroundMode = shouldUseTileableBackground(idea) ? "tileable_map" : "scene_cover";
+  return assets.map((asset) => {
+    if (asset.assetKey === "world.background") {
+      return {
+        ...asset,
+        spec:
+          backgroundMode === "tileable_map"
+            ? `${asset.spec}; seamless tileable map texture; repeatable edges`
+            : `${asset.spec}; 16:9 scene cover background`,
+        generationParams: {
+          ...asset.generationParams,
+          backgroundMode,
+          runtimeFormat: "webp",
+          runtimeWidth: 1920,
+          runtimeHeight: 1080
+        }
+      };
+    }
+    if (["player.ship", "hazard.enemy", "item.collectible"].includes(asset.assetKey)) {
+      return {
+        ...asset,
+        generationParams: {
+          ...asset.generationParams,
+          masterFormat: "png",
+          runtimeFormat: "webp-alpha",
+          masterSize: "256x256",
+          runtimeSize: "128x128"
+        }
+      };
+    }
+    return asset;
+  });
+}
+
+function shouldUseTileableBackground(idea: string): boolean {
+  return /大地图|开放世界|长路线|无尽|跑酷|飞行穿越|循环平铺|平铺|tileable|seamless|runner|endless/i.test(idea);
+}
+
+interface DeveloperBriefArtifact {
+  playerRequest: string;
+  coreGameplay: string;
+  visualStyle: string;
+  assetPlan: string[];
+  executableRules: string[];
+  stabilityLimits: string[];
+  deferredRequests: string[];
+}
+
+function createDeveloperBrief(
+  input: GeneratePlayableInput,
+  gameConfig: GameConfig,
+  playableDirector: PlayableDirector
+): DeveloperBriefArtifact {
+  return {
+    playerRequest: input.idea,
+    coreGameplay: gameConfig.playerGoal,
+    visualStyle: input.designBrief?.developerPrompt ?? gameConfig.pitch,
+    assetPlan: Object.entries(playableDirector.coreAssets).map(([slot, assetKey]) => `${slot}:${assetKey}`),
+    executableRules: [
+      `template:${gameConfig.templateFamily}`,
+      `win:${playableDirector.winCondition.mode}:${playableDirector.winCondition.target}`,
+      `fail:${playableDirector.failCondition.mode}:${playableDirector.failCondition.lives}`,
+      `stages:${playableDirector.stageGoals.length}`,
+      `enemies:${playableDirector.enemyArchetypes.map((enemy) => enemy.type).join(",")}`
+    ],
+    stabilityLimits: ["Phaser lifecycle is locked", "runtime reads asset-pack.json", "unverified assets stay draft"],
+    deferredRequests: []
+  };
+}
+
+function createDeveloperBriefArtifacts(developerBrief: DeveloperBriefArtifact): PipelineArtifact[] {
+  return [
+    {
+      stage: "design-brief",
+      fileName: "developer-brief.json",
+      title: "Developer Brief",
+      content: developerBrief,
+      format: "json"
+    },
+    {
+      stage: "design-brief",
+      fileName: "developer-brief.md",
+      title: "Developer Brief",
+      content: [
+        `# ${developerBrief.coreGameplay}`,
+        "",
+        `Player request: ${developerBrief.playerRequest}`,
+        "",
+        "Executable rules:",
+        ...developerBrief.executableRules.map((rule) => `- ${rule}`),
+        "",
+        "Stability limits:",
+        ...developerBrief.stabilityLimits.map((limit) => `- ${limit}`)
+      ].join("\n"),
+      format: "md"
+    }
+  ];
+}
+
+function createCoverPoster(input: {
+  projectId: string;
+  versionId: string;
+  title: string;
+  pitch: string;
+  developerBrief: DeveloperBriefArtifact;
+  engineType: "phaser2d" | "threejs3d";
+  templateFamily?: TemplateFamily;
+}): CoverPoster {
+  const prompt = [
+    `Create a 16:9 game lobby poster for ${input.title}.`,
+    input.pitch,
+    input.developerBrief.coreGameplay,
+    `Engine: ${input.engineType}.`,
+    input.templateFamily ? `Template: ${input.templateFamily}.` : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    fileUrl: `/projects/${input.projectId}/${input.versionId}/assets/cover-poster.webp`,
+    thumbnailUrl: `/projects/${input.projectId}/${input.versionId}/assets/cover-poster-thumb.webp`,
+    prompt,
+    provider: "poster-fallback",
+    format: "webp",
+    width: 1280,
+    height: 720,
+    thumbnailWidth: 512,
+    thumbnailHeight: 288,
+    fallbackUsed: true
+  };
+}
+
+function createCoverPosterArtifacts(coverPoster: CoverPoster): PipelineArtifact[] {
+  return [
+    {
+      stage: "cover-poster",
+      fileName: "cover-poster.json",
+      title: "Cover Poster",
+      content: coverPoster,
+      format: "json"
+    },
+    {
+      stage: "cover-poster",
+      fileName: "cover-poster.webp",
+      title: "Cover Poster WebP",
+      content: {
+        fileUrl: coverPoster.fileUrl,
+        thumbnailUrl: coverPoster.thumbnailUrl,
+        prompt: coverPoster.prompt,
+        fallbackUsed: coverPoster.fallbackUsed
+      },
+      format: "json"
     }
   ];
 }

@@ -87,6 +87,29 @@ describe("procedural game resources", () => {
     expect(result.project.qaReport.scores.buildHealth).toBeGreaterThan(80);
   });
 
+  it("generates cover poster artifacts and marks large-map backgrounds as tileable", async () => {
+    const service = createGenerationService();
+
+    const result = await service.generatePlayableVersion({
+      idea: "大地图飞船躲避陨石收集能量，背景要能循环平铺",
+      answers: [],
+      templateFamily: "top_down",
+      projectId: "project-tileable-poster",
+      baseUrl: "https://wow-game.example",
+      model: "mock-designer"
+    });
+
+    const background = result.project.assetPack.assets.find((asset) => asset.assetKey === "world.background");
+
+    expect(background?.generationParams.backgroundMode).toBe("tileable_map");
+    expect(background?.generationParams.runtimeFormat).toBe("webp");
+    expect(result.project.coverPosterUrl).toBeTruthy();
+    expect(result.project.coverThumbnailUrl).toBeTruthy();
+    expect(result.project.artifacts.map((artifact) => artifact.fileName)).toEqual(
+      expect.arrayContaining(["developer-brief.json", "developer-brief.md", "cover-poster.json", "cover-poster.webp"])
+    );
+  });
+
   it("derives a stable project title from the player idea when model title is generic", async () => {
     const service = createGenerationService();
 

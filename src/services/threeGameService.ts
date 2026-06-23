@@ -1,6 +1,7 @@
 import type {
   AssetRequirement,
   ConfirmedThreeAssets,
+  CoverPoster,
   MockProject,
   PipelineArtifact,
   PublishRecord,
@@ -16,6 +17,7 @@ import type {
   UserMaterial
 } from "../core/types";
 import { createPublishRecord } from "../core/pipeline";
+import { getThreeGenreProfile } from "../core/threeGenreProfiles";
 
 export interface ThreeGameGenerationRequest {
   idea: string;
@@ -40,6 +42,7 @@ export interface ThreeGameGenerationResult {
   assetLoadReport: ThreeAssetLoadReport;
   deliveryReady: boolean;
   fallbacksUsed: string[];
+  coverPoster: CoverPoster;
 }
 
 const THREE_CORE_MODEL_KEYS = ["three.model.player", "three.model.hazard", "three.model.collectible"] as const;
@@ -72,6 +75,7 @@ export function generateThreeGameMvp(input: ThreeGameGenerationRequest): ThreeGa
   );
   const assetLoadReport = createThreeAssetLoadReport(threeAssetPack);
   const threeVerificationReport = createThreeVerificationReport(threeSceneDirector, threeAssetPack, assetLoadReport);
+  const coverPoster = createThreeCoverPoster(input.projectId, versionId, title, input.idea, threeGameBrief, threeSceneDirector);
   const publishRecord = createPublishRecord(input.projectId, versionId, title, {
     visibility: "public",
     baseUrl: input.baseUrl,
@@ -87,7 +91,8 @@ export function generateThreeGameMvp(input: ThreeGameGenerationRequest): ThreeGa
     threeAssetPlan,
     threeAssetPack,
     threeVerificationReport,
-    assetLoadReport
+    assetLoadReport,
+    coverPoster
   });
   const fallbacksUsed = assetLoadReport.assets
     .filter((asset) => asset.fallback)
@@ -102,7 +107,8 @@ export function generateThreeGameMvp(input: ThreeGameGenerationRequest): ThreeGa
     threeVerificationReport,
     assetLoadReport,
     deliveryReady: threeVerificationReport.deliveryReady,
-    fallbacksUsed
+    fallbacksUsed,
+    coverPoster
   };
 }
 
@@ -162,22 +168,20 @@ function buildTripoModelPrompt(
 ): string {
   const genre = describeThreeGenre(input.brief.genre);
   const theme = inferThreeModelTheme(input);
+  const profile = getThreeGenreProfile(input.brief.genre);
   const common =
     `Create a single 3D model for a ${genre}. ` +
     `${theme}. Game ready low-poly style, clean silhouette, centered object, readable on a mobile screen. ` +
     "No text, no UI, no logo, no scene, no full environment, no background, no game screenshot.";
   const slotPrompt: Record<ThreeCoreModelSlot, string> = {
-    player:
-      "The model is the controllable hero vehicle or character. Make it friendly, directional, and easy to recognize from a chase camera.",
-    hazard:
-      `The model is the primary dangerous obstacle or enemy. Make it threatening and visually distinct. Behaviors include ${describeEnemyBehaviors(
-        input.director
-      )}.`,
-    collectible:
-      `The model is a small reward pickup. Make it bright, valuable, and easy to collect. Target pickup count is ${Math.max(
-        1,
-        input.director.objectives.collectTarget
-      )}.`
+    player: `The model is the controllable player subject: ${profile.modelDirection.player}.`,
+    hazard: `The model is the primary gameplay hazard: ${profile.modelDirection.hazard}. Behaviors include ${describeEnemyBehaviors(
+      input.director
+    )}.`,
+    collectible: `The model is the reward collectible: ${profile.modelDirection.collectible}. Target pickup count is ${Math.max(
+      1,
+      input.director.objectives.collectTarget
+    )}.`
   };
   return sanitizeTripoPrompt(`${common} ${slotPrompt[slot]} Export intent: GLB compatible asset.`);
 }
@@ -193,13 +197,13 @@ function sanitizeTripoPrompt(prompt: string): string {
 }
 
 function describeThreeGenre(genre: ThreeGameGenre): string {
+  if (genre === "futuristic_tower_defense") return "3D futuristic tower defense";
   if (genre === "runner") return "3D runner";
   if (genre === "exploration") return "3D exploration";
   if (genre === "dodge_collect") return "3D dodge and collect";
   if (genre === "third_person_collect") return "3D third-person collect";
   return "3D flight shooter";
 }
-
 function inferThreeModelTheme(input: { idea: string; brief: ThreeGameBrief }): string {
   const text = [
     input.idea,
@@ -252,55 +256,51 @@ export function hasConfirmedThreeCoreAssets(confirmedThreeAssets?: ConfirmedThre
 
 function classifyThreeGenre(idea: string): ThreeGameGenre {
   const lower = idea.toLowerCase();
-  if (/跑酷|parkour|runner|奔跑|冲刺/.test(lower)) return "runner";
-  if (/射击|shoot|laser|子弹|飞船|战机|space.?ship/.test(lower)) return "flight_shooter";
-  if (/探索|展厅|showcase|walk|漫游|gallery/.test(lower)) return "exploration";
-  if (/第三人称|third.?person|角色/.test(lower)) return "third_person_collect";
+  if (lower.includes("tower") || lower.includes("turret") || lower.includes("base defense") || lower.includes("wave")) {
+    return "futuristic_tower_defense";
+  }
+  if (idea.includes("塔防") || idea.includes("炮塔") || idea.includes("基地") || idea.includes("波次") || idea.includes("防守")) {
+    return "futuristic_tower_defense";
+  }
+  if (lower.includes("parkour") || lower.includes("runner")) return "runner";
+  if (lower.includes("shoot") || lower.includes("laser") || lower.includes("ship")) return "flight_shooter";
+  if (lower.includes("showcase") || lower.includes("walk") || lower.includes("gallery")) return "exploration";
+  if (lower.includes("third person")) return "third_person_collect";
   return "dodge_collect";
 }
-
 function createThreeTitle(idea: string, genre: ThreeGameGenre): string {
-  if (/太空猫|猫.*飞船|space cat/i.test(idea)) return "太空猫星尘航线";
-  if (/太空|飞船|陨石|星/.test(idea)) return "星际能量航线";
-  if (/跑酷|runner|parkour/i.test(idea)) return "霓虹极速跑酷";
-  if (genre === "flight_shooter") return "立体星域突围";
-  if (genre === "exploration") return "三维探索场";
-  if (genre === "third_person_collect") return "立体收集冒险";
-  return "能量躲避试炼";
+  const lower = idea.toLowerCase();
+  if (lower.includes("tower") || lower.includes("turret") || genre === "futuristic_tower_defense") return "Neon Core Defense";
+  if (lower.includes("space cat")) return "Space Cat Stardust Route";
+  if (lower.includes("space") || lower.includes("ship")) return "Star Energy Route";
+  if (lower.includes("runner") || lower.includes("parkour")) return "Neon Speed Runner";
+  if (genre === "flight_shooter") return "3D Star Breakout";
+  if (genre === "exploration") return "3D Exploration Field";
+  if (genre === "third_person_collect") return "3D Collection Adventure";
+  return "Energy Dodge Trial";
 }
-
 function createThreeGameBrief(
   idea: string,
   title: string,
   genre: ThreeGameGenre,
   mobileFormat: ThreeGameBrief["mobileFormat"]
 ): ThreeGameBrief {
-  const isFlight = genre === "flight_shooter";
+  const profile = getThreeGenreProfile(genre);
   return {
     genre,
     title,
     mobileFormat,
-    playerFantasy: `玩家进入一个可操作的 3D 场景，完成“${idea}”的核心体验。`,
-    cameraIntent: isFlight
-      ? "追尾或轻俯视飞行镜头，保证前方危险物和奖励清晰可读。"
-      : genre === "exploration"
-        ? "第三人称或轨道展示镜头，突出场景空间和目标点。"
-        : "第三人称跟随镜头，保证路线、危险物和奖励清晰可读。",
-    movementIntent: genre === "runner"
-      ? "角色自动前进，玩家控制左右移动、跳跃或冲刺。"
-      : "玩家通过键盘或触屏拖动控制角色在 3D 空间移动。",
-    spaceLayout: genre === "exploration"
-      ? "开放小场景，少量目标点引导玩家探索。"
-      : "单屏或短走廊式路线，前 30 秒逐步加压。",
+    playerFantasy: `${profile.label}：${profile.genreIntent} 玩家创意：“${idea}”。`,
+    cameraIntent: profile.brief.cameraIntent,
+    movementIntent: profile.brief.movementIntent,
+    spaceLayout: profile.brief.spaceLayout,
     interactionFeedback: ["收集发光脉冲", "碰撞震屏", "受击短暂无敌", "胜利/失败可重开"],
     mobileControlPlan:
       mobileFormat === "portrait_9_16"
         ? "单指拖动控制横向移动，HUD 避开底部操作区。"
         : "键盘优先，触屏拖动作为辅助控制。",
-    assetNeeds: ["玩家 GLB 模型", "危险物 GLB 模型", "收集物 GLB 模型", "天空盒或背景贴图", "收集/碰撞测试音效"],
-    coreLoop: isFlight
-      ? ["移动飞船", "躲避陨石", "收集能量", "达到目标分数", "失败后重开"]
-      : ["移动角色", "观察 3D 空间", "收集目标", "避开危险", "胜利或重开"],
+    assetNeeds: profile.brief.assetNeeds,
+    coreLoop: profile.brief.coreLoop,
     skillWorkflow: [
       "threejs-game-director",
       "threejs-gameplay-systems",
@@ -339,58 +339,16 @@ function createThreeSceneDirector(
   brief: ThreeGameBrief,
   answers: Array<{ questionId: string; value: string }>
 ): ThreeSceneDirector {
-  const isShooter = brief.genre === "flight_shooter";
+  const profile = getThreeGenreProfile(brief.genre);
+  const fallback = profile.director;
   const answerText = answers.map((answer) => answer.value).join(" ");
   const prefersTopDown = /俯视|top.?down/i.test(`${brief.cameraIntent} ${answerText}`);
   return {
-    version: "1",
+    ...fallback,
+    ...threeExperienceRules(brief.genre),
     genre: brief.genre,
     title: brief.title,
-    camera: brief.genre === "exploration" ? "orbit_showcase" : prefersTopDown ? "top_down" : isShooter ? "follow_chase" : "top_down",
-    controls: ["keyboard", "touch_drag", "touch_buttons"],
-    stages: [
-      { id: "learn", label: "学习移动", startsAtMs: 0, durationMs: 5000, objective: "learn_controls" },
-      { id: "collect", label: "收集目标", startsAtMs: 5000, durationMs: 12000, objective: "collect" },
-      { id: "pressure", label: "危险加压", startsAtMs: 17000, durationMs: 12000, objective: "survive" },
-      { id: "finale", label: "最后冲刺", startsAtMs: 29000, durationMs: 16000, objective: "finale" }
-    ],
-    player: {
-      speed: isShooter ? 8 : 6,
-      radius: 0.55,
-      start: { x: 0, y: 0.5, z: 8 }
-    },
-    world: {
-      width: isShooter ? 12 : 14,
-      depth: isShooter ? 30 : 24,
-      skyColor: isShooter ? "#030712" : "#07111f",
-      groundColor: isShooter ? "#111827" : "#164e63"
-    },
-    objectives: {
-      collectTarget: isShooter ? 8 : 6,
-      avoidDamage: true,
-      timeLimitMs: 90000
-    },
-    enemies: [
-      {
-        id: "hazard-wave",
-        type: isShooter ? "asteroid" : "drone",
-        behavior: "falling",
-        count: isShooter ? 8 : 5,
-        speed: isShooter ? 4.2 : 3.2
-      },
-      {
-        id: "pressure-chaser",
-        type: "drone",
-        behavior: "chase",
-        count: 2,
-        speed: 2.4
-      }
-    ],
-    feedback: {
-      collectPulse: true,
-      hitShake: true,
-      proceduralAudio: true
-    }
+    camera: prefersTopDown && brief.genre !== "runner" && brief.genre !== "exploration" ? "top_down" : fallback.camera
   };
 }
 
@@ -408,6 +366,24 @@ export function normalizeThreeSceneDirector(
     title: cleanText(director.title, brief.title),
     camera: ["follow_chase", "top_down", "orbit_showcase"].includes(director.camera) ? director.camera : fallback.camera,
     controls: normalizeControls(director.controls),
+    movementMode: normalizeMovementMode(director.movementMode, fallback.movementMode),
+    layoutMode: normalizeLayoutMode(director.layoutMode, fallback.layoutMode),
+    spawnPattern: normalizeSpawnPattern(director.spawnPattern, fallback.spawnPattern),
+    abilities: normalizeAbilities(director.abilities, fallback.abilities ?? []),
+    collisionRules: normalizeCollisionRules(director.collisionRules, fallback.collisionRules),
+    feedbackRules: normalizeFeedbackRules(director.feedbackRules, fallback.feedbackRules),
+    audioCues: normalizeAudioCues(director.audioCues, fallback.audioCues ?? []),
+    cameraEffects: {
+      shake: director.cameraEffects?.shake ?? fallback.cameraEffects?.shake ?? true,
+      speedLines: director.cameraEffects?.speedLines ?? fallback.cameraEffects?.speedLines ?? false,
+      followSmoothing: clampNumber(
+        director.cameraEffects?.followSmoothing,
+        0.01,
+        0.2,
+        fallback.cameraEffects?.followSmoothing ?? 0.05
+      )
+    },
+    spawnTimeline: normalizeSpawnTimeline(director.spawnTimeline, fallback.spawnTimeline ?? []),
     stages,
     player: {
       speed: clampNumber(director.player?.speed, 3, 12, fallback.player.speed),
@@ -434,8 +410,33 @@ export function normalizeThreeSceneDirector(
       collectPulse: director.feedback?.collectPulse ?? true,
       hitShake: director.feedback?.hitShake ?? true,
       proceduralAudio: director.feedback?.proceduralAudio ?? true
-    }
+    },
+    towerDefense: normalizeTowerDefenseRules(director.towerDefense, fallback.towerDefense)
   };
+}
+
+function normalizeMovementMode(
+  value: ThreeSceneDirector["movementMode"],
+  fallback: ThreeSceneDirector["movementMode"]
+): ThreeSceneDirector["movementMode"] {
+  const allowed = new Set(["forward_flight", "auto_runner", "free_move", "explore_scan", "arena_dodge", "tower_defense"]);
+  return value && allowed.has(value) ? value : fallback;
+}
+
+function normalizeLayoutMode(
+  value: ThreeSceneDirector["layoutMode"],
+  fallback: ThreeSceneDirector["layoutMode"]
+): ThreeSceneDirector["layoutMode"] {
+  const allowed = new Set(["flight_corridor", "lane_track", "small_arena", "open_landmarks", "single_arena", "defense_path"]);
+  return value && allowed.has(value) ? value : fallback;
+}
+
+function normalizeSpawnPattern(
+  value: ThreeSceneDirector["spawnPattern"],
+  fallback: ThreeSceneDirector["spawnPattern"]
+): ThreeSceneDirector["spawnPattern"] {
+  const allowed = new Set(["forward_waves", "lane_gates", "landmark_clusters", "discovery_ring", "timed_bursts", "tower_waves"]);
+  return value && allowed.has(value) ? value : fallback;
 }
 
 function normalizeEnemies(
@@ -478,66 +479,325 @@ function normalizeStages(
   return normalized.length >= 3 ? normalized : fallback;
 }
 
+function normalizeTowerDefenseRules(
+  value: ThreeSceneDirector["towerDefense"] | undefined,
+  fallback: ThreeSceneDirector["towerDefense"] | undefined
+): ThreeSceneDirector["towerDefense"] | undefined {
+  if (!fallback && !value) return undefined;
+  const base = fallback ?? value;
+  if (!base) return undefined;
+  const towerKinds = new Set(["laser", "missile", "slow"]);
+  const enemyTypes = new Set(["drone", "armored", "runner"]);
+  const pathNodes = (value?.pathNodes ?? base.pathNodes)
+    .filter((node) => Number.isFinite(node.x) && Number.isFinite(node.z))
+    .map((node) => ({ x: clampNumber(node.x, -20, 20, 0), z: clampNumber(node.z, -30, 30, 0) }));
+  const towers = (value?.towers ?? base.towers)
+    .filter((tower) => towerKinds.has(tower.kind))
+    .map((tower) => ({
+      id: cleanText(tower.id, `${tower.kind}-tower`),
+      kind: tower.kind,
+      cost: Math.round(clampNumber(tower.cost, 10, 200, 40)),
+      range: clampNumber(tower.range, 2, 8, 4.5),
+      fireRateMs: Math.round(clampNumber(tower.fireRateMs, 200, 2500, 800)),
+      damage: Math.round(clampNumber(tower.damage, 1, 120, 18)),
+      ...(tower.effect ? { effect: tower.effect } : {})
+    }));
+  const waves = (value?.waves ?? base.waves)
+    .filter((wave) => enemyTypes.has(wave.enemyType))
+    .map((wave) => ({
+      id: cleanText(wave.id, `${wave.enemyType}-wave`),
+      startsAtMs: Math.round(clampNumber(wave.startsAtMs, 0, 120000, 0)),
+      enemyType: wave.enemyType,
+      count: Math.round(clampNumber(wave.count, 1, 40, 5)),
+      intervalMs: Math.round(clampNumber(wave.intervalMs, 250, 3000, 800)),
+      health: Math.round(clampNumber(wave.health, 5, 400, 40)),
+      speed: clampNumber(wave.speed, 0.3, 4, 1.2),
+      reward: Math.round(clampNumber(wave.reward, 1, 80, 12))
+    }));
+  return {
+    pathNodes: pathNodes.length >= 5 ? pathNodes : base.pathNodes,
+    towers: towers.length >= 3 ? towers : base.towers,
+    waves: waves.length >= 4 ? waves : base.waves,
+    economyRules: {
+      startingEnergy: Math.round(clampNumber(value?.economyRules?.startingEnergy, 40, 400, base.economyRules.startingEnergy)),
+      killReward: Math.round(clampNumber(value?.economyRules?.killReward, 1, 80, base.economyRules.killReward))
+    },
+    baseRules: {
+      baseHealth: Math.round(clampNumber(value?.baseRules?.baseHealth, 1, 50, base.baseRules.baseHealth)),
+      leakDamage: Math.round(clampNumber(value?.baseRules?.leakDamage, 1, 10, base.baseRules.leakDamage))
+    },
+    buildRules: {
+      buildRadius: clampNumber(value?.buildRules?.buildRadius, 0.5, 4, base.buildRules.buildRadius),
+      maxTowers: Math.round(clampNumber(value?.buildRules?.maxTowers, 1, 20, base.buildRules.maxTowers))
+    }
+  };
+}
+
+function threeExperienceRules(
+  genre: ThreeGameGenre
+): Pick<ThreeSceneDirector, "abilities" | "collisionRules" | "feedbackRules" | "audioCues" | "cameraEffects" | "spawnTimeline"> {
+  const abilitiesByGenre: Record<ThreeGameGenre, NonNullable<ThreeSceneDirector["abilities"]>> = {
+    flight_shooter: ["boost", "dash"],
+    runner: ["lane_change", "jump"],
+    third_person_collect: ["dash"],
+    exploration: ["scan"],
+    dodge_collect: ["dash"],
+    futuristic_tower_defense: ["build_tower", "upgrade_tower"]
+  };
+  return {
+    abilities: abilitiesByGenre[genre],
+    collisionRules: {
+      hitbox: genre === "runner" || genre === "third_person_collect" ? "capsule" : "sphere",
+      damage: 1,
+      invincibleMs: genre === "runner" ? 700 : 900,
+      knockback: genre === "exploration" ? 0.45 : 1.25,
+      nearMiss: genre !== "exploration"
+    },
+    feedbackRules: {
+      collectParticles: true,
+      hitParticles: true,
+      explosion: genre !== "exploration",
+      screenShake: true,
+      flash: true
+    },
+    audioCues: ["collect", "hit", "win", "lose", "warning", "explosion"],
+    cameraEffects: {
+      shake: true,
+      speedLines: genre === "flight_shooter" || genre === "runner",
+      followSmoothing: 0.05
+    },
+    spawnTimeline: [
+      { atMs: 0, event: "warning", count: 1 },
+      { atMs: 5000, event: "spawn_collectible", count: 3 },
+      { atMs: 17000, event: "pressure_wave", count: genre === "exploration" ? 2 : 5 },
+      { atMs: 29000, event: genre === "exploration" ? "reward_burst" : "spawn_hazard", count: 4 }
+    ]
+  };
+}
+
+function normalizeAbilities(
+  value: ThreeSceneDirector["abilities"] | undefined,
+  fallback: NonNullable<ThreeSceneDirector["abilities"]>
+): NonNullable<ThreeSceneDirector["abilities"]> {
+  const allowed = new Set(["dash", "lane_change", "jump", "scan", "boost", "build_tower", "upgrade_tower"]);
+  const normalized = (value ?? []).filter((ability) => allowed.has(ability));
+  return normalized.length > 0 ? Array.from(new Set(normalized)) : fallback;
+}
+
+function normalizeCollisionRules(
+  value: ThreeSceneDirector["collisionRules"] | undefined,
+  fallback: ThreeSceneDirector["collisionRules"] | undefined
+): NonNullable<ThreeSceneDirector["collisionRules"]> {
+  const base = fallback ?? {
+    hitbox: "sphere",
+    damage: 1,
+    invincibleMs: 900,
+    knockback: 1,
+    nearMiss: true
+  };
+  const hitbox = value?.hitbox && ["sphere", "capsule", "box"].includes(value.hitbox) ? value.hitbox : base.hitbox;
+  return {
+    hitbox,
+    damage: Math.round(clampNumber(value?.damage, 1, 3, base.damage)),
+    invincibleMs: Math.round(clampNumber(value?.invincibleMs, 300, 2500, base.invincibleMs)),
+    knockback: clampNumber(value?.knockback, 0, 3, base.knockback),
+    nearMiss: value?.nearMiss ?? base.nearMiss
+  };
+}
+
+function normalizeFeedbackRules(
+  value: ThreeSceneDirector["feedbackRules"] | undefined,
+  fallback: ThreeSceneDirector["feedbackRules"] | undefined
+): NonNullable<ThreeSceneDirector["feedbackRules"]> {
+  const base = fallback ?? {
+    collectParticles: true,
+    hitParticles: true,
+    explosion: true,
+    screenShake: true,
+    flash: true
+  };
+  return {
+    collectParticles: value?.collectParticles ?? base.collectParticles,
+    hitParticles: value?.hitParticles ?? base.hitParticles,
+    explosion: value?.explosion ?? base.explosion,
+    screenShake: value?.screenShake ?? base.screenShake,
+    flash: value?.flash ?? base.flash
+  };
+}
+
+function normalizeAudioCues(
+  value: ThreeSceneDirector["audioCues"] | undefined,
+  fallback: NonNullable<ThreeSceneDirector["audioCues"]>
+): NonNullable<ThreeSceneDirector["audioCues"]> {
+  const allowed = new Set(["collect", "hit", "win", "lose", "warning", "explosion"]);
+  const normalized = (value ?? []).filter((cue) => allowed.has(cue));
+  const merged = new Set([...fallback, ...normalized]);
+  return Array.from(merged) as NonNullable<ThreeSceneDirector["audioCues"]>;
+}
+
+function normalizeSpawnTimeline(
+  value: ThreeSceneDirector["spawnTimeline"] | undefined,
+  fallback: NonNullable<ThreeSceneDirector["spawnTimeline"]>
+): NonNullable<ThreeSceneDirector["spawnTimeline"]> {
+  const allowedEvents = new Set(["spawn_hazard", "spawn_collectible", "pressure_wave", "reward_burst", "warning"]);
+  const normalized = (value ?? [])
+    .filter((entry) => entry && allowedEvents.has(entry.event))
+    .map((entry) => ({
+      atMs: Math.round(clampNumber(entry.atMs, 0, 120000, 0)),
+      event: entry.event,
+      count: Math.round(clampNumber(entry.count, 1, 20, 1))
+    }))
+    .sort((left, right) => left.atMs - right.atMs);
+  return normalized.length >= 3 ? normalized : fallback;
+}
+
 function createThreeAssetPlan(
   versionId: string,
   brief: ThreeGameBrief,
   director: ThreeSceneDirector
 ): ThreeAssetPlan {
+  const profile = getThreeGenreProfile(brief.genre);
+  const baseAssets: ThreeAssetPlan["assets"] = [
+    {
+      assetKey: "three.model.player",
+      type: "model",
+      provider: "builtin-three",
+      purpose: `${profile.label} player model`,
+      prompt: `${profile.modelDirection.player}. ${brief.title}. ${brief.movementIntent}`,
+      fallback: true,
+      ...modelBudgetForSlot("player", director)
+    },
+    {
+      assetKey: "three.model.hazard",
+      type: "model",
+      provider: "builtin-three",
+      purpose: `${profile.label} hazard model`,
+      prompt: `${profile.modelDirection.hazard}. ${brief.title}. behavior ${director.enemies[0]?.behavior ?? "falling"}`,
+      fallback: true,
+      ...modelBudgetForSlot("hazard", director)
+    },
+    {
+      assetKey: "three.model.collectible",
+      type: "model",
+      provider: "builtin-three",
+      purpose: `${profile.label} collectible model`,
+      prompt: `${profile.modelDirection.collectible}. ${brief.title}. visible in mobile camera`,
+      fallback: true,
+      ...modelBudgetForSlot("collectible", director)
+    },
+    {
+      assetKey: "three.skybox.main",
+      type: "skybox",
+      provider: "gemini-image",
+      purpose: "3D background or skybox",
+      prompt: `${brief.title} ${profile.label} skybox or background texture, ${brief.spaceLayout}`,
+      fallback: true
+    },
+    {
+      assetKey: "three.audio.collect",
+      type: "audio",
+      provider: "elevenlabs",
+      purpose: "Collect sound cue",
+      prompt: `${brief.title} short collect chime`,
+      fallback: true
+    },
+    {
+      assetKey: "three.audio.hit",
+      type: "audio",
+      provider: "elevenlabs",
+      purpose: "Hit sound cue",
+      prompt: `${brief.title} short hit impact sound`,
+      fallback: true
+    }
+  ];
   return {
     versionId,
     engineType: "threejs3d",
     requiredApiKeys: ["TRIPO_API_KEY", "GEMINI_API_KEY", "ELEVENLABS_API_KEY"],
-    assets: [
-      {
-        assetKey: "three.model.player",
-        type: "model",
-        provider: "tripo",
-        purpose: "玩家可控制 3D 主体",
-        prompt: `${brief.title} player model, ${brief.playerFantasy}, ${brief.movementIntent}`,
-        fallback: true
-      },
-      {
-        assetKey: "three.model.hazard",
-        type: "model",
-        provider: "tripo",
-        purpose: "可躲避危险物或敌人",
-        prompt: `${brief.title} hazard model, readable silhouette, behavior ${director.enemies[0]?.behavior ?? "falling"}`,
-        fallback: true
-      },
-      {
-        assetKey: "three.model.collectible",
-        type: "model",
-        provider: "tripo",
-        purpose: "收集奖励物",
-        prompt: `${brief.title} collectible energy item, visible in mobile camera`,
-        fallback: true
-      },
-      {
-        assetKey: "three.skybox.main",
-        type: "skybox",
-        provider: "gemini-image",
-        purpose: "3D 背景或天空盒",
-        prompt: `${brief.title} skybox or background texture, ${brief.spaceLayout}`,
-        fallback: true
-      },
-      {
-        assetKey: "three.audio.collect",
-        type: "audio",
-        provider: "elevenlabs",
-        purpose: "收集音效",
-        prompt: `${brief.title} short collect chime`,
-        fallback: true
-      },
-      {
-        assetKey: "three.audio.hit",
-        type: "audio",
-        provider: "elevenlabs",
-        purpose: "碰撞或失败音效",
-        prompt: `${brief.title} short hit impact sound`,
-        fallback: true
-      }
-    ]
+    assets: [...baseAssets, ...createTowerDefenseAssetPlanExtras(brief, director)]
   };
+}
+
+function createTowerDefenseAssetPlanExtras(
+  brief: ThreeGameBrief,
+  director: ThreeSceneDirector
+): ThreeAssetPlan["assets"] {
+  if (director.genre !== "futuristic_tower_defense") return [];
+  const common = {
+    type: "model" as const,
+    provider: "builtin-three" as const,
+    fallback: true,
+    qualityTier: "builtin_low_poly" as const,
+    preferredSource: "builtin_low_poly" as const,
+    maxFileSizeMb: 1,
+    runtimeScale: 1,
+    colliderShape: "box" as const
+  };
+  return [
+    {
+      ...common,
+      assetKey: "three.tower.laser",
+      purpose: "Laser tower runtime model",
+      prompt: `${brief.title} low-poly laser tower, neon sci-fi turret, readable attack direction`,
+      polyBudget: 900
+    },
+    {
+      ...common,
+      assetKey: "three.tower.missile",
+      purpose: "Missile tower runtime model",
+      prompt: `${brief.title} low-poly missile tower, dual pods, sci-fi defense platform`,
+      polyBudget: 1100
+    },
+    {
+      ...common,
+      assetKey: "three.tower.slow",
+      purpose: "Slow tower runtime model",
+      prompt: `${brief.title} low-poly slowing field tower, blue energy ring, sci-fi defense device`,
+      polyBudget: 850
+    },
+    {
+      ...common,
+      assetKey: "three.base.core",
+      purpose: "Base core defense objective model",
+      prompt: `${brief.title} shielded futuristic base core, glowing reactor, final defense objective`,
+      polyBudget: 1200
+    }
+  ];
+}
+
+function modelBudgetForSlot(
+  slot: ThreeCoreModelSlot,
+  director: ThreeSceneDirector
+): Pick<
+  ThreeAssetPlan["assets"][number],
+  "qualityTier" | "preferredSource" | "polyBudget" | "maxFileSizeMb" | "runtimeScale" | "colliderShape"
+> {
+  const colliderShape =
+    slot === "player"
+      ? "capsule"
+      : slot === "hazard" && director.movementMode === "auto_runner"
+        ? "box"
+        : "sphere";
+  return {
+    qualityTier: "builtin_low_poly",
+    preferredSource: "builtin_low_poly",
+    polyBudget: slot === "collectible" ? 600 : slot === "hazard" ? 1000 : 1200,
+    maxFileSizeMb: 1,
+    runtimeScale: slot === "collectible" ? 0.55 : slot === "hazard" ? 0.8 : 1.1,
+    colliderShape
+  };
+}
+
+function builtinThreeModelUrl(genre: ThreeGameGenre, assetKey: string): string {
+  if (genre === "futuristic_tower_defense") {
+    const towerMatch = assetKey.match(/^three\.tower\.(laser|missile|slow)$/);
+    if (towerMatch) return `builtin://three/futuristic_tower_defense/tower/${towerMatch[1]}`;
+    if (assetKey === "three.base.core" || assetKey === "three.model.player") return "builtin://three/futuristic_tower_defense/player/base-core";
+    if (assetKey === "three.model.hazard") return "builtin://three/futuristic_tower_defense/enemy/drone";
+    if (assetKey === "three.model.collectible") return "builtin://three/futuristic_tower_defense/reward/energy";
+  }
+  const slot = assetKey === "three.model.player" ? "player" : assetKey === "three.model.hazard" ? "hazard" : "collectible";
+  return `builtin://three/${genre}/${slot}/low-poly`;
 }
 
 function createThreeAssetPack(
@@ -549,7 +809,7 @@ function createThreeAssetPack(
 ): ThreeAssetPack {
   return {
     versionId,
-    fallbackProviders: ["procedural-three", "tripo", "elevenlabs"],
+    fallbackProviders: ["builtin-three", "procedural-three", "tripo", "elevenlabs"],
     assets: assetPlan.assets.map((asset) => {
       const confirmed = confirmedThreeAssets?.assets.find((item) => item.assetKey === asset.assetKey);
       if (confirmed) {
@@ -559,6 +819,7 @@ function createThreeAssetPack(
           generationParams: {
             ...confirmed.generationParams,
             engineType: "threejs3d",
+            genreProfileId: director.genre,
             runtimeLoader: asset.type === "model" ? "GLTFLoader" : "procedural"
           }
         };
@@ -573,10 +834,30 @@ function createThreeAssetPack(
           "uploaded",
           uploaded.fileUrl,
           uploaded.previewUrl ?? uploaded.fileUrl,
-          uploaded.mimeType
+          uploaded.mimeType,
+          { genreProfileId: director.genre, roleInGameplay: asset.purpose }
         );
       }
-      return threeAsset(asset.assetKey, asset.type, asset.purpose, asset.prompt || director.world.skyColor, "procedural-three");
+      return threeAsset(
+        asset.assetKey,
+        asset.type,
+        asset.purpose,
+        asset.prompt || director.world.skyColor,
+        asset.type === "model" ? "builtin-three" : "procedural-three",
+        asset.type === "model" ? builtinThreeModelUrl(director.genre, asset.assetKey) : undefined,
+        undefined,
+        undefined,
+        {
+          genreProfileId: director.genre,
+          roleInGameplay: asset.purpose,
+          qualityTier: asset.qualityTier ?? "builtin_low_poly",
+          preferredSource: asset.preferredSource ?? "builtin_low_poly",
+          polyBudget: asset.polyBudget ?? 1000,
+          maxFileSizeMb: asset.maxFileSizeMb ?? 1,
+          runtimeScale: asset.runtimeScale ?? normalizedHeightForThreeAsset(asset.assetKey),
+          colliderShape: asset.colliderShape ?? "sphere"
+        }
+      );
     })
   };
 }
@@ -594,6 +875,8 @@ function threeAsset(
 ): AssetRequirement {
   const uploaded = provider === "uploaded";
   const generated = provider === "tripo";
+  const builtin = provider === "builtin-three";
+  const resolvedFileUrl = builtin && fileUrl === `procedural://${assetKey}` ? `builtin://${assetKey}` : fileUrl;
   return {
     assetKey,
     type,
@@ -607,13 +890,28 @@ function threeAsset(
     acceptedFileTypes: type === "audio" ? ["audio/*", ".mp3", ".wav"] : [".glb", ".gltf", "image/*"],
     previewUrl,
     source: uploaded ? "uploaded" : generated ? "generated" : "preset",
-    fileUrl,
+    fileUrl: resolvedFileUrl,
     provider,
-    model: uploaded ? uploadedMimeType ?? "uploaded-asset" : generated ? uploadedMimeType ?? "tripo-text-to-model" : "three-procedural-mvp",
+    model: uploaded
+      ? uploadedMimeType ?? "uploaded-asset"
+      : generated
+        ? uploadedMimeType ?? "tripo-text-to-model"
+        : builtin
+          ? "builtin-low-poly-v1"
+          : "three-procedural-mvp",
     generationParams: {
       engineType: "threejs3d",
       fallback: !uploaded && !generated,
-      runtimeLoader: type === "model" ? "GLTFLoader" : "procedural",
+      runtimeLoader: type === "model" ? (builtin ? "builtin-three" : "GLTFLoader") : "procedural",
+      ...(builtin
+        ? {
+            modelBudget: "low-poly",
+            maxFileSizeMb: 1,
+            maxTriangles: 3000,
+            maxTextureSize: 512,
+            normalizedHeight: normalizedHeightForThreeAsset(assetKey)
+          }
+        : {}),
       ...generationParams
     }
   };
@@ -621,7 +919,7 @@ function threeAsset(
 
 function createThreeAssetLoadReport(assetPack: ThreeAssetPack): ThreeAssetLoadReport {
   const assets = assetPack.assets.map((asset) => {
-    const fallback = asset.fileUrl.startsWith("procedural://");
+    const fallback = asset.fileUrl.startsWith("procedural://") || asset.fileUrl.startsWith("builtin://");
     const isModel = asset.type === "model";
     const isLocalModel =
       /\.(glb|gltf)(?:$|\?)/i.test(asset.fileUrl) ||
@@ -670,7 +968,69 @@ function createThreeVerificationReport(
   const hasEnemies = director.enemies.length >= 2;
   const hasStages = (director.stages ?? []).length >= 3;
   const hasControls = director.controls.includes("keyboard") && director.controls.includes("touch_drag");
-  const deliveryReady = assetLoadReport.ready && hasPlayer && hasGoal && hasEnemies && hasStages && hasControls;
+  const coreModelAssets = assetPack.assets.filter((asset) => THREE_CORE_MODEL_KEYS.includes(asset.assetKey as (typeof THREE_CORE_MODEL_KEYS)[number]));
+  const modelBudgetPassed =
+    coreModelAssets.length === THREE_CORE_MODEL_KEYS.length &&
+    coreModelAssets.every((asset) => {
+      const tier = asset.generationParams.qualityTier;
+      const maxFileSizeMb = Number(asset.generationParams.maxFileSizeMb ?? 1);
+      const polyBudget = Number(asset.generationParams.polyBudget ?? asset.generationParams.maxTriangles ?? 3000);
+      const isBuiltin = asset.fileUrl.startsWith("builtin://three/");
+      return isBuiltin || (tier !== "tripo_enhanced" && maxFileSizeMb <= 1 && polyBudget <= 3000);
+    });
+  const audioFeedbackChecked =
+    ["collect", "hit", "win", "lose"].every((cue) => director.audioCues?.includes(cue as NonNullable<ThreeSceneDirector["audioCues"]>[number])) &&
+    director.feedback.proceduralAudio;
+  const collisionFeedbackChecked =
+    Boolean(director.collisionRules) &&
+    (director.collisionRules?.damage ?? 0) >= 1 &&
+    (director.collisionRules?.invincibleMs ?? 0) >= 300;
+  const runtimeEffectsChecked = Boolean(
+    director.feedbackRules?.collectParticles &&
+      director.feedbackRules.hitParticles &&
+      director.feedbackRules.screenShake &&
+      director.feedbackRules.flash
+  );
+  const genreDifferentiationChecked = Boolean(director.movementMode && director.layoutMode && director.spawnPattern && director.abilities?.length);
+  const nonTowerGenreContractChecked = checkNonTowerGenreContract(director);
+  const towerDefenseLoopChecked =
+    director.genre !== "futuristic_tower_defense" ||
+    Boolean(
+      director.towerDefense &&
+        director.towerDefense.pathNodes.length >= 5 &&
+        director.towerDefense.towers.length >= 3 &&
+        director.towerDefense.waves.length >= 4
+    );
+  const towerPlacementChecked =
+    director.genre !== "futuristic_tower_defense" ||
+    Boolean(director.towerDefense && director.towerDefense.buildRules.maxTowers > 0 && director.towerDefense.economyRules.startingEnergy > 0);
+  const waveProgressionChecked =
+    director.genre !== "futuristic_tower_defense" ||
+    Boolean(director.towerDefense?.waves.every((wave) => wave.count > 0 && wave.intervalMs > 0));
+  const baseDamageChecked =
+    director.genre !== "futuristic_tower_defense" ||
+    Boolean(director.towerDefense && director.towerDefense.baseRules.baseHealth > 0 && director.towerDefense.baseRules.leakDamage > 0);
+  const projectileHitChecked =
+    director.genre !== "futuristic_tower_defense" ||
+    Boolean(director.towerDefense?.towers.every((tower) => tower.damage > 0 && tower.fireRateMs > 0));
+  const deliveryReady =
+    assetLoadReport.ready &&
+    hasPlayer &&
+    hasGoal &&
+    hasEnemies &&
+    hasStages &&
+    hasControls &&
+    modelBudgetPassed &&
+    audioFeedbackChecked &&
+    collisionFeedbackChecked &&
+    runtimeEffectsChecked &&
+    genreDifferentiationChecked &&
+    nonTowerGenreContractChecked &&
+    towerDefenseLoopChecked &&
+    towerPlacementChecked &&
+    waveProgressionChecked &&
+    baseDamageChecked &&
+    projectileHitChecked;
   return {
     passed: deliveryReady,
     deliveryReady,
@@ -679,11 +1039,41 @@ function createThreeVerificationReport(
     mobileViewportChecked: true,
     consoleErrorCount: 0,
     screenshotCaptured: false,
+    modelBudgetPassed,
+    audioFeedbackChecked,
+    collisionFeedbackChecked,
+    runtimeEffectsChecked,
+    genreDifferentiationChecked,
+    nonTowerGenreContractChecked,
+    towerDefenseLoopChecked,
+    towerPlacementChecked,
+    waveProgressionChecked,
+    baseDamageChecked,
+    projectileHitChecked,
     checks: [
       { id: "three_canvas_contract", passed: assetLoadReport.ready, detail: "Three.js preview owns its own canvas and has loadable runtime assets." },
       { id: "mobile_controls", passed: hasControls, detail: "Keyboard, touch drag, and touch buttons are defined." },
       { id: "playable_loop", passed: hasGoal && hasEnemies, detail: "Collect, avoid, win, lose, and restart states are defined." },
       { id: "stage_pacing", passed: hasStages, detail: `${director.stages?.length ?? 0} 3D stages are defined.` },
+      { id: "model_budget", passed: modelBudgetPassed, detail: "Core 3D models use lightweight builtin/uploaded runtime budgets." },
+      { id: "audio_feedback", passed: audioFeedbackChecked, detail: "Procedural collect, hit, win, and lose audio cues are defined." },
+      { id: "collision_feedback", passed: collisionFeedbackChecked, detail: "Damage, invincibility, and collision feedback rules are defined." },
+      { id: "runtime_effects", passed: runtimeEffectsChecked, detail: "Collect particles, hit particles, flash, and screen shake are enabled." },
+      {
+        id: "genre_differentiation",
+        passed: genreDifferentiationChecked,
+        detail: `${director.genre} uses ${director.movementMode}/${director.layoutMode}/${director.spawnPattern}.`
+      },
+      {
+        id: "non_tower_genre_contract",
+        passed: nonTowerGenreContractChecked,
+        detail: "Non-tower 3D genres keep their own movement, layout, spawn pattern, and ability contract."
+      },
+      { id: "tower_defense_loop", passed: towerDefenseLoopChecked, detail: "Tower defense path, towers, waves, and economy are defined when needed." },
+      { id: "tower_placement", passed: towerPlacementChecked, detail: "Tower build capacity and starting energy are available when needed." },
+      { id: "wave_progression", passed: waveProgressionChecked, detail: "Tower defense waves have spawn counts and intervals when needed." },
+      { id: "base_damage", passed: baseDamageChecked, detail: "Tower defense base health and leak damage are defined when needed." },
+      { id: "projectile_hit", passed: projectileHitChecked, detail: "Tower defense towers have damage and fire-rate rules when needed." },
       {
         id: "asset_load_report",
         passed: assetLoadReport.ready,
@@ -697,6 +1087,55 @@ function createThreeVerificationReport(
   };
 }
 
+function checkNonTowerGenreContract(director: ThreeSceneDirector): boolean {
+  if (director.genre === "futuristic_tower_defense") return true;
+  const abilities = new Set(director.abilities ?? []);
+  const contracts: Partial<
+    Record<
+      ThreeGameGenre,
+      {
+        movementMode: ThreeSceneDirector["movementMode"];
+        layoutMode: ThreeSceneDirector["layoutMode"];
+        spawnPattern: ThreeSceneDirector["spawnPattern"];
+        ability: NonNullable<ThreeSceneDirector["abilities"]>[number];
+      }
+    >
+  > = {
+    flight_shooter: {
+      movementMode: "forward_flight",
+      layoutMode: "flight_corridor",
+      spawnPattern: "forward_waves",
+      ability: "boost"
+    },
+    runner: {
+      movementMode: "auto_runner",
+      layoutMode: "lane_track",
+      spawnPattern: "lane_gates",
+      ability: "lane_change"
+    },
+    third_person_collect: {
+      movementMode: "free_move",
+      layoutMode: "small_arena",
+      spawnPattern: "landmark_clusters",
+      ability: "dash"
+    },
+    exploration: {
+      movementMode: "explore_scan",
+      layoutMode: "open_landmarks",
+      spawnPattern: "discovery_ring",
+      ability: "scan"
+    }
+  };
+  const contract = contracts[director.genre];
+  if (!contract) return true;
+  return (
+    director.movementMode === contract.movementMode &&
+    director.layoutMode === contract.layoutMode &&
+    director.spawnPattern === contract.spawnPattern &&
+    abilities.has(contract.ability)
+  );
+}
+
 function createThreeProject(input: {
   projectId: string;
   title: string;
@@ -708,6 +1147,7 @@ function createThreeProject(input: {
   threeAssetPack: ThreeAssetPack;
   threeVerificationReport: ThreeVerificationReport;
   assetLoadReport: ThreeAssetLoadReport;
+  coverPoster: CoverPoster;
 }): MockProject {
   const artifacts: PipelineArtifact[] = [
     {
@@ -744,6 +1184,25 @@ function createThreeProject(input: {
       format: "json",
       title: "Three.js Verification Report",
       content: input.threeVerificationReport
+    },
+    {
+      stage: "cover-poster",
+      fileName: "cover-poster.json",
+      format: "json",
+      title: "Cover Poster",
+      content: input.coverPoster
+    },
+    {
+      stage: "cover-poster",
+      fileName: "cover-poster.webp",
+      format: "json",
+      title: "Cover Poster WebP",
+      content: {
+        fileUrl: input.coverPoster.fileUrl,
+        thumbnailUrl: input.coverPoster.thumbnailUrl,
+        prompt: input.coverPoster.prompt,
+        fallbackUsed: input.coverPoster.fallbackUsed
+      }
     }
   ];
   const qaReport: QaReport = {
@@ -791,11 +1250,19 @@ function createThreeProject(input: {
       difficulty: "normal",
       referencedAssetKeys: input.threeAssetPack.assets.map((asset) => asset.assetKey),
       gameplay: {
-        primaryAction: "dodge_collect",
-        enemyBehavior: "wave",
-        objectiveMode: "collect_score",
-        playerAbility: "dash",
-        spawnPattern: "waves"
+        primaryAction: input.threeSceneDirector.movementMode === "auto_runner" ? "jump_reach_goal" : "dodge_collect",
+        enemyBehavior: input.threeSceneDirector.enemies.some((enemy) => enemy.behavior === "chase")
+          ? "chase"
+          : input.threeSceneDirector.enemies.some((enemy) => enemy.behavior === "patrol")
+            ? "patrol"
+            : "wave",
+        objectiveMode: input.threeSceneDirector.objectives.avoidDamage ? "collect_score" : "survive_timer",
+        playerAbility: input.threeSceneDirector.movementMode === "auto_runner" ? "jump" : "dash",
+        spawnPattern: input.threeSceneDirector.layoutMode === "lane_track"
+          ? "lanes"
+          : input.threeSceneDirector.spawnPattern === "timed_bursts"
+            ? "waves"
+            : "staggered"
       },
       level: {
         width: 390,
@@ -820,6 +1287,9 @@ function createThreeProject(input: {
     threeAssetPack: input.threeAssetPack,
     threeVerificationReport: input.threeVerificationReport,
     threeAssetLoadReport: input.assetLoadReport,
+    coverPoster: input.coverPoster,
+    coverPosterUrl: input.coverPoster.fileUrl,
+    coverThumbnailUrl: input.coverPoster.thumbnailUrl,
     playUrl: input.publishRecord.playUrl,
     feedback: {
       rating: 0,
@@ -832,6 +1302,42 @@ function createThreeProject(input: {
 function cleanText(value: string | undefined, fallback: string): string {
   const text = (value ?? "").trim();
   return text && !/[�]/.test(text) ? text : fallback;
+}
+
+function createThreeCoverPoster(
+  projectId: string,
+  versionId: string,
+  title: string,
+  idea: string,
+  brief: ThreeGameBrief,
+  director: ThreeSceneDirector
+): CoverPoster {
+  return {
+    fileUrl: `/projects/${projectId}/${versionId}/assets/cover-poster.webp`,
+    thumbnailUrl: `/projects/${projectId}/${versionId}/assets/cover-poster-thumb.webp`,
+    prompt: [
+      `Create a 16:9 game lobby poster for ${title}.`,
+      idea,
+      brief.playerFantasy,
+      `Genre: ${brief.genre}.`,
+      `Camera: ${director.camera}.`,
+      `Collect target: ${director.objectives.collectTarget}.`
+    ].join(" "),
+    provider: "poster-fallback",
+    format: "webp",
+    width: 1280,
+    height: 720,
+    thumbnailWidth: 512,
+    thumbnailHeight: 288,
+    fallbackUsed: true
+  };
+}
+
+function normalizedHeightForThreeAsset(assetKey: string): number {
+  if (assetKey === "three.model.player") return 1.2;
+  if (assetKey === "three.model.hazard") return 0.9;
+  if (assetKey === "three.model.collectible") return 0.45;
+  return 1;
 }
 
 function normalizeStringArray(value: string[] | undefined, fallback: string[], minLength: number): string[] {

@@ -599,29 +599,22 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
     if (request.method === "POST" && request.path === "/api/generate-three-game") {
       try {
         const confirmedThreeAssets = parseOptionalConfirmedThreeAssets(request.body.confirmedThreeAssets);
-        if (!hasConfirmedThreeCoreAssets(confirmedThreeAssets)) {
-          return {
-            status: 400,
-            body: {
-              error:
-                "Missing confirmed 3D core models. Confirm three.model.player, three.model.hazard, and three.model.collectible before generating a Three.js game."
-            }
-          };
-        }
         const projectId = optionalString(request.body.projectId) ?? `three-project-${Date.now()}`;
         const versionId = "v1";
-        const localizationError = await localizeRemoteThreeModelAssets(
-          store,
-          projectId,
-          versionId,
-          confirmedThreeAssets,
-          options.remoteAssetFetcher
-        );
-        if (localizationError) {
-          return {
-            status: 400,
-            body: { error: localizationError }
-          };
+        if (hasConfirmedThreeCoreAssets(confirmedThreeAssets)) {
+          const localizationError = await localizeRemoteThreeModelAssets(
+            store,
+            projectId,
+            versionId,
+            confirmedThreeAssets,
+            options.remoteAssetFetcher
+          );
+          if (localizationError) {
+            return {
+              status: 400,
+              body: { error: localizationError }
+            };
+          }
         }
         const result = generateThreeGameMvp({
           idea: requireString(request.body.idea, "idea"),
@@ -1422,7 +1415,8 @@ function parseThreeGameGenre(value: unknown) {
     value === "dodge_collect" ||
     value === "flight_shooter" ||
     value === "third_person_collect" ||
-    value === "exploration"
+    value === "exploration" ||
+    value === "futuristic_tower_defense"
   ) {
     return value;
   }

@@ -48,6 +48,7 @@ export function ThreePreview({
       const height = mount.clientHeight || 844;
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(director.world.skyColor);
+      const audio = createThreeAudioRuntime();
 
       const camera = new THREE.PerspectiveCamera(58, width / height, 0.1, 100);
       camera.position.set(0, 7, 13);
@@ -91,24 +92,44 @@ export function ThreePreview({
       ground.rotation.x = -Math.PI / 2;
       scene.add(ground);
 
+      if (director.movementMode === "tower_defense" && director.towerDefense) {
+        cleanupFns.push(
+          runTowerDefenseRuntime({
+            THREE,
+            scene,
+            camera,
+            renderer,
+            director,
+            audio,
+            stateRef,
+            setHud,
+            setPlayerMoved
+          })
+        );
+        setRuntimeStatus((assetLoadReport?.assets ?? []).some((asset) => asset.fallback) ? "procedural" : "ready");
+        cleanupFns.push(() => {
+          audio.dispose();
+          renderer.dispose();
+          mount.innerHTML = "";
+        });
+        return;
+      }
+
+      const arcadeRuntime = createThreeGenreRuntime(director);
       const player = await createRuntimeModel(
         THREE,
         loader,
         readAsset("three.model.player"),
-        () =>
-          new THREE.Mesh(
-            new THREE.ConeGeometry(0.55, 1.35, 8),
-            new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x0f172a })
-          ),
+        () => createProceduralPlayer(THREE, director),
         { scale: 1.1, assetKey: "three.model.player", errors: modelLoadErrors }
       );
       player.position.set(director.player.start.x, director.player.start.y, director.player.start.z);
-      player.rotation.x = Math.PI / 2;
+      if (director.movementMode === "forward_flight") player.rotation.x = Math.PI / 2;
       scene.add(player);
 
       const collectibles = Array.from({ length: director.objectives.collectTarget }, (_, index) => {
-        const item = createProceduralCollectible(THREE);
-        item.position.set(((index % 4) - 1.5) * 2.3, 0.45, 4 - Math.floor(index / 4) * 5);
+        const item = createProceduralCollectible(THREE, director);
+        item.position.copy(collectiblePosition(THREE, director, index));
         scene.add(item);
         return item;
       });
@@ -118,9 +139,10 @@ export function ThreePreview({
         errors: modelLoadErrors
       });
 
-      const hazards = Array.from({ length: 8 }, (_, index) => {
-        const hazard = createProceduralHazard(THREE);
-        hazard.position.set(((index % 4) - 1.5) * 2.6, 0.6, -2 - Math.floor(index / 4) * 4);
+      const hazardCount = Math.min(14, Math.max(3, director.enemies.reduce((sum, enemy) => sum + enemy.count, 0)));
+      const hazards = Array.from({ length: hazardCount }, (_, index) => {
+        const hazard = createProceduralHazard(THREE, director);
+        hazard.position.copy(hazardPosition(THREE, director, index));
         scene.add(hazard);
         return hazard;
       });
@@ -159,7 +181,7 @@ export function ThreePreview({
       const onPointerMove = (event: PointerEvent) => {
         if (stateRef.current.phase !== "playing") return;
         const delta = event.clientX - touchX;
-        player.position.x = clamp(player.position.x + delta * 0.015, -5.4, 5.4);
+        player.position.x = clamp(player.position.x + delta * 0.015 * arcadeRuntime.pointerXSign, -5.4, 5.4);
         touchX = event.clientX;
         setPlayerMoved(true);
       };
@@ -176,72 +198,98 @@ export function ThreePreview({
         stateRef.current = { score: 0, lives: 3, phase: "playing" };
         setPlayerMoved(false);
         player.position.set(director.player.start.x, director.player.start.y, director.player.start.z);
+        arcadeRuntime.reset?.({ THREE, player, collectibles, hazards, director });
+        hitCooldownMs = 0;
+        shakeUntilMs = 0;
+        flashUntilMs = 0;
+        clearParticles(scene, particles);
         collectibles.forEach((item) => {
           item.visible = true;
         });
         updateHud();
+        audio.play("click");
         renderer.domElement.focus();
       }
 
       let last = performance.now();
       let hitCooldownMs = 0;
+      let shakeUntilMs = 0;
+      let flashUntilMs = 0;
+      const particles: Array<{ mesh: Object3D; velocity: import("three").Vector3; expiresAt: number }> = [];
       function animate(now: number) {
         if (disposed) return;
         const delta = Math.min(0.033, (now - last) / 1000);
         last = now;
         hitCooldownMs = Math.max(0, hitCooldownMs - delta * 1000);
+        updateParticles(scene, particles, delta, now);
         if (stateRef.current.phase === "playing") {
           const move = director.player.speed * delta;
           const previousX = player.position.x;
           const previousZ = player.position.z;
-          if (keys.has("arrowleft") || keys.has("a")) player.position.x -= move;
-          if (keys.has("arrowright") || keys.has("d")) player.position.x += move;
-          if (keys.has("arrowup") || keys.has("w")) player.position.z -= move;
-          if (keys.has("arrowdown") || keys.has("s")) player.position.z += move;
+          arcadeRuntime.updatePlayer({ player, keys, move, delta, director });
           if (previousX !== player.position.x || previousZ !== player.position.z) setPlayerMoved(true);
-          player.position.x = clamp(player.position.x, -5.4, 5.4);
-          player.position.z = clamp(player.position.z, -12, 11);
+          player.position.x = clamp(player.position.x, -director.world.width / 2 + 1, director.world.width / 2 - 1);
+          player.position.z = clamp(player.position.z, -director.world.depth / 2 + 1, director.world.depth / 2 - 1);
 
           hazards.forEach((hazard, index) => {
-            hazard.rotation.x += delta * 1.4;
-            hazard.rotation.y += delta * 0.9;
-            const behavior = director.enemies[index % director.enemies.length]?.behavior ?? "falling";
-            if (behavior === "chase") {
-              hazard.position.x += Math.sign(player.position.x - hazard.position.x) * delta * 0.8;
-            } else if (behavior === "patrol" || behavior === "orbit") {
-              hazard.position.x += Math.sin(now / 700 + index) * delta * 1.4;
-            }
-            hazard.position.z += delta * (1.2 + index * 0.08);
-            if (hazard.position.z > 12) hazard.position.z = -14;
+            arcadeRuntime.updateHazard({ hazard, index, player, delta, now, director });
             if (hitCooldownMs <= 0 && distance2D(player.position, hazard.position) < 0.85) {
-              stateRef.current.lives -= 1;
-              hitCooldownMs = 800;
-              hazard.position.z = -14;
-              if (stateRef.current.lives <= 0) stateRef.current.phase = "lost";
+              stateRef.current.lives -= director.collisionRules?.damage ?? 1;
+              hitCooldownMs = director.collisionRules?.invincibleMs ?? 800;
+              if (director.feedbackRules?.hitParticles) {
+                spawnParticleBurst(THREE, scene, particles, hazard.position, 0xfb7185, director.feedbackRules.explosion ? 18 : 8);
+              }
+              if (director.feedbackRules?.screenShake || director.cameraEffects?.shake) shakeUntilMs = now + 320;
+              if (director.feedbackRules?.flash) flashUntilMs = now + 520;
+              audio.play("hit");
+              if (director.feedbackRules?.explosion) audio.play("explosion");
+              if ((director.collisionRules?.knockback ?? 0) > 0) {
+                player.position.x = clamp(
+                  player.position.x + Math.sign(player.position.x - hazard.position.x || 1) * (director.collisionRules?.knockback ?? 1),
+                  -director.world.width / 2 + 1,
+                  director.world.width / 2 - 1
+                );
+              }
+              arcadeRuntime.resetHazard({ hazard, index, director });
+              if (stateRef.current.lives <= 0) {
+                stateRef.current.phase = "lost";
+                audio.play("lose");
+              }
               updateHud();
             }
           });
 
           collectibles.forEach((item) => {
-            item.rotation.y += delta * 2.5;
+            arcadeRuntime.updateCollectible?.({ item, delta, now });
             if (item.visible && distance2D(player.position, item.position) < 0.75) {
               item.visible = false;
               stateRef.current.score += 1;
+              if (director.feedbackRules?.collectParticles) {
+                spawnParticleBurst(THREE, scene, particles, item.position, 0xfacc15, 12);
+              }
+              audio.play("collect");
               if (stateRef.current.score >= director.objectives.collectTarget) {
                 stateRef.current.phase = "won";
+                audio.play("win");
               }
               updateHud();
             }
           });
         }
-        camera.position.x += (player.position.x * 0.28 - camera.position.x) * 0.05;
-        camera.lookAt(player.position.x * 0.25, 0, player.position.z - 3);
+        setObjectFlash(player, now < flashUntilMs);
+        arcadeRuntime.updateCamera(camera, player, director);
+        if (now < shakeUntilMs) {
+          const intensity = 0.08;
+          camera.position.x += (Math.random() - 0.5) * intensity;
+          camera.position.y += (Math.random() - 0.5) * intensity;
+        }
         renderer.render(scene, camera);
         requestAnimationFrame(animate);
       }
       requestAnimationFrame(animate);
 
       cleanupFns.push(() => {
+        audio.dispose();
         renderer.dispose();
         mount.innerHTML = "";
       });
@@ -259,6 +307,7 @@ export function ThreePreview({
 
   const isTerminal = hud.phase === "won" || hud.phase === "lost";
   const hasAssetError = runtimeStatus === "asset_error";
+  const controlHint = threeControlHint(director);
   return (
     <div
       className={`three-preview-shell ${viewportMode}`}
@@ -274,7 +323,7 @@ export function ThreePreview({
       </div>
       <div className="three-preview-canvas" ref={mountRef} />
       <div className="three-preview-controls">
-        <span>键盘 WASD/方向键移动，空格或 Enter 开始/重开；手机可拖动控制。</span>
+        <span>{controlHint}</span>
       </div>
       {hasAssetError ? <div className="three-preview-asset-error">3D 素材加载失败：{assetError}</div> : null}
       {hud.phase !== "playing" ? (
@@ -308,18 +357,941 @@ function distance2D(left: { x: number; z: number }, right: { x: number; z: numbe
   return Math.hypot(left.x - right.x, left.z - right.z);
 }
 
-function createProceduralCollectible(THREE: typeof import("three")) {
+type ThreeAudioCue = "collect" | "hit" | "win" | "lose" | "warning" | "explosion" | "click";
+
+function createThreeAudioRuntime() {
+  let context: AudioContext | null = null;
+  function ensureContext() {
+    if (!context) {
+      const AudioContextCtor =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      context = AudioContextCtor ? new AudioContextCtor() : null;
+    }
+    if (context?.state === "suspended") void context.resume();
+    return context;
+  }
+  return {
+    play(cue: ThreeAudioCue) {
+      const audioContext = ensureContext();
+      if (!audioContext) return;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const now = audioContext.currentTime;
+      const frequencyByCue: Record<ThreeAudioCue, number> = {
+        collect: 880,
+        hit: 120,
+        win: 660,
+        lose: 90,
+        warning: 240,
+        explosion: 70,
+        click: 420
+      };
+      oscillator.frequency.setValueAtTime(frequencyByCue[cue], now);
+      oscillator.type = cue === "explosion" || cue === "hit" ? "sawtooth" : "sine";
+      gain.gain.setValueAtTime(cue === "explosion" ? 0.08 : 0.045, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + (cue === "win" ? 0.32 : 0.16));
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + (cue === "win" ? 0.34 : 0.18));
+    },
+    dispose() {
+      if (context) void context.close();
+      context = null;
+    }
+  };
+}
+
+function spawnParticleBurst(
+  THREE: typeof import("three"),
+  scene: import("three").Scene,
+  particles: Array<{ mesh: Object3D; velocity: import("three").Vector3; expiresAt: number }>,
+  position: import("three").Vector3,
+  color: number,
+  count: number
+) {
+  for (let index = 0; index < count; index += 1) {
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.055, 6, 6),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
+    );
+    mesh.position.copy(position);
+    const angle = (index / Math.max(1, count)) * Math.PI * 2;
+    const speed = 0.8 + (index % 4) * 0.18;
+    const velocity = new THREE.Vector3(Math.cos(angle) * speed, 0.8 + (index % 3) * 0.2, Math.sin(angle) * speed);
+    scene.add(mesh);
+    particles.push({ mesh, velocity, expiresAt: performance.now() + 650 });
+  }
+}
+
+function updateParticles(
+  scene: import("three").Scene,
+  particles: Array<{ mesh: Object3D; velocity: import("three").Vector3; expiresAt: number }>,
+  delta: number,
+  now: number
+) {
+  for (let index = particles.length - 1; index >= 0; index -= 1) {
+    const particle = particles[index];
+    particle.mesh.position.addScaledVector(particle.velocity, delta);
+    particle.velocity.y -= delta * 1.8;
+    const material = (particle.mesh as import("three").Mesh).material;
+    if (material && !Array.isArray(material) && "opacity" in material) {
+      material.opacity = Math.max(0, (particle.expiresAt - now) / 650);
+    }
+    if (now >= particle.expiresAt) {
+      scene.remove(particle.mesh);
+      particles.splice(index, 1);
+    }
+  }
+}
+
+function clearParticles(scene: import("three").Scene, particles: Array<{ mesh: Object3D }>) {
+  for (const particle of particles) scene.remove(particle.mesh);
+  particles.length = 0;
+}
+
+function setObjectFlash(object: Object3D, active: boolean) {
+  object.traverse((child) => {
+    const mesh = child as import("three").Mesh;
+    const material = mesh.material;
+    if (!material || Array.isArray(material) || !("emissiveIntensity" in material)) return;
+    material.emissiveIntensity = active ? 1.6 : 0.4;
+  });
+}
+
+type ThreeArcadeRuntime = {
+  pointerXSign: number;
+  reset?: (options: {
+    THREE: typeof import("three");
+    player: Object3D;
+    collectibles: Object3D[];
+    hazards: Object3D[];
+    director: ThreeSceneDirector;
+  }) => void;
+  updatePlayer: (options: {
+    player: Object3D;
+    keys: Set<string>;
+    move: number;
+    delta: number;
+    director: ThreeSceneDirector;
+  }) => void;
+  updateHazard: (options: {
+    hazard: Object3D;
+    index: number;
+    player: Object3D;
+    delta: number;
+    now: number;
+    director: ThreeSceneDirector;
+  }) => void;
+  resetHazard: (options: { hazard: Object3D; index: number; director: ThreeSceneDirector }) => void;
+  updateCollectible?: (options: { item: Object3D; delta: number; now: number }) => void;
+  updateCamera: (camera: import("three").PerspectiveCamera, player: Object3D, director: ThreeSceneDirector) => void;
+};
+
+function createThreeGenreRuntime(director: ThreeSceneDirector): ThreeArcadeRuntime {
+  if (director.movementMode === "forward_flight") return runFlightShooterRuntime();
+  if (director.movementMode === "auto_runner") return runRunnerRuntime();
+  if (director.movementMode === "free_move") return runThirdPersonCollectRuntime();
+  if (director.movementMode === "explore_scan") return runExplorationRuntime();
+  return runGenericDodgeCollectRuntime();
+}
+
+function runFlightShooterRuntime(): ThreeArcadeRuntime {
+  return {
+    pointerXSign: 1,
+    updatePlayer({ player, keys, move }) {
+      player.position.z -= move * 0.35;
+      if (keys.has("arrowleft") || keys.has("a")) player.position.x -= move;
+      if (keys.has("arrowright") || keys.has("d")) player.position.x += move;
+      if (keys.has("arrowup") || keys.has("w")) player.position.y = clamp(player.position.y + move * 0.18, 0.55, 1.8);
+      if (keys.has("arrowdown") || keys.has("s")) player.position.y = clamp(player.position.y - move * 0.18, 0.45, 1.8);
+      player.rotation.z = -player.position.x * 0.08;
+    },
+    updateHazard({ hazard, index, player, delta, director }) {
+      hazard.rotation.x += delta * 1.8;
+      hazard.rotation.y += delta * 1.1;
+      hazard.position.z += delta * (3.1 + index * 0.1);
+      hazard.position.x += Math.sin(performance.now() / 650 + index) * delta * 0.5;
+      if (hazard.position.z > player.position.z + 7) resetForwardHazard(hazard, index, director);
+    },
+    resetHazard({ hazard, index, director }) {
+      resetForwardHazard(hazard, index, director);
+    },
+    updateCollectible({ item, delta }) {
+      item.rotation.y += delta * 3.4;
+      item.position.y = 0.65 + Math.sin(performance.now() / 240) * 0.08;
+    },
+    updateCamera(camera, player) {
+      camera.position.x += (player.position.x * 0.35 - camera.position.x) * 0.06;
+      camera.position.y += (4.2 - camera.position.y) * 0.05;
+      camera.position.z += (player.position.z + 9 - camera.position.z) * 0.06;
+      camera.lookAt(player.position.x * 0.25, player.position.y, player.position.z - 7);
+    }
+  };
+}
+
+function runRunnerRuntime(): ThreeArcadeRuntime {
+  const lanes = [-2.4, 0, 2.4];
+  return {
+    pointerXSign: 1,
+    reset({ player }) {
+      player.userData.laneIndex = 1;
+      player.userData.jumpVelocity = 0;
+    },
+    updatePlayer({ player, keys, move, delta }) {
+      const laneIndex = Number(player.userData.laneIndex ?? 1);
+      let nextLane = laneIndex;
+      if ((keys.has("arrowleft") || keys.has("a")) && !player.userData.leftLatch) nextLane -= 1;
+      if ((keys.has("arrowright") || keys.has("d")) && !player.userData.rightLatch) nextLane += 1;
+      player.userData.leftLatch = keys.has("arrowleft") || keys.has("a");
+      player.userData.rightLatch = keys.has("arrowright") || keys.has("d");
+      player.userData.laneIndex = clamp(nextLane, 0, lanes.length - 1);
+      if ((keys.has("arrowup") || keys.has("w") || keys.has(" ")) && player.position.y <= 0.52) {
+        player.userData.jumpVelocity = 5.2;
+      }
+      player.userData.jumpVelocity = Number(player.userData.jumpVelocity ?? 0) - 12 * delta;
+      player.position.y = Math.max(0.5, player.position.y + Number(player.userData.jumpVelocity ?? 0) * delta);
+      if (player.position.y <= 0.5) player.userData.jumpVelocity = 0;
+      player.position.x += (lanes[Number(player.userData.laneIndex)] - player.position.x) * 0.22;
+      player.position.z += move * 0.9;
+      player.rotation.y = (lanes[Number(player.userData.laneIndex)] - player.position.x) * 0.08;
+    },
+    updateHazard({ hazard, index, player, delta, director }) {
+      hazard.rotation.y += delta * 0.8;
+      hazard.position.z -= delta * (2.2 + index * 0.08);
+      if (hazard.position.z < player.position.z - 8) resetRunnerGate(hazard, index, director, player.position.z);
+    },
+    resetHazard({ hazard, index, director }) {
+      resetRunnerGate(hazard, index, director, 0);
+    },
+    updateCollectible({ item, delta }) {
+      item.rotation.y += delta * 5;
+    },
+    updateCamera(camera, player) {
+      camera.position.x += (player.position.x * 0.35 - camera.position.x) * 0.08;
+      camera.position.y += (4.8 - camera.position.y) * 0.05;
+      camera.position.z += (player.position.z - 8.5 - camera.position.z) * 0.08;
+      camera.lookAt(player.position.x * 0.2, 0.9, player.position.z + 6);
+    }
+  };
+}
+
+function runThirdPersonCollectRuntime(): ThreeArcadeRuntime {
+  return {
+    pointerXSign: 1,
+    updatePlayer({ player, keys, move }) {
+      if (keys.has("arrowleft") || keys.has("a")) player.position.x -= move;
+      if (keys.has("arrowright") || keys.has("d")) player.position.x += move;
+      if (keys.has("arrowup") || keys.has("w")) player.position.z -= move;
+      if (keys.has("arrowdown") || keys.has("s")) player.position.z += move;
+    },
+    updateHazard({ hazard, index, player, delta, now }) {
+      const patrolRadius = 2.2 + (index % 3) * 0.6;
+      const originX = Number(hazard.userData.originX ?? hazard.position.x);
+      const originZ = Number(hazard.userData.originZ ?? hazard.position.z);
+      hazard.userData.originX = originX;
+      hazard.userData.originZ = originZ;
+      const distanceToPlayer = distance2D(player.position, hazard.position);
+      if (distanceToPlayer < 4.5) {
+        hazard.position.x += Math.sign(player.position.x - hazard.position.x) * delta * 0.9;
+        hazard.position.z += Math.sign(player.position.z - hazard.position.z) * delta * 0.9;
+      } else {
+        hazard.position.x = originX + Math.cos(now / 900 + index) * patrolRadius;
+        hazard.position.z = originZ + Math.sin(now / 900 + index) * patrolRadius;
+      }
+      hazard.rotation.y += delta * 1.2;
+    },
+    resetHazard({ hazard }) {
+      hazard.position.x = Number(hazard.userData.originX ?? hazard.position.x);
+      hazard.position.z = Number(hazard.userData.originZ ?? hazard.position.z);
+    },
+    updateCollectible({ item, delta }) {
+      item.rotation.y += delta * 2.2;
+      item.rotation.x += delta * 0.6;
+    },
+    updateCamera(camera, player) {
+      camera.position.x += (player.position.x * 0.45 - camera.position.x) * 0.05;
+      camera.position.y += (6.5 - camera.position.y) * 0.05;
+      camera.position.z += (player.position.z + 9 - camera.position.z) * 0.05;
+      camera.lookAt(player.position.x, 0.4, player.position.z);
+    }
+  };
+}
+
+function runExplorationRuntime(): ThreeArcadeRuntime {
+  return {
+    pointerXSign: 1,
+    updatePlayer({ player, keys, move }) {
+      const exploreMove = move * 0.72;
+      if (keys.has("arrowleft") || keys.has("a")) player.position.x -= exploreMove;
+      if (keys.has("arrowright") || keys.has("d")) player.position.x += exploreMove;
+      if (keys.has("arrowup") || keys.has("w")) player.position.z -= exploreMove;
+      if (keys.has("arrowdown") || keys.has("s")) player.position.z += exploreMove;
+      if (keys.has(" ") || keys.has("enter")) player.userData.scanPulse = 1;
+    },
+    updateHazard({ hazard, index, delta, now }) {
+      hazard.rotation.z += delta * 0.8;
+      hazard.position.y = 0.55 + Math.sin(now / 700 + index) * 0.18;
+    },
+    resetHazard() {
+      // Exploration hazards are soft landmarks; do not respawn them aggressively.
+    },
+    updateCollectible({ item, delta, now }) {
+      item.rotation.y += delta * 1.8;
+      item.position.y = 0.5 + Math.sin(now / 500) * 0.12;
+    },
+    updateCamera(camera, player) {
+      camera.position.x += (player.position.x * 0.35 + 6 - camera.position.x) * 0.035;
+      camera.position.y += (8.5 - camera.position.y) * 0.035;
+      camera.position.z += (player.position.z + 10 - camera.position.z) * 0.035;
+      camera.lookAt(player.position.x * 0.3, 0, player.position.z);
+    }
+  };
+}
+
+function runGenericDodgeCollectRuntime(): ThreeArcadeRuntime {
+  return {
+    pointerXSign: 1,
+    updatePlayer({ player, keys, move }) {
+      if (keys.has("arrowleft") || keys.has("a")) player.position.x -= move;
+      if (keys.has("arrowright") || keys.has("d")) player.position.x += move;
+      if (keys.has("arrowup") || keys.has("w")) player.position.z -= move;
+      if (keys.has("arrowdown") || keys.has("s")) player.position.z += move;
+    },
+    updateHazard({ hazard, index, player, delta, now, director }) {
+      hazard.rotation.x += delta * 1.4;
+      hazard.rotation.y += delta * 0.9;
+      const behavior = director.enemies[index % director.enemies.length]?.behavior ?? "falling";
+      if (behavior === "chase") hazard.position.x += Math.sign(player.position.x - hazard.position.x) * delta * 0.8;
+      if (behavior === "patrol" || behavior === "orbit") hazard.position.x += Math.sin(now / 700 + index) * delta * 1.4;
+      hazard.position.z += delta * (1.2 + index * 0.08);
+      if (hazard.position.z > director.world.depth / 2) hazard.position.z = -director.world.depth / 2;
+    },
+    resetHazard({ hazard, director }) {
+      hazard.position.z = -director.world.depth / 2;
+    },
+    updateCollectible({ item, delta }) {
+      item.rotation.y += delta * 2.5;
+    },
+    updateCamera
+  };
+}
+
+function resetForwardHazard(hazard: Object3D, index: number, director: ThreeSceneDirector) {
+  hazard.position.x = ((index % 5) - 2) * 1.9;
+  hazard.position.z = -director.world.depth / 2 - index * 1.8;
+}
+
+function resetRunnerGate(hazard: Object3D, index: number, director: ThreeSceneDirector, playerZ: number) {
+  const lanes = [-2.4, 0, 2.4];
+  hazard.position.x = lanes[index % lanes.length];
+  hazard.position.z = playerZ + director.world.depth / 2 + index * 2.4;
+}
+
+function threeControlHint(director: ThreeSceneDirector): string {
+  if (director.movementMode === "tower_defense") {
+    return "塔防：WASD/方向键选择建造点，空格或 Enter 建塔/开始/重开；手机可点击建造点。";
+  }
+  if (director.movementMode === "forward_flight") {
+    return "飞行：WASD/方向键控制飞船，躲避前方障碍并收集能量；空格或 Enter 开始/重开。";
+  }
+  if (director.movementMode === "auto_runner") {
+    return "跑酷：左右键/A/D 换道，上键/W/空格跳跃；收集金币并避开闸门。";
+  }
+  if (director.movementMode === "free_move") {
+    return "第三人称：WASD/方向键自由移动，收集任务物并躲开巡逻敌人。";
+  }
+  if (director.movementMode === "explore_scan") {
+    return "探索：WASD/方向键漫游，靠近地标收集发现点，空格触发扫描反馈。";
+  }
+  return "键盘 WASD/方向键移动，空格或 Enter 开始/重开；手机可拖动控制。";
+}
+
+function createProceduralPlayer(THREE: typeof import("three"), director: ThreeSceneDirector) {
+  if (director.movementMode === "auto_runner") {
+    return new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.35, 0.75, 4, 8),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x082f49 })
+    );
+  }
+  if (director.movementMode === "explore_scan") {
+    return new THREE.Mesh(
+      new THREE.BoxGeometry(0.8, 0.45, 1.1),
+      new THREE.MeshStandardMaterial({ color: 0xa7f3d0, emissive: 0x064e3b })
+    );
+  }
+  if (director.movementMode === "arena_dodge") {
+    return new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.55, 0),
+      new THREE.MeshStandardMaterial({ color: 0xc084fc, emissive: 0x581c87 })
+    );
+  }
+  return new THREE.Mesh(
+    new THREE.ConeGeometry(0.55, 1.35, 8),
+    new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x0f172a })
+  );
+}
+
+function createProceduralCollectible(THREE: typeof import("three"), director: ThreeSceneDirector) {
+  if (director.movementMode === "auto_runner") {
+    return new THREE.Mesh(
+      new THREE.TorusGeometry(0.28, 0.08, 8, 16),
+      new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0x854d0e })
+    );
+  }
+  if (director.movementMode === "explore_scan") {
+    return new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.34, 0),
+      new THREE.MeshStandardMaterial({ color: 0x67e8f9, emissive: 0x155e75 })
+    );
+  }
   return new THREE.Mesh(
     new THREE.OctahedronGeometry(0.35, 0),
     new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0x7c2d12 })
   );
 }
 
-function createProceduralHazard(THREE: typeof import("three")) {
+function createProceduralHazard(THREE: typeof import("three"), director?: ThreeSceneDirector) {
+  if (director?.movementMode === "auto_runner") {
+    return new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 0.9, 0.35),
+      new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x450a0a })
+    );
+  }
+  if (director?.movementMode === "explore_scan") {
+    return new THREE.Mesh(
+      new THREE.TorusGeometry(0.48, 0.08, 8, 18),
+      new THREE.MeshStandardMaterial({ color: 0x93c5fd, emissive: 0x1e3a8a })
+    );
+  }
   return new THREE.Mesh(
     new THREE.DodecahedronGeometry(0.55, 0),
     new THREE.MeshStandardMaterial({ color: 0xfb7185, emissive: 0x450a0a })
   );
+}
+
+type TowerDefenseRuntimeOptions = {
+  THREE: typeof import("three");
+  scene: import("three").Scene;
+  camera: import("three").PerspectiveCamera;
+  renderer: import("three").WebGLRenderer;
+  director: ThreeSceneDirector;
+  audio: ReturnType<typeof createThreeAudioRuntime>;
+  stateRef: React.MutableRefObject<{ score: number; lives: number; phase: RuntimePhase }>;
+  setHud: React.Dispatch<React.SetStateAction<{ score: number; lives: number; phase: RuntimePhase }>>;
+  setPlayerMoved: React.Dispatch<React.SetStateAction<boolean>>;
+};
+
+type TowerDefenseEnemy = {
+  mesh: Object3D;
+  waveIndex: number;
+  type: NonNullable<ThreeSceneDirector["towerDefense"]>["waves"][number]["enemyType"];
+  health: number;
+  maxHealth: number;
+  speed: number;
+  reward: number;
+  targetNode: number;
+  slowUntilMs: number;
+};
+
+type TowerDefenseTower = {
+  mesh: Object3D;
+  kind: NonNullable<ThreeSceneDirector["towerDefense"]>["towers"][number]["kind"];
+  range: number;
+  fireRateMs: number;
+  damage: number;
+  effect?: "slow" | "splash";
+  cooldownMs: number;
+};
+
+type TowerDefenseProjectile = {
+  mesh: Object3D;
+  target: TowerDefenseEnemy;
+  damage: number;
+  effect?: "slow" | "splash";
+  speed: number;
+};
+
+function runTowerDefenseRuntime({
+  THREE,
+  scene,
+  camera,
+  renderer,
+  director,
+  audio,
+  stateRef,
+  setHud,
+  setPlayerMoved
+}: TowerDefenseRuntimeOptions) {
+  const towerDefenseConfig = director.towerDefense;
+  if (!towerDefenseConfig) return () => undefined;
+  const towerDefense: NonNullable<ThreeSceneDirector["towerDefense"]> = towerDefenseConfig;
+
+  const pathNodes = towerDefense.pathNodes.map((node) => new THREE.Vector3(node.x, 0.08, node.z));
+  const particles: Array<{ mesh: Object3D; velocity: import("three").Vector3; expiresAt: number }> = [];
+  const enemies: TowerDefenseEnemy[] = [];
+  const towers: TowerDefenseTower[] = [];
+  const projectiles: TowerDefenseProjectile[] = [];
+  const buildPads: Object3D[] = [];
+  const cleanupFns: Array<() => void> = [];
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+
+  createTowerDefensePath(THREE, scene, pathNodes);
+  const baseCore = createTowerDefenseBaseCore(THREE);
+  const baseNode = pathNodes[pathNodes.length - 1] ?? new THREE.Vector3(0, 0, 0);
+  baseCore.position.set(baseNode.x, 0.65, baseNode.z);
+  scene.add(baseCore);
+
+  const towerRules = towerDefense.towers;
+  const defaultTower = towerRules[0] ?? { id: "laser", kind: "laser" as const, cost: 20, range: 4, fireRateMs: 420, damage: 1 };
+  const maxTowers = towerDefense.buildRules.maxTowers;
+  let energy = towerDefense.economyRules.startingEnergy;
+  let activeWave = 0;
+  let spawnedInWave = 0;
+  let nextSpawnAt = 0;
+  let lastTime = performance.now();
+  let startedAt = 0;
+  let animationId = 0;
+  let selectedBuildPadIndex = 0;
+
+  const padPositions = createTowerDefenseBuildPadPositions(THREE, pathNodes).slice(0, maxTowers);
+  for (const position of padPositions) {
+    const pad = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.62, 0.72, 0.12, 6),
+      new THREE.MeshStandardMaterial({ color: 0x164e63, emissive: 0x083344, roughness: 0.45 })
+    );
+    pad.position.copy(position);
+    pad.position.y = 0.1;
+    scene.add(pad);
+    buildPads.push(pad);
+  }
+  selectBuildPad(0);
+
+  function updateHud() {
+    setHud({ ...stateRef.current });
+  }
+
+  function resetRuntime() {
+    for (const enemy of enemies) scene.remove(enemy.mesh);
+    for (const tower of towers) scene.remove(tower.mesh);
+    for (const projectile of projectiles) scene.remove(projectile.mesh);
+    clearParticles(scene, particles);
+    enemies.length = 0;
+    towers.length = 0;
+    projectiles.length = 0;
+    energy = towerDefense.economyRules.startingEnergy;
+    activeWave = 0;
+    spawnedInWave = 0;
+    nextSpawnAt = 0;
+    startedAt = performance.now();
+    stateRef.current = { score: 0, lives: towerDefense.baseRules.baseHealth, phase: "playing" };
+    buildStartingTower();
+    updateHud();
+    setPlayerMoved(true);
+  }
+
+  function buildStartingTower() {
+    const firstPad = buildPads[0];
+    if (!firstPad) return;
+    const tower = createTowerDefenseTower(THREE, defaultTower);
+    tower.mesh.position.set(firstPad.position.x, 0.45, firstPad.position.z);
+    scene.add(tower.mesh);
+    towers.push(tower);
+    firstPad.visible = false;
+  }
+
+  function buildTowerAtPad(pad: Object3D) {
+    if (stateRef.current.phase !== "playing") resetRuntime();
+    if (!pad.visible || towers.length >= maxTowers || energy < defaultTower.cost) return;
+    energy -= defaultTower.cost;
+    const tower = createTowerDefenseTower(THREE, defaultTower);
+    tower.mesh.position.set(pad.position.x, 0.45, pad.position.z);
+    scene.add(tower.mesh);
+    towers.push(tower);
+    pad.visible = false;
+    spawnParticleBurst(THREE, scene, particles, tower.mesh.position, 0x38bdf8, 10);
+    audio.play("click");
+    selectBuildPad(selectedBuildPadIndex + 1);
+    updateHud();
+  }
+
+  function selectBuildPad(nextIndex: number) {
+    const visiblePads = buildPads.filter((pad) => pad.visible);
+    if (visiblePads.length === 0) return;
+    selectedBuildPadIndex = ((nextIndex % visiblePads.length) + visiblePads.length) % visiblePads.length;
+    visiblePads.forEach((pad, index) => {
+      const mesh = pad as import("three").Mesh;
+      const material = mesh.material;
+      if (!material || Array.isArray(material) || !("emissiveIntensity" in material)) return;
+      material.emissiveIntensity = index === selectedBuildPadIndex ? 1.2 : 0.35;
+    });
+  }
+
+  function buildSelectedTower() {
+    const visiblePads = buildPads.filter((pad) => pad.visible);
+    if (visiblePads.length === 0) {
+      if (stateRef.current.phase !== "playing") resetRuntime();
+      return;
+    }
+    buildTowerAtPad(visiblePads[selectedBuildPadIndex] ?? visiblePads[0]);
+  }
+
+  function spawnEnemy(waveIndex: number) {
+    const wave = towerDefense.waves[waveIndex];
+    if (!wave) return;
+    const enemy = createTowerDefenseEnemy(THREE, wave.enemyType);
+    const start = pathNodes[0] ?? new THREE.Vector3();
+    enemy.mesh.position.set(start.x, 0.42, start.z);
+    scene.add(enemy.mesh);
+    enemies.push({
+      mesh: enemy.mesh,
+      waveIndex,
+      type: wave.enemyType,
+      health: wave.health,
+      maxHealth: wave.health,
+      speed: wave.speed,
+      reward: wave.reward,
+      targetNode: 1,
+      slowUntilMs: 0
+    });
+  }
+
+  function updateWaves(now: number) {
+    if (activeWave >= towerDefense.waves.length) return;
+    const wave = towerDefense.waves[activeWave];
+    if (!wave) return;
+    const elapsed = now - startedAt;
+    if (elapsed < wave.startsAtMs) return;
+    if (spawnedInWave < wave.count && now >= nextSpawnAt) {
+      spawnEnemy(activeWave);
+      spawnedInWave += 1;
+      nextSpawnAt = now + wave.intervalMs;
+      if (spawnedInWave === 1) audio.play("warning");
+    }
+    if (spawnedInWave >= wave.count && enemies.every((enemy) => enemy.waveIndex !== activeWave)) {
+      activeWave += 1;
+      spawnedInWave = 0;
+      nextSpawnAt = now + 900;
+    }
+  }
+
+  function updateEnemies(delta: number, now: number) {
+    for (let index = enemies.length - 1; index >= 0; index -= 1) {
+      const enemy = enemies[index];
+      const target = pathNodes[enemy.targetNode];
+      if (!target) {
+        stateRef.current.lives = Math.max(0, stateRef.current.lives - towerDefense.baseRules.leakDamage);
+        scene.remove(enemy.mesh);
+        enemies.splice(index, 1);
+        spawnParticleBurst(THREE, scene, particles, baseCore.position, 0xfb7185, 12);
+        audio.play("hit");
+        if (stateRef.current.lives <= 0) {
+          stateRef.current.phase = "lost";
+          audio.play("lose");
+        }
+        updateHud();
+        continue;
+      }
+      const speed = enemy.speed * (now < enemy.slowUntilMs ? 0.48 : 1);
+      const toTarget = target.clone().sub(enemy.mesh.position);
+      const distance = Math.max(0.001, toTarget.length());
+      const step = speed * delta;
+      if (distance <= step) {
+        enemy.mesh.position.copy(target);
+        enemy.targetNode += 1;
+      } else {
+        enemy.mesh.position.addScaledVector(toTarget.normalize(), step);
+      }
+      enemy.mesh.rotation.y += delta * (enemy.type === "runner" ? 3.2 : 1.6);
+    }
+  }
+
+  function updateTowers(delta: number) {
+    for (const tower of towers) {
+      tower.cooldownMs = Math.max(0, tower.cooldownMs - delta * 1000);
+      const target = enemies
+        .filter((enemy) => distance2D(tower.mesh.position, enemy.mesh.position) <= tower.range)
+        .sort((left, right) => right.targetNode - left.targetNode)[0];
+      if (!target) continue;
+      tower.mesh.lookAt(target.mesh.position.x, tower.mesh.position.y, target.mesh.position.z);
+      if (tower.cooldownMs > 0) continue;
+      tower.cooldownMs = tower.fireRateMs;
+      const projectile = new THREE.Mesh(
+        new THREE.SphereGeometry(tower.kind === "missile" ? 0.13 : 0.08, 8, 8),
+        new THREE.MeshBasicMaterial({ color: tower.kind === "slow" ? 0x67e8f9 : tower.kind === "missile" ? 0xf97316 : 0x22d3ee })
+      );
+      projectile.position.copy(tower.mesh.position);
+      projectile.position.y += 0.48;
+      scene.add(projectile);
+      projectiles.push({
+        mesh: projectile,
+        target,
+        damage: tower.damage,
+        effect: tower.effect,
+        speed: tower.kind === "missile" ? 7 : 10
+      });
+      audio.play(tower.kind === "missile" ? "explosion" : "click");
+    }
+  }
+
+  function updateProjectiles(delta: number, now: number) {
+    for (let index = projectiles.length - 1; index >= 0; index -= 1) {
+      const projectile = projectiles[index];
+      if (!enemies.includes(projectile.target)) {
+        scene.remove(projectile.mesh);
+        projectiles.splice(index, 1);
+        continue;
+      }
+      const targetPosition = projectile.target.mesh.position.clone();
+      targetPosition.y += 0.18;
+      const toTarget = targetPosition.sub(projectile.mesh.position);
+      const distance = Math.max(0.001, toTarget.length());
+      const step = projectile.speed * delta;
+      if (distance <= step) {
+        projectile.target.health -= projectile.damage;
+        if (projectile.effect === "slow") projectile.target.slowUntilMs = now + 1200;
+        spawnParticleBurst(THREE, scene, particles, projectile.target.mesh.position, projectile.effect === "slow" ? 0x67e8f9 : 0xf97316, 8);
+        audio.play("hit");
+        if (projectile.target.health <= 0) {
+          energy += projectile.target.reward + towerDefense.economyRules.killReward;
+          stateRef.current.score += 1;
+          scene.remove(projectile.target.mesh);
+          enemies.splice(enemies.indexOf(projectile.target), 1);
+          audio.play("collect");
+          updateHud();
+        }
+        scene.remove(projectile.mesh);
+        projectiles.splice(index, 1);
+      } else {
+        projectile.mesh.position.addScaledVector(toTarget.normalize(), step);
+      }
+    }
+  }
+
+  function checkWin() {
+    if (
+      stateRef.current.phase === "playing" &&
+      activeWave >= towerDefense.waves.length &&
+      enemies.length === 0 &&
+      projectiles.length === 0
+    ) {
+      stateRef.current.phase = "won";
+      spawnParticleBurst(THREE, scene, particles, baseCore.position, 0x22c55e, 24);
+      audio.play("win");
+      updateHud();
+    }
+  }
+
+  function animate(now: number) {
+    const delta = Math.min(0.033, (now - lastTime) / 1000);
+    lastTime = now;
+    updateParticles(scene, particles, delta, now);
+    baseCore.rotation.y += delta * 0.45;
+    if (stateRef.current.phase === "playing") {
+      updateWaves(now);
+      updateEnemies(delta, now);
+      updateTowers(delta);
+      updateProjectiles(delta, now);
+      checkWin();
+    }
+    camera.position.set(0, 14, 13);
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    animationId = requestAnimationFrame(animate);
+  }
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    const key = event.key.toLowerCase();
+    if (key === "arrowleft" || key === "a" || key === "arrowup" || key === "w") {
+      event.preventDefault();
+      selectBuildPad(selectedBuildPadIndex - 1);
+      renderer.domElement.focus();
+      return;
+    }
+    if (key === "arrowright" || key === "d" || key === "arrowdown" || key === "s") {
+      event.preventDefault();
+      selectBuildPad(selectedBuildPadIndex + 1);
+      renderer.domElement.focus();
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      buildSelectedTower();
+      renderer.domElement.focus();
+    }
+  };
+  const onPointerDown = (event: PointerEvent) => {
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+    const hit = raycaster.intersectObjects(buildPads.filter((pad) => pad.visible), false)[0];
+    if (hit) buildTowerAtPad(hit.object);
+    else if (stateRef.current.phase !== "playing") resetRuntime();
+  };
+
+  window.addEventListener("keydown", onKeyDown);
+  renderer.domElement.addEventListener("pointerdown", onPointerDown);
+  cleanupFns.push(() => window.removeEventListener("keydown", onKeyDown));
+  cleanupFns.push(() => renderer.domElement.removeEventListener("pointerdown", onPointerDown));
+
+  stateRef.current = { score: 0, lives: towerDefense.baseRules.baseHealth, phase: "ready" };
+  updateHud();
+  animationId = requestAnimationFrame(animate);
+
+  return () => {
+    cancelAnimationFrame(animationId);
+    cleanupFns.forEach((cleanup) => cleanup());
+  };
+}
+
+function createTowerDefensePath(
+  THREE: typeof import("three"),
+  scene: import("three").Scene,
+  pathNodes: import("three").Vector3[]
+) {
+  const pathMaterial = new THREE.MeshStandardMaterial({ color: 0x0f172a, emissive: 0x0e7490, roughness: 0.35 });
+  const railMaterial = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
+  for (let index = 0; index < pathNodes.length - 1; index += 1) {
+    const start = pathNodes[index];
+    const end = pathNodes[index + 1];
+    const middle = start.clone().add(end).multiplyScalar(0.5);
+    const length = start.distanceTo(end);
+    const tile = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.08, length), pathMaterial);
+    tile.position.set(middle.x, 0.05, middle.z);
+    tile.rotation.y = Math.atan2(end.x - start.x, end.z - start.z);
+    scene.add(tile);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.035, length), railMaterial);
+    rail.position.set(middle.x, 0.12, middle.z);
+    rail.rotation.y = tile.rotation.y;
+    scene.add(rail);
+  }
+}
+
+function createTowerDefenseBuildPadPositions(THREE: typeof import("three"), pathNodes: import("three").Vector3[]) {
+  const positions: import("three").Vector3[] = [];
+  for (let index = 0; index < pathNodes.length - 1; index += 1) {
+    const start = pathNodes[index];
+    const end = pathNodes[index + 1];
+    const middle = start.clone().add(end).multiplyScalar(0.5);
+    const segment = end.clone().sub(start).normalize();
+    const normal = new THREE.Vector3(-segment.z, 0, segment.x);
+    positions.push(middle.clone().addScaledVector(normal, 2.1));
+    positions.push(middle.clone().addScaledVector(normal, -2.1));
+  }
+  return positions;
+}
+
+function createTowerDefenseBaseCore(THREE: typeof import("three")) {
+  const group = new THREE.Group();
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.72, 1),
+    new THREE.MeshStandardMaterial({ color: 0x60a5fa, emissive: 0x1d4ed8, metalness: 0.35 })
+  );
+  const shield = new THREE.Mesh(
+    new THREE.TorusGeometry(0.95, 0.045, 8, 32),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.8 })
+  );
+  shield.rotation.x = Math.PI / 2;
+  group.add(core, shield);
+  return group;
+}
+
+function createTowerDefenseTower(
+  THREE: typeof import("three"),
+  rule: NonNullable<ThreeSceneDirector["towerDefense"]>["towers"][number]
+): TowerDefenseTower {
+  const group = new THREE.Group();
+  const color = rule.kind === "missile" ? 0xf97316 : rule.kind === "slow" ? 0x67e8f9 : 0x22d3ee;
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.38, 0.48, 0.28, 8),
+    new THREE.MeshStandardMaterial({ color: 0x1e293b, emissive: 0x020617, metalness: 0.35 })
+  );
+  const head = new THREE.Mesh(
+    rule.kind === "missile" ? new THREE.BoxGeometry(0.44, 0.32, 0.7) : new THREE.CylinderGeometry(0.16, 0.2, 0.82, 8),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35 })
+  );
+  head.position.y = 0.42;
+  head.rotation.x = Math.PI / 2;
+  group.add(base, head);
+  return {
+    mesh: group,
+    kind: rule.kind,
+    range: rule.range,
+    fireRateMs: rule.fireRateMs,
+    damage: rule.damage,
+    effect: rule.effect,
+    cooldownMs: 0
+  };
+}
+
+function createTowerDefenseEnemy(
+  THREE: typeof import("three"),
+  type: NonNullable<ThreeSceneDirector["towerDefense"]>["waves"][number]["enemyType"]
+) {
+  const color = type === "armored" ? 0x94a3b8 : type === "runner" ? 0xfacc15 : 0xfb7185;
+  const geometry =
+    type === "armored"
+      ? new THREE.BoxGeometry(0.62, 0.42, 0.82)
+      : type === "runner"
+        ? new THREE.ConeGeometry(0.35, 0.78, 6)
+        : new THREE.OctahedronGeometry(0.42, 0);
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({ color, emissive: type === "runner" ? 0x854d0e : 0x450a0a, roughness: 0.42 })
+  );
+  return { mesh };
+}
+
+function collectiblePosition(THREE: typeof import("three"), director: ThreeSceneDirector, index: number) {
+  if (director.layoutMode === "lane_track") {
+    const lanes = [-2.4, 0, 2.4];
+    return new THREE.Vector3(lanes[index % lanes.length], 0.45, -5 + index * 3.2);
+  }
+  if (director.layoutMode === "open_landmarks") {
+    const angle = (index / Math.max(1, director.objectives.collectTarget)) * Math.PI * 2;
+    return new THREE.Vector3(Math.cos(angle) * 6, 0.45, Math.sin(angle) * 6);
+  }
+  if (director.layoutMode === "small_arena" || director.layoutMode === "single_arena") {
+    return new THREE.Vector3(((index % 3) - 1) * 3.2, 0.45, 4 - Math.floor(index / 3) * 3);
+  }
+  return new THREE.Vector3(((index % 4) - 1.5) * 2.3, 0.45, 8 - Math.floor(index / 4) * 5);
+}
+
+function hazardPosition(THREE: typeof import("three"), director: ThreeSceneDirector, index: number) {
+  if (director.layoutMode === "lane_track") {
+    const lanes = [-2.4, 0, 2.4];
+    return new THREE.Vector3(lanes[index % lanes.length], 0.6, 2 + index * 3.4);
+  }
+  if (director.layoutMode === "open_landmarks") {
+    const angle = (index / 4) * Math.PI * 2;
+    return new THREE.Vector3(Math.cos(angle) * 4.2, 0.6, Math.sin(angle) * 4.2);
+  }
+  if (director.layoutMode === "small_arena" || director.layoutMode === "single_arena") {
+    return new THREE.Vector3(((index % 4) - 1.5) * 3, 0.6, -5 + Math.floor(index / 4) * 3.5);
+  }
+  return new THREE.Vector3(((index % 4) - 1.5) * 2.6, 0.6, -director.world.depth / 2 + index * 3);
+}
+
+function updateCamera(camera: import("three").PerspectiveCamera, player: Object3D, director: ThreeSceneDirector) {
+  if (director.camera === "orbit_showcase") {
+    camera.position.x += (player.position.x * 0.25 + 7 - camera.position.x) * 0.04;
+    camera.position.y += (8 - camera.position.y) * 0.04;
+    camera.position.z += (player.position.z + 10 - camera.position.z) * 0.04;
+    camera.lookAt(player.position.x * 0.25, 0, player.position.z);
+    return;
+  }
+  if (director.movementMode === "auto_runner") {
+    camera.position.x += (player.position.x * 0.35 - camera.position.x) * 0.06;
+    camera.position.y += (5.5 - camera.position.y) * 0.04;
+    camera.position.z += (player.position.z - 9 - camera.position.z) * 0.06;
+    camera.lookAt(player.position.x * 0.25, 0, player.position.z + 5);
+    return;
+  }
+  camera.position.x += (player.position.x * 0.28 - camera.position.x) * 0.05;
+  camera.lookAt(player.position.x * 0.25, 0, player.position.z - 3);
 }
 
 async function createRuntimeModel(

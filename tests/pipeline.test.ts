@@ -78,6 +78,8 @@ describe("standard artifact pipeline", () => {
         "sfx.win",
         "sfx.lose",
         "sfx.click",
+        "sfx.explosion",
+        "sfx.warning",
         "vfx.collect",
         "vfx.hit",
         "vfx.win",

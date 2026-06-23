@@ -38,8 +38,13 @@ describe("start page draft", () => {
       "flight_shooter",
       "runner",
       "third_person_collect",
-      "exploration"
+      "exploration",
+      "futuristic_tower_defense"
     ]);
+    expect(threeTypes.find((tile) => tile.genre === "futuristic_tower_defense")).toMatchObject({
+      icon: "TD",
+      visualClass: "type-defense"
+    });
   });
 
   it("keeps selectable models and templates explicit for the create dialog", () => {

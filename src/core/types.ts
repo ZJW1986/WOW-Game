@@ -9,7 +9,13 @@ export type EngineType = "phaser2d" | "threejs3d";
 
 export type ViewportMode = "web_16_9" | "app_9_16";
 
-export type ThreeGameGenre = "runner" | "dodge_collect" | "flight_shooter" | "third_person_collect" | "exploration";
+export type ThreeGameGenre =
+  | "runner"
+  | "dodge_collect"
+  | "flight_shooter"
+  | "third_person_collect"
+  | "exploration"
+  | "futuristic_tower_defense";
 
 export type PipelineStage =
   | "idea-intake"
@@ -30,6 +36,7 @@ export type PipelineStage =
   | "visual-asset-report"
   | "browser-verification-report"
   | "playability-report"
+  | "cover-poster"
   | "three-game-brief"
   | "three-scene-director"
   | "three-asset-plan"
@@ -140,6 +147,19 @@ export interface VisualAssetReport {
 export interface BrowserVerificationReport {
   passed: boolean;
   checks: Array<{ id: string; passed: boolean; detail: string }>;
+}
+
+export interface CoverPoster {
+  fileUrl: string;
+  thumbnailUrl: string;
+  prompt: string;
+  provider: "poster-fallback" | "agnes";
+  format: "webp";
+  width: number;
+  height: number;
+  thumbnailWidth: number;
+  thumbnailHeight: number;
+  fallbackUsed: boolean;
 }
 
 export interface PlayableDirector {
@@ -437,10 +457,16 @@ export interface ThreeAssetPlan {
   assets: Array<{
     assetKey: string;
     type: "model" | "texture" | "skybox" | "audio" | "icon";
-    provider: "tripo" | "gemini-image" | "elevenlabs" | "procedural-three";
+    provider: "tripo" | "gemini-image" | "elevenlabs" | "procedural-three" | "builtin-three";
     purpose: string;
     prompt: string;
     fallback: boolean;
+    qualityTier?: "builtin_low_poly" | "uploaded" | "tripo_enhanced";
+    polyBudget?: number;
+    maxFileSizeMb?: number;
+    runtimeScale?: number;
+    colliderShape?: "sphere" | "capsule" | "box";
+    preferredSource?: "builtin_low_poly" | "uploaded" | "tripo_enhanced";
   }>;
   requiredApiKeys: string[];
 }
@@ -461,6 +487,35 @@ export interface ThreeSceneDirector {
   title: string;
   camera: "follow_chase" | "top_down" | "orbit_showcase";
   controls: Array<"keyboard" | "touch_drag" | "touch_buttons">;
+  movementMode?: "forward_flight" | "auto_runner" | "free_move" | "explore_scan" | "arena_dodge" | "tower_defense";
+  layoutMode?: "flight_corridor" | "lane_track" | "small_arena" | "open_landmarks" | "single_arena" | "defense_path";
+  spawnPattern?: "forward_waves" | "lane_gates" | "landmark_clusters" | "discovery_ring" | "timed_bursts" | "tower_waves";
+  abilities?: Array<"dash" | "lane_change" | "jump" | "scan" | "boost" | "build_tower" | "upgrade_tower">;
+  collisionRules?: {
+    hitbox: "sphere" | "capsule" | "box";
+    damage: number;
+    invincibleMs: number;
+    knockback: number;
+    nearMiss: boolean;
+  };
+  feedbackRules?: {
+    collectParticles: boolean;
+    hitParticles: boolean;
+    explosion: boolean;
+    screenShake: boolean;
+    flash: boolean;
+  };
+  audioCues?: Array<"collect" | "hit" | "win" | "lose" | "warning" | "explosion">;
+  cameraEffects?: {
+    shake: boolean;
+    speedLines: boolean;
+    followSmoothing: number;
+  };
+  spawnTimeline?: Array<{
+    atMs: number;
+    event: "spawn_hazard" | "spawn_collectible" | "pressure_wave" | "reward_burst" | "warning";
+    count: number;
+  }>;
   stages?: Array<{
     id: string;
     label: string;
@@ -496,12 +551,37 @@ export interface ThreeSceneDirector {
     hitShake: boolean;
     proceduralAudio: boolean;
   };
+  towerDefense?: {
+    pathNodes: Array<{ x: number; z: number }>;
+    towers: Array<{
+      id: string;
+      kind: "laser" | "missile" | "slow";
+      cost: number;
+      range: number;
+      fireRateMs: number;
+      damage: number;
+      effect?: "slow" | "splash";
+    }>;
+    waves: Array<{
+      id: string;
+      startsAtMs: number;
+      enemyType: "drone" | "armored" | "runner";
+      count: number;
+      intervalMs: number;
+      health: number;
+      speed: number;
+      reward: number;
+    }>;
+    economyRules: { startingEnergy: number; killReward: number };
+    baseRules: { baseHealth: number; leakDamage: number };
+    buildRules: { buildRadius: number; maxTowers: number };
+  };
 }
 
 export interface ThreeAssetPack {
   versionId: string;
   assets: AssetRequirement[];
-  fallbackProviders: Array<"procedural-three" | "agnes" | "gemini-image" | "elevenlabs" | "tripo">;
+  fallbackProviders: Array<"procedural-three" | "builtin-three" | "agnes" | "gemini-image" | "elevenlabs" | "tripo">;
 }
 
 export interface ThreeAssetLoadReport {
@@ -527,6 +607,17 @@ export interface ThreeVerificationReport {
   mobileViewportChecked: boolean;
   consoleErrorCount: number;
   screenshotCaptured: boolean;
+  modelBudgetPassed?: boolean;
+  audioFeedbackChecked?: boolean;
+  collisionFeedbackChecked?: boolean;
+  runtimeEffectsChecked?: boolean;
+  genreDifferentiationChecked?: boolean;
+  nonTowerGenreContractChecked?: boolean;
+  towerDefenseLoopChecked?: boolean;
+  towerPlacementChecked?: boolean;
+  waveProgressionChecked?: boolean;
+  baseDamageChecked?: boolean;
+  projectileHitChecked?: boolean;
   checks: Array<{ id: string; passed: boolean; detail: string }>;
   viewports: Array<{ name: "desktop" | "mobile_portrait"; width: number; height: number; checked: boolean }>;
 }
@@ -558,6 +649,9 @@ export interface MockProject {
   threeAssetPack?: ThreeAssetPack;
   threeVerificationReport?: ThreeVerificationReport;
   threeAssetLoadReport?: ThreeAssetLoadReport;
+  coverPosterUrl?: string;
+  coverThumbnailUrl?: string;
+  coverPoster?: CoverPoster;
   playUrl: string;
   feedback: {
     rating: number;

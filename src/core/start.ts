@@ -49,7 +49,7 @@ export const modelOptions: Array<{ id: StartModelId; label: string; description:
   {
     id: "gemini-flash",
     label: "Gemini flash",
-    description: "预留 Gemini 接入；当前无 API 时走本地 fallback"
+    description: "预留 Gemini 接入；无 API 时走本地 fallback"
   },
   {
     id: "mock-designer",
@@ -86,7 +86,8 @@ export function createStartThreeGameTypeTiles(): StartThreeGameTypeTile[] {
     { genre: "flight_shooter", icon: "FS", shortLabel: "飞行射击", hint: "躲避/射击", visualClass: "type-flight" },
     { genre: "runner", icon: "RN", shortLabel: "3D 跑酷", hint: "冲刺收集", visualClass: "type-runner" },
     { genre: "third_person_collect", icon: "TP", shortLabel: "第三人称", hint: "探索收集", visualClass: "type-third-person" },
-    { genre: "exploration", icon: "EX", shortLabel: "探索展示", hint: "场景漫游", visualClass: "type-exploration" }
+    { genre: "exploration", icon: "EX", shortLabel: "探索展示", hint: "场景漫游", visualClass: "type-exploration" },
+    { genre: "futuristic_tower_defense", icon: "TD", shortLabel: "3D 塔防", hint: "炮塔防守", visualClass: "type-defense" }
   ];
 }
 
@@ -129,9 +130,9 @@ export function buildOptimizedGamePrompt(draft: StartGameDraft): string {
     `游戏类型：${gameType}`,
     `画布比例：${viewport}`,
     `策划模型：${model}`,
-    "核心循环：玩家进入后 5 秒内理解目标，通过清晰操作完成移动、躲避、互动、收集推进，并能看到胜利、失败和重开。",
+    "核心循环：玩家进入后 5 秒内理解目标，通过清晰操作完成移动、躲避、互动、收集或防守推进，并能看到胜利、失败和重开。",
     draft.engineType === "threejs3d"
-      ? "3D 要求：明确镜头、空间路线、移动手感、障碍压力、收集奖励、手机触控可读性，并优先使用程序化 MVP 保障可玩。"
+      ? "3D 要求：明确镜头、空间路线、移动手感、障碍压力、奖励反馈、手机触控可读性，并优先使用可验证的 Three.js runtime 保证可玩。"
       : "2D 要求：明确角色、背景、危险物、收集物、阶段节奏、碰撞反馈，并在生成游戏前完成核心素材确认。",
     "输出要求：玩法目标清楚，前 30 秒有奖励和压力变化，HUD 不遮挡主体，失败要公平，反馈要明显。"
   ].join("\n");

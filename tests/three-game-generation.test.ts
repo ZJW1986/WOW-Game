@@ -73,6 +73,145 @@ function confirmedCoreModels() {
 }
 
 describe("threejs 3D generation", () => {
+  it("creates a futuristic tower defense director, assets, and release gates", () => {
+    const result = generateThreeGameMvp({
+      idea: "未来科幻塔防，建造激光塔和导弹塔防守基地",
+      projectId: "three-futuristic-td",
+      baseUrl: "https://wow.example",
+      viewportMode: "web_16_9",
+      gameType3d: "futuristic_tower_defense"
+    });
+
+    expect(result.threeSceneDirector.genre).toBe("futuristic_tower_defense");
+    expect(result.threeSceneDirector.movementMode).toBe("tower_defense");
+    expect(result.threeSceneDirector.layoutMode).toBe("defense_path");
+    expect(result.threeSceneDirector.spawnPattern).toBe("tower_waves");
+    expect(result.threeSceneDirector.towerDefense).toMatchObject({
+      economyRules: { startingEnergy: expect.any(Number) },
+      baseRules: { baseHealth: expect.any(Number) },
+      buildRules: { buildRadius: expect.any(Number) }
+    });
+    expect(result.threeSceneDirector.towerDefense?.pathNodes.length).toBeGreaterThanOrEqual(5);
+    expect(result.threeSceneDirector.towerDefense?.towers.map((tower) => tower.kind)).toEqual(
+      expect.arrayContaining(["laser", "missile", "slow"])
+    );
+    expect(result.threeSceneDirector.towerDefense?.waves.length).toBeGreaterThanOrEqual(4);
+
+    const assetKeys = result.threeAssetPack.assets.map((asset) => asset.assetKey);
+    expect(assetKeys).toEqual(expect.arrayContaining(["three.tower.laser", "three.tower.missile", "three.tower.slow"]));
+    expect(result.threeAssetPack.assets.find((asset) => asset.assetKey === "three.tower.laser")?.fileUrl).toBe(
+      "builtin://three/futuristic_tower_defense/tower/laser"
+    );
+    expect(result.threeVerificationReport).toMatchObject({
+      towerDefenseLoopChecked: true,
+      towerPlacementChecked: true,
+      waveProgressionChecked: true,
+      baseDamageChecked: true,
+      projectileHitChecked: true
+    });
+    expect(result.deliveryReady).toBe(true);
+  });
+
+  it("adds mature runtime feedback, audio, collision, and model quality metadata to 3D projects", () => {
+    const result = generateThreeGameMvp({
+      idea: "3D 飞机躲避陨石收集能量，要有爆炸、音效和碰撞反馈",
+      projectId: "three-feedback-quality",
+      baseUrl: "https://wow.example",
+      viewportMode: "app_9_16",
+      gameType3d: "flight_shooter"
+    });
+
+    expect(result.threeSceneDirector.abilities).toEqual(expect.arrayContaining(["boost"]));
+    expect(result.threeSceneDirector.collisionRules).toMatchObject({
+      damage: 1,
+      invincibleMs: expect.any(Number),
+      nearMiss: true
+    });
+    expect(result.threeSceneDirector.feedbackRules).toMatchObject({
+      collectParticles: true,
+      hitParticles: true,
+      explosion: true,
+      screenShake: true,
+      flash: true
+    });
+    expect(result.threeSceneDirector.audioCues).toEqual(
+      expect.arrayContaining(["collect", "hit", "win", "lose", "explosion", "warning"])
+    );
+    expect(result.threeSceneDirector.spawnTimeline?.length).toBeGreaterThanOrEqual(3);
+
+    const player = result.threeAssetPlan.assets.find((asset) => asset.assetKey === "three.model.player");
+    expect(player).toMatchObject({
+      qualityTier: "builtin_low_poly",
+      preferredSource: "builtin_low_poly",
+      polyBudget: expect.any(Number),
+      maxFileSizeMb: expect.any(Number),
+      runtimeScale: expect.any(Number),
+      colliderShape: "capsule"
+    });
+    expect(result.threeAssetPack.assets[0].fileUrl).toMatch(/^builtin:\/\/three\/flight_shooter\/player\//);
+
+    expect(result.threeVerificationReport).toMatchObject({
+      modelBudgetPassed: true,
+      audioFeedbackChecked: true,
+      collisionFeedbackChecked: true,
+      runtimeEffectsChecked: true,
+      genreDifferentiationChecked: true
+    });
+  });
+
+  it("creates genre-specific directors and model plans for different 3D game types", () => {
+    const cases = [
+      { genre: "flight_shooter" as const, idea: "3D 飞机躲避陨石收集能量", mustInclude: /spaceship|aircraft|asteroid|energy/i },
+      { genre: "runner" as const, idea: "3D 跑酷收集金币", mustInclude: /runner|lane|barrier|coin/i },
+      {
+        genre: "third_person_collect" as const,
+        idea: "3D 第三人称角色收集宝物躲避守卫",
+        mustInclude: /third-person|guardian|treasure|patrol/i
+      },
+      { genre: "exploration" as const, idea: "3D 探索神秘展厅寻找水晶", mustInclude: /explorer|landmark|discovery|crystal/i }
+    ];
+
+    const results = cases.map(({ genre, idea }) =>
+      generateThreeGameMvp({
+        idea,
+        projectId: `three-${genre}`,
+        baseUrl: "https://wow.example",
+        viewportMode: "app_9_16",
+        gameType3d: genre
+      })
+    );
+
+    const signatures = results.map((result) => {
+      const director = result.threeSceneDirector;
+      return [
+        director.genre,
+        director.camera,
+        director.world.width,
+        director.world.depth,
+        director.player.start.z,
+        director.enemies.map((enemy) => `${enemy.type}:${enemy.behavior}`).join(","),
+        director.stages?.map((stage) => stage.label).join("/")
+      ].join("|");
+    });
+
+    expect(new Set(signatures).size).toBe(results.length);
+    results.forEach((result, index) => {
+      const prompts = result.threeAssetPlan.assets
+        .filter((asset) => asset.assetKey.startsWith("three.model."))
+        .map((asset) => asset.prompt)
+        .join(" ");
+      expect(prompts).toMatch(cases[index].mustInclude);
+      expect(result.threeAssetPack.assets[0].generationParams.genreProfileId).toBe(cases[index].genre);
+    });
+    expect(results[1].threeSceneDirector.player.start.z).toBeLessThan(results[0].threeSceneDirector.player.start.z);
+    expect(results[2].threeSceneDirector.movementMode).toBe("free_move");
+    expect(results[3].threeSceneDirector.camera).toBe("orbit_showcase");
+    expect(results[3].threeSceneDirector.abilities).toContain("scan");
+    results.forEach((result) => {
+      expect(result.threeVerificationReport.checks.find((check) => check.id === "non_tower_genre_contract")?.passed).toBe(true);
+    });
+  });
+
   it("creates an independent Three.js MVP project with readable Chinese 3D artifacts", () => {
     const result = generateThreeGameMvp({
       idea: "手机竖屏太空飞船躲避陨石收集能量",
@@ -91,17 +230,42 @@ describe("threejs 3D generation", () => {
       "GEMINI_API_KEY",
       "ELEVENLABS_API_KEY"
     ]);
-    expect(result.project.artifacts.map((artifact) => artifact.fileName)).toEqual([
-      "three-design-brief.json",
-      "three-scene-director.json",
-      "three-asset-plan.json",
-      "three-asset-pack.json",
-      "three-verification-report.json"
-    ]);
+    expect(result.project.artifacts.map((artifact) => artifact.fileName)).toEqual(
+      expect.arrayContaining([
+        "three-design-brief.json",
+        "three-scene-director.json",
+        "three-asset-plan.json",
+        "three-asset-pack.json",
+        "three-verification-report.json",
+        "cover-poster.json",
+        "cover-poster.webp"
+      ])
+    );
     expect(JSON.stringify(result.project)).not.toContain("�");
     expect(result.assetLoadReport.ready).toBe(true);
-    expect(result.fallbacksUsed).toContain("three.model.player:procedural-three");
+    expect(result.fallbacksUsed).toContain("three.model.player:builtin-three");
     expect(result.deliveryReady).toBe(true);
+  });
+
+  it("defaults 3D generation to lightweight builtin models and poster artifacts without waiting for Tripo", () => {
+    const result = generateThreeGameMvp({
+      idea: "3D 飞机躲避障碍收集能量",
+      projectId: "three-lightweight-default",
+      baseUrl: "https://wow.example",
+      viewportMode: "app_9_16",
+      gameType3d: "flight_shooter"
+    });
+
+    const coreModels = result.threeAssetPack.assets.filter((asset) => asset.assetKey.startsWith("three.model."));
+
+    expect(coreModels).toHaveLength(3);
+    expect(coreModels.every((asset) => asset.provider === "builtin-three")).toBe(true);
+    expect(coreModels.every((asset) => asset.fileUrl.startsWith("builtin://"))).toBe(true);
+    expect(coreModels.every((asset) => asset.generationParams.modelBudget === "low-poly")).toBe(true);
+    expect(result.project.artifacts.map((artifact) => artifact.fileName)).toEqual(
+      expect.arrayContaining(["cover-poster.json", "cover-poster.webp"])
+    );
+    expect(result.project.coverPosterUrl).toBeTruthy();
   });
 
   it("normalizes shallow 3D directors into playable directors", () => {
@@ -371,7 +535,7 @@ describe("threejs 3D generation", () => {
     ).toBe(true);
   });
 
-  it("rejects /api/generate-three-game until all core 3D models are confirmed", async () => {
+  it("generates a lightweight builtin 3D game when no core 3D models are confirmed", async () => {
     const handler = createGenerationApiHandler({
       env: { DATA_DIR: "data-three-test", PUBLIC_BASE_URL: "https://wow.example" },
       storeIO: memoryStore()
@@ -389,8 +553,38 @@ describe("threejs 3D generation", () => {
       }
     });
 
-    expect(response.status).toBe(400);
-    expect(response.body.error).toContain("confirmed 3D core models");
+    expect(response.status).toBe(200);
+    expect(response.body.project.engineType).toBe("threejs3d");
+    expect(response.body.deliveryReady).toBe(true);
+    expect(response.body.project.threeAssetPack.assets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ assetKey: "three.model.player", provider: "builtin-three" }),
+        expect.objectContaining({ assetKey: "three.model.hazard", provider: "builtin-three" }),
+        expect.objectContaining({ assetKey: "three.model.collectible", provider: "builtin-three" })
+      ])
+    );
+  });
+
+  it("accepts futuristic tower defense through the generate-three-game API", async () => {
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-three-td-api-test", PUBLIC_BASE_URL: "https://wow.example" },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/generate-three-game",
+      body: {
+        idea: "未来科幻塔防，建造激光塔和导弹塔防守基地",
+        projectId: "three-td-api",
+        gameType3d: "futuristic_tower_defense",
+        viewportMode: "web_16_9"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.project.threeSceneDirector.genre).toBe("futuristic_tower_defense");
+    expect(response.body.project.threeSceneDirector.movementMode).toBe("tower_defense");
   });
 
   it("posts 3D generation requests through the browser client", async () => {

@@ -453,6 +453,24 @@ export function createAssetRequirements(templateFamily: TemplateFamily): AssetRe
       spec: "under 0.5 seconds"
     }),
     projectAsset({
+      assetKey: "sfx.explosion",
+      type: "sfx",
+      purpose: "explosion or high impact feedback",
+      style: "short arcade blast",
+      generationMode: "mock",
+      copyrightStatus: "placeholder",
+      spec: "under 1 second"
+    }),
+    projectAsset({
+      assetKey: "sfx.warning",
+      type: "sfx",
+      purpose: "incoming hazard warning feedback",
+      style: "short alert tone",
+      generationMode: "mock",
+      copyrightStatus: "placeholder",
+      spec: "under 1 second"
+    }),
+    projectAsset({
       assetKey: "vfx.collect",
       type: "effect",
       purpose: "collectible pickup burst",
