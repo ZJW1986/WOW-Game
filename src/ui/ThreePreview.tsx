@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { Object3D } from "three";
 import type { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { ThreeAssetLoadReport, ThreeAssetPack, ThreeSceneDirector, ViewportMode } from "../core/types";
+import { createThreeDslRuntime } from "../runtime/three/ThreeDslRuntime";
+import { createThreePhysicsWorld } from "../runtime/three/Physics";
+import { createThreeGenreRuntime } from "../runtime/three/genres";
 
 type RuntimePhase = "ready" | "playing" | "won" | "lost";
 type RuntimeStatus = "loading" | "procedural" | "ready" | "asset_error";
@@ -116,6 +119,7 @@ export function ThreePreview({
       }
 
       const arcadeRuntime = createThreeGenreRuntime(director);
+      const physics = await createThreePhysicsWorld({ gravity: { x: 0, y: 0, z: 0 } });
       const player = await createRuntimeModel(
         THREE,
         loader,
@@ -126,6 +130,7 @@ export function ThreePreview({
       player.position.set(director.player.start.x, director.player.start.y, director.player.start.z);
       if (director.movementMode === "forward_flight") player.rotation.x = Math.PI / 2;
       scene.add(player);
+      const playerBody = physics.addDynamicSphere("player", vectorFromObjectPosition(player), 0.55);
 
       const collectibles = Array.from({ length: director.objectives.collectTarget }, (_, index) => {
         const item = createProceduralCollectible(THREE, director);
@@ -151,6 +156,12 @@ export function ThreePreview({
         assetKey: "three.model.hazard",
         errors: modelLoadErrors
       });
+      const hazardBodies = hazards.map((hazard, index) =>
+        physics.addStaticBox(`hazard:${index}`, vectorFromObjectPosition(hazard), { x: 0.42, y: 0.42, z: 0.42 })
+      );
+      const threeDslRuntime = director.gameplayDsl ? createThreeDslRuntime(director.gameplayDsl) : undefined;
+      const startedAtMs = performance.now();
+      let playerSpeedMultiplier = 1;
 
       const reportErrors = assetLoadReport?.errors ?? [];
       if (modelLoadErrors.length > 0 || reportErrors.length > 0) {
@@ -224,16 +235,62 @@ export function ThreePreview({
         updateParticles(scene, particles, delta, now);
         if (stateRef.current.phase === "playing") {
           const move = director.player.speed * delta;
+          const dslCommands = threeDslRuntime?.tick({
+            timeMs: now - startedAtMs,
+            score: stateRef.current.score,
+            lives: stateRef.current.lives,
+            collectCount: stateRef.current.score,
+            enemiesAlive: hazards.length,
+            stageId: stateRef.current.phase
+          }) ?? [];
+          for (const command of dslCommands) {
+            if (command.type === "change_player_speed") {
+              playerSpeedMultiplier = command.multiplier;
+            } else if (command.type === "spawn_hazards") {
+              for (let spawnIndex = 0; spawnIndex < command.count; spawnIndex += 1) {
+                const hazard = createProceduralHazard(THREE, director);
+                hazard.position.copy(hazardPosition(THREE, director, hazards.length + spawnIndex));
+                scene.add(hazard);
+                hazards.push(hazard);
+                hazardBodies.push(
+                  physics.addStaticBox(`hazard:${hazards.length - 1}`, vectorFromObjectPosition(hazard), {
+                    x: 0.42,
+                    y: 0.42,
+                    z: 0.42
+                  })
+                );
+              }
+              audio.play("warning");
+            } else if (command.type === "win") {
+              stateRef.current.phase = "won";
+              audio.play("win");
+              updateHud();
+            } else if (command.type === "fail") {
+              stateRef.current.phase = "lost";
+              audio.play("lose");
+              updateHud();
+            }
+          }
           const previousX = player.position.x;
           const previousZ = player.position.z;
-          arcadeRuntime.updatePlayer({ player, keys, move, delta, director });
+          arcadeRuntime.updatePlayer({ player, keys, move: move * playerSpeedMultiplier, delta, director });
           if (previousX !== player.position.x || previousZ !== player.position.z) setPlayerMoved(true);
           player.position.x = clamp(player.position.x, -director.world.width / 2 + 1, director.world.width / 2 - 1);
           player.position.z = clamp(player.position.z, -director.world.depth / 2 + 1, director.world.depth / 2 - 1);
+          playerBody.setPosition(vectorFromObjectPosition(player));
+          playerBody.setVelocity({ x: 0, y: 0, z: 0 });
 
           hazards.forEach((hazard, index) => {
             arcadeRuntime.updateHazard({ hazard, index, player, delta, now, director });
-            if (hitCooldownMs <= 0 && distance2D(player.position, hazard.position) < 0.85) {
+            hazardBodies[index]?.setPosition(vectorFromObjectPosition(hazard));
+          });
+          const collisionEvents = physics.step(delta);
+          for (const event of collisionEvents) {
+            if (event.type === "collision-start" && hitCooldownMs <= 0 && (event.a === "player" || event.b === "player")) {
+              const hazardId = event.a === "player" ? event.b : event.a;
+              const hazardIndex = Number(hazardId.split(":")[1]);
+              const hazard = hazards[hazardIndex];
+              if (!hazard) continue;
               stateRef.current.lives -= director.collisionRules?.damage ?? 1;
               hitCooldownMs = director.collisionRules?.invincibleMs ?? 800;
               if (director.feedbackRules?.hitParticles) {
@@ -250,14 +307,15 @@ export function ThreePreview({
                   director.world.width / 2 - 1
                 );
               }
-              arcadeRuntime.resetHazard({ hazard, index, director });
+              arcadeRuntime.resetHazard({ hazard, index: hazardIndex, director });
+              hazardBodies[hazardIndex]?.setPosition(vectorFromObjectPosition(hazard));
               if (stateRef.current.lives <= 0) {
                 stateRef.current.phase = "lost";
                 audio.play("lose");
               }
               updateHud();
             }
-          });
+          }
 
           collectibles.forEach((item) => {
             arcadeRuntime.updateCollectible?.({ item, delta, now });
@@ -355,6 +413,14 @@ function clamp(value: number, min: number, max: number): number {
 
 function distance2D(left: { x: number; z: number }, right: { x: number; z: number }): number {
   return Math.hypot(left.x - right.x, left.z - right.z);
+}
+
+function vectorFromObjectPosition(object: Object3D) {
+  return {
+    x: object.position.x,
+    y: object.position.y,
+    z: object.position.z
+  };
 }
 
 type ThreeAudioCue = "collect" | "hit" | "win" | "lose" | "warning" | "explosion" | "click";
@@ -458,235 +524,6 @@ function setObjectFlash(object: Object3D, active: boolean) {
     if (!material || Array.isArray(material) || !("emissiveIntensity" in material)) return;
     material.emissiveIntensity = active ? 1.6 : 0.4;
   });
-}
-
-type ThreeArcadeRuntime = {
-  pointerXSign: number;
-  reset?: (options: {
-    THREE: typeof import("three");
-    player: Object3D;
-    collectibles: Object3D[];
-    hazards: Object3D[];
-    director: ThreeSceneDirector;
-  }) => void;
-  updatePlayer: (options: {
-    player: Object3D;
-    keys: Set<string>;
-    move: number;
-    delta: number;
-    director: ThreeSceneDirector;
-  }) => void;
-  updateHazard: (options: {
-    hazard: Object3D;
-    index: number;
-    player: Object3D;
-    delta: number;
-    now: number;
-    director: ThreeSceneDirector;
-  }) => void;
-  resetHazard: (options: { hazard: Object3D; index: number; director: ThreeSceneDirector }) => void;
-  updateCollectible?: (options: { item: Object3D; delta: number; now: number }) => void;
-  updateCamera: (camera: import("three").PerspectiveCamera, player: Object3D, director: ThreeSceneDirector) => void;
-};
-
-function createThreeGenreRuntime(director: ThreeSceneDirector): ThreeArcadeRuntime {
-  if (director.movementMode === "forward_flight") return runFlightShooterRuntime();
-  if (director.movementMode === "auto_runner") return runRunnerRuntime();
-  if (director.movementMode === "free_move") return runThirdPersonCollectRuntime();
-  if (director.movementMode === "explore_scan") return runExplorationRuntime();
-  return runGenericDodgeCollectRuntime();
-}
-
-function runFlightShooterRuntime(): ThreeArcadeRuntime {
-  return {
-    pointerXSign: 1,
-    updatePlayer({ player, keys, move }) {
-      player.position.z -= move * 0.35;
-      if (keys.has("arrowleft") || keys.has("a")) player.position.x -= move;
-      if (keys.has("arrowright") || keys.has("d")) player.position.x += move;
-      if (keys.has("arrowup") || keys.has("w")) player.position.y = clamp(player.position.y + move * 0.18, 0.55, 1.8);
-      if (keys.has("arrowdown") || keys.has("s")) player.position.y = clamp(player.position.y - move * 0.18, 0.45, 1.8);
-      player.rotation.z = -player.position.x * 0.08;
-    },
-    updateHazard({ hazard, index, player, delta, director }) {
-      hazard.rotation.x += delta * 1.8;
-      hazard.rotation.y += delta * 1.1;
-      hazard.position.z += delta * (3.1 + index * 0.1);
-      hazard.position.x += Math.sin(performance.now() / 650 + index) * delta * 0.5;
-      if (hazard.position.z > player.position.z + 7) resetForwardHazard(hazard, index, director);
-    },
-    resetHazard({ hazard, index, director }) {
-      resetForwardHazard(hazard, index, director);
-    },
-    updateCollectible({ item, delta }) {
-      item.rotation.y += delta * 3.4;
-      item.position.y = 0.65 + Math.sin(performance.now() / 240) * 0.08;
-    },
-    updateCamera(camera, player) {
-      camera.position.x += (player.position.x * 0.35 - camera.position.x) * 0.06;
-      camera.position.y += (4.2 - camera.position.y) * 0.05;
-      camera.position.z += (player.position.z + 9 - camera.position.z) * 0.06;
-      camera.lookAt(player.position.x * 0.25, player.position.y, player.position.z - 7);
-    }
-  };
-}
-
-function runRunnerRuntime(): ThreeArcadeRuntime {
-  const lanes = [-2.4, 0, 2.4];
-  return {
-    pointerXSign: 1,
-    reset({ player }) {
-      player.userData.laneIndex = 1;
-      player.userData.jumpVelocity = 0;
-    },
-    updatePlayer({ player, keys, move, delta }) {
-      const laneIndex = Number(player.userData.laneIndex ?? 1);
-      let nextLane = laneIndex;
-      if ((keys.has("arrowleft") || keys.has("a")) && !player.userData.leftLatch) nextLane -= 1;
-      if ((keys.has("arrowright") || keys.has("d")) && !player.userData.rightLatch) nextLane += 1;
-      player.userData.leftLatch = keys.has("arrowleft") || keys.has("a");
-      player.userData.rightLatch = keys.has("arrowright") || keys.has("d");
-      player.userData.laneIndex = clamp(nextLane, 0, lanes.length - 1);
-      if ((keys.has("arrowup") || keys.has("w") || keys.has(" ")) && player.position.y <= 0.52) {
-        player.userData.jumpVelocity = 5.2;
-      }
-      player.userData.jumpVelocity = Number(player.userData.jumpVelocity ?? 0) - 12 * delta;
-      player.position.y = Math.max(0.5, player.position.y + Number(player.userData.jumpVelocity ?? 0) * delta);
-      if (player.position.y <= 0.5) player.userData.jumpVelocity = 0;
-      player.position.x += (lanes[Number(player.userData.laneIndex)] - player.position.x) * 0.22;
-      player.position.z += move * 0.9;
-      player.rotation.y = (lanes[Number(player.userData.laneIndex)] - player.position.x) * 0.08;
-    },
-    updateHazard({ hazard, index, player, delta, director }) {
-      hazard.rotation.y += delta * 0.8;
-      hazard.position.z -= delta * (2.2 + index * 0.08);
-      if (hazard.position.z < player.position.z - 8) resetRunnerGate(hazard, index, director, player.position.z);
-    },
-    resetHazard({ hazard, index, director }) {
-      resetRunnerGate(hazard, index, director, 0);
-    },
-    updateCollectible({ item, delta }) {
-      item.rotation.y += delta * 5;
-    },
-    updateCamera(camera, player) {
-      camera.position.x += (player.position.x * 0.35 - camera.position.x) * 0.08;
-      camera.position.y += (4.8 - camera.position.y) * 0.05;
-      camera.position.z += (player.position.z - 8.5 - camera.position.z) * 0.08;
-      camera.lookAt(player.position.x * 0.2, 0.9, player.position.z + 6);
-    }
-  };
-}
-
-function runThirdPersonCollectRuntime(): ThreeArcadeRuntime {
-  return {
-    pointerXSign: 1,
-    updatePlayer({ player, keys, move }) {
-      if (keys.has("arrowleft") || keys.has("a")) player.position.x -= move;
-      if (keys.has("arrowright") || keys.has("d")) player.position.x += move;
-      if (keys.has("arrowup") || keys.has("w")) player.position.z -= move;
-      if (keys.has("arrowdown") || keys.has("s")) player.position.z += move;
-    },
-    updateHazard({ hazard, index, player, delta, now }) {
-      const patrolRadius = 2.2 + (index % 3) * 0.6;
-      const originX = Number(hazard.userData.originX ?? hazard.position.x);
-      const originZ = Number(hazard.userData.originZ ?? hazard.position.z);
-      hazard.userData.originX = originX;
-      hazard.userData.originZ = originZ;
-      const distanceToPlayer = distance2D(player.position, hazard.position);
-      if (distanceToPlayer < 4.5) {
-        hazard.position.x += Math.sign(player.position.x - hazard.position.x) * delta * 0.9;
-        hazard.position.z += Math.sign(player.position.z - hazard.position.z) * delta * 0.9;
-      } else {
-        hazard.position.x = originX + Math.cos(now / 900 + index) * patrolRadius;
-        hazard.position.z = originZ + Math.sin(now / 900 + index) * patrolRadius;
-      }
-      hazard.rotation.y += delta * 1.2;
-    },
-    resetHazard({ hazard }) {
-      hazard.position.x = Number(hazard.userData.originX ?? hazard.position.x);
-      hazard.position.z = Number(hazard.userData.originZ ?? hazard.position.z);
-    },
-    updateCollectible({ item, delta }) {
-      item.rotation.y += delta * 2.2;
-      item.rotation.x += delta * 0.6;
-    },
-    updateCamera(camera, player) {
-      camera.position.x += (player.position.x * 0.45 - camera.position.x) * 0.05;
-      camera.position.y += (6.5 - camera.position.y) * 0.05;
-      camera.position.z += (player.position.z + 9 - camera.position.z) * 0.05;
-      camera.lookAt(player.position.x, 0.4, player.position.z);
-    }
-  };
-}
-
-function runExplorationRuntime(): ThreeArcadeRuntime {
-  return {
-    pointerXSign: 1,
-    updatePlayer({ player, keys, move }) {
-      const exploreMove = move * 0.72;
-      if (keys.has("arrowleft") || keys.has("a")) player.position.x -= exploreMove;
-      if (keys.has("arrowright") || keys.has("d")) player.position.x += exploreMove;
-      if (keys.has("arrowup") || keys.has("w")) player.position.z -= exploreMove;
-      if (keys.has("arrowdown") || keys.has("s")) player.position.z += exploreMove;
-      if (keys.has(" ") || keys.has("enter")) player.userData.scanPulse = 1;
-    },
-    updateHazard({ hazard, index, delta, now }) {
-      hazard.rotation.z += delta * 0.8;
-      hazard.position.y = 0.55 + Math.sin(now / 700 + index) * 0.18;
-    },
-    resetHazard() {
-      // Exploration hazards are soft landmarks; do not respawn them aggressively.
-    },
-    updateCollectible({ item, delta, now }) {
-      item.rotation.y += delta * 1.8;
-      item.position.y = 0.5 + Math.sin(now / 500) * 0.12;
-    },
-    updateCamera(camera, player) {
-      camera.position.x += (player.position.x * 0.35 + 6 - camera.position.x) * 0.035;
-      camera.position.y += (8.5 - camera.position.y) * 0.035;
-      camera.position.z += (player.position.z + 10 - camera.position.z) * 0.035;
-      camera.lookAt(player.position.x * 0.3, 0, player.position.z);
-    }
-  };
-}
-
-function runGenericDodgeCollectRuntime(): ThreeArcadeRuntime {
-  return {
-    pointerXSign: 1,
-    updatePlayer({ player, keys, move }) {
-      if (keys.has("arrowleft") || keys.has("a")) player.position.x -= move;
-      if (keys.has("arrowright") || keys.has("d")) player.position.x += move;
-      if (keys.has("arrowup") || keys.has("w")) player.position.z -= move;
-      if (keys.has("arrowdown") || keys.has("s")) player.position.z += move;
-    },
-    updateHazard({ hazard, index, player, delta, now, director }) {
-      hazard.rotation.x += delta * 1.4;
-      hazard.rotation.y += delta * 0.9;
-      const behavior = director.enemies[index % director.enemies.length]?.behavior ?? "falling";
-      if (behavior === "chase") hazard.position.x += Math.sign(player.position.x - hazard.position.x) * delta * 0.8;
-      if (behavior === "patrol" || behavior === "orbit") hazard.position.x += Math.sin(now / 700 + index) * delta * 1.4;
-      hazard.position.z += delta * (1.2 + index * 0.08);
-      if (hazard.position.z > director.world.depth / 2) hazard.position.z = -director.world.depth / 2;
-    },
-    resetHazard({ hazard, director }) {
-      hazard.position.z = -director.world.depth / 2;
-    },
-    updateCollectible({ item, delta }) {
-      item.rotation.y += delta * 2.5;
-    },
-    updateCamera
-  };
-}
-
-function resetForwardHazard(hazard: Object3D, index: number, director: ThreeSceneDirector) {
-  hazard.position.x = ((index % 5) - 2) * 1.9;
-  hazard.position.z = -director.world.depth / 2 - index * 1.8;
-}
-
-function resetRunnerGate(hazard: Object3D, index: number, director: ThreeSceneDirector, playerZ: number) {
-  const lanes = [-2.4, 0, 2.4];
-  hazard.position.x = lanes[index % lanes.length];
-  hazard.position.z = playerZ + director.world.depth / 2 + index * 2.4;
 }
 
 function threeControlHint(director: ThreeSceneDirector): string {

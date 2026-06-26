@@ -1,5 +1,6 @@
 import { createPublishRecord, runMockPipeline } from "../core/pipeline";
 import type { AssetRequirement, MockProject, PlayFeedback, PublishRecord, QaReport } from "../core/types";
+import { evaluateVerificationGate } from "./verificationGate";
 
 export interface StoredProject {
   id: string;
@@ -134,6 +135,11 @@ export function createInMemoryBackend(options: BackendOptions = {}) {
       ): PublishRecord {
         const generated = requireGeneratedByVersion(store, versionId);
         const storedVersion = requireVersion(store, versionId);
+        const gate = generated.qaReport.gate ?? evaluateVerificationGate(generated.qaReport);
+        generated.qaReport.gate = gate;
+        if (!gate.shouldPublish) {
+          throw new VerificationGateError(gate.reasons);
+        }
         storedVersion.status = "published";
         return createPublishRecord(storedVersion.projectId, versionId, generated.title, options);
       },
@@ -224,8 +230,20 @@ export function createInMemoryBackend(options: BackendOptions = {}) {
           }
         };
       }
+    },
+    testing: {
+      getGeneratedProject(versionId: string): MockProject {
+        return requireGeneratedByVersion(store, versionId);
+      }
     }
   };
+}
+
+export class VerificationGateError extends Error {
+  constructor(readonly reasons: string[]) {
+    super(`Verification gate failed: ${reasons.join("; ")}`);
+    this.name = "VerificationGateError";
+  }
 }
 
 function createDeepSeekChatRequest(

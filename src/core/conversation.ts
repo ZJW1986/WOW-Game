@@ -157,8 +157,8 @@ export function createGuidedQuestions(idea: string, preferredTemplate?: Template
       ),
       choiceQuestion(
         "character_enemy_item",
-        "防御元素",
-        "防御塔、敌人和奖励资源分别是什么？",
+        "防守元素",
+        "防守塔、敌人和奖励资源分别是什么？",
         ["炮塔 / 小怪 / 水晶", "弓塔 / 史莱姆 / 金币", "激光塔 / 无人机 / 能量"],
         "炮塔 / 小怪 / 水晶"
       )

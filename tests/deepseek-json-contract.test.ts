@@ -46,12 +46,28 @@ describe("DeepSeek JSON contract", () => {
     });
 
     expect(prompt).toContain("Generate exactly 5");
-    expect(prompt).toContain("core gameplay goal");
-    expect(prompt).toContain("enemy/hazard behavior");
-    expect(prompt).toContain("reward/failure feedback");
-    expect(prompt).toContain("character/collectible identity");
-    expect(prompt).toContain("level pacing");
+    expect(prompt).toContain("profile-aware");
+    expect(prompt).toContain("Tower defense asks route/towers/waves/economy/base health");
+    expect(prompt).toContain("Flight shooter asks weapon/enemy formations/bullets/shield/Boss");
+    expect(prompt).toContain("Platformer asks jump rhythm/traps/checkpoints/hidden rewards");
+    expect(prompt).toContain("profileId, decisionSlot, and affectsDirector");
     expect(containsMojibake(prompt)).toBe(false);
+  });
+
+  it("asks gameplay DSL generation to use v2 structured rules instead of Phaser code", () => {
+    const prompt = createPromptForTask("llm.gameplay_dsl", {
+      idea: "collect three keys and open a portal",
+      designBrief: { developerPrompt: "Top-down key collection with a locked portal." },
+      assetPack: { assets: [{ assetKey: "item.key" }, { assetKey: "door.portal" }] }
+    });
+
+    expect(prompt).toContain('"version":"2"');
+    expect(prompt).toContain("Allowed triggers: time, score, collected, enemiesAlive, stage, hpBelow, zoneEntered, combo");
+    expect(prompt).toContain("Allowed actions: spawn_zone, open_door, grant_item, set_counter, change_player_speed, fail, win");
+    expect(prompt).toContain("Complexity budget: rules <= 80, zones <= 16, counters <= 16, items <= 16");
+    expect(prompt).toContain("three-keys-open-door");
+    expect(prompt).toContain("Do not output JavaScript or TypeScript");
+    expect(prompt).toContain("Do not generate Phaser lifecycle code");
   });
 
   it("accepts fenced JSON content returned by the chat model", async () => {
@@ -80,5 +96,39 @@ describe("DeepSeek JSON contract", () => {
     expect(result.rawJson).toBe(
       '{"templateFamily":"top_down","reasons":["free movement"],"risks":[],"unsupportedRequests":[]}'
     );
+  });
+
+  it("requires hooks prompts to define 3-stage curve and score tiers", () => {
+    const prompt = createPromptForTask("llm.game_hooks", {
+      idea: "做一个森林平台跳跃，收集金币到达终点门",
+      gameConfig: { templateFamily: "platformer" }
+    });
+
+    expect(prompt).toContain("60000 and 90000");
+    expect(prompt).toContain("stageGoals must contain exactly 3 entries");
+    expect(prompt).toContain("learn_controls (0-20000 ms)");
+    expect(prompt).toContain("finale (50000-90000 ms)");
+    expect(prompt).toContain('"scoreTiers"');
+    expect(prompt).toContain('"targetDurationMs"');
+    expect(prompt).toContain("gold rewards a perfect run");
+    expect(prompt).toContain("bgmIntensity");
+    expect(prompt).toContain("speedMultiplier");
+    expect(prompt).toContain("enemySpawnDelta");
+    expect(containsMojibake(prompt)).toBe(false);
+  });
+
+  it("requires mature brief prompts to ask for a 3-stage 60-90s curve", () => {
+    const prompt = createPromptForTask("llm.mature_game_brief", {
+      idea: "make a platform jumper that lasts about 80 seconds",
+      referencePattern: { id: "pattern-platformer-first-run" }
+    });
+
+    expect(prompt).toContain("60-90 seconds");
+    expect(prompt).toContain("3-stage difficulty curve");
+    expect(prompt).toContain("safe (0-20s)");
+    expect(prompt).toContain("pressure (20-50s)");
+    expect(prompt).toContain("climax (50-90s)");
+    expect(prompt).toContain("difficultyCurve must contain exactly three entries");
+    expect(containsMojibake(prompt)).toBe(false);
   });
 });

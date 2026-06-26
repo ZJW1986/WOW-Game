@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  requestAssetCandidateReplacement,
+  requestAudioPromptPack,
+  requestCellCogAssetGeneration,
+  requestGameDevPromptBundle,
+  requestModelPromptPack,
   requestPlayableGeneration,
+  requestProductionBrief,
   requestProcessUploadedMaterial,
   requestPlayableProject,
   requestPackageEditPlan,
+  requestUiAssetKit,
   replacePackageAsset,
   requestTripoBalance,
   requestTripoTask,
@@ -119,6 +126,122 @@ describe("browser generation client", () => {
     }
 
     expect(calls[0]?.delay).toBe(90000);
+  });
+
+  it("posts production brief requests through the local API", async () => {
+    let requestBody = "";
+    const result = await requestProductionBrief(
+      {
+        idea: "top down tower defense",
+        engineType: "phaser2d",
+        templateFamily: "tower_defense"
+      },
+      async (url, init) => {
+        expect(url).toBe("/api/generate-production-brief");
+        expect(init?.method).toBe("POST");
+        requestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({ gameProductionBrief: { coreLoop: "build and defend" } }), {
+          status: 200
+        });
+      }
+    );
+
+    expect(requestBody).toContain("tower_defense");
+    expect(requestBody).not.toContain("DEEPSEEK_API_KEY");
+    expect(result.gameProductionBrief.coreLoop).toBe("build and defend");
+  });
+
+  it("posts game development prompt bundle requests by profile", async () => {
+    const result = await requestGameDevPromptBundle(
+      {
+        idea: "vertical shooter with boss waves",
+        engineType: "phaser2d",
+        profileId: "vertical_shooter"
+      },
+      async (url, init) => {
+        expect(url).toBe("/api/generate-game-dev-prompt-bundle");
+        expect(init?.method).toBe("POST");
+        expect(String(init?.body)).toContain("vertical_shooter");
+        return new Response(JSON.stringify({ gameDevPromptBundle: { profileId: "vertical_shooter" } }), {
+          status: 200
+        });
+      }
+    );
+
+    expect(result.gameDevPromptBundle.profileId).toBe("vertical_shooter");
+  });
+
+  it("posts separated UI, audio, and model prompt pack requests", async () => {
+    const baseInput = {
+      idea: "3D runner collect coins",
+      engineType: "threejs3d" as const,
+      gameType3d: "runner" as const,
+      projectId: "project-prompt-packs",
+      baseUrl: "http://localhost:5173"
+    };
+    const calls: string[] = [];
+    const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(String(url));
+      expect(init?.method).toBe("POST");
+      expect(String(init?.body)).not.toContain("CELLCOG_API_KEY");
+      return new Response(JSON.stringify({ ok: true, path: String(url) }), { status: 200 });
+    };
+
+    await requestUiAssetKit(baseInput, fetcher);
+    await requestAudioPromptPack(baseInput, fetcher);
+    await requestModelPromptPack(baseInput, fetcher);
+
+    expect(calls).toEqual([
+      "/api/generate-ui-asset-kit",
+      "/api/generate-audio-prompt-pack",
+      "/api/generate-model-prompt-pack"
+    ]);
+  });
+
+  it("posts CellCog asset generation requests without exposing provider secrets", async () => {
+    let requestBody = "";
+    const result = await requestCellCogAssetGeneration(
+      {
+        promptPackId: "visual-pack-1",
+        slot: "world.path",
+        prompt: "top-down tileable tower defense path map only",
+        requestedOutput: "webp"
+      },
+      async (url, init) => {
+        expect(url).toBe("/api/cellcog/generate-asset");
+        expect(init?.method).toBe("POST");
+        requestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({ report: { status: "queued" } }), { status: 200 });
+      }
+    );
+
+    expect(requestBody).toContain("world.path");
+    expect(requestBody).not.toContain("CELLCOG_API_KEY");
+    expect(result.report.status).toBe("queued");
+  });
+
+  it("stages replacement asset candidates instead of replacing runtime assets directly", async () => {
+    let requestBody = "";
+    const result = await requestAssetCandidateReplacement(
+      {
+        projectId: "project-replace-candidate",
+        assetKey: "item.currency",
+        previousFileUrl: "/old/coin.png",
+        candidateFileUrl: "/new/coin.webp",
+        reason: "regenerated with cleaner prompt"
+      },
+      async (url, init) => {
+        expect(url).toBe("/api/replace-asset-candidate");
+        expect(init?.method).toBe("POST");
+        requestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({ report: { status: "candidate_created" } }), {
+          status: 200
+        });
+      }
+    );
+
+    expect(requestBody).toContain("item.currency");
+    expect(result.report.status).toBe("candidate_created");
   });
 
   it("loads persisted playable projects by project and version id", async () => {

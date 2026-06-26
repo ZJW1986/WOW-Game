@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "codex/**"]
+
+jobs:
+  build-test-verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install chromium
+      - name: Start preview server
+        run: |
+          Start-Process npm.cmd -ArgumentList 'run','dev','--','--host','0.0.0.0','--port','5176','--strictPort' -WindowStyle Hidden -RedirectStandardOutput dev-5176.log -RedirectStandardError dev-5176.err
+          Start-Sleep -Seconds 8
+      - run: npm run ci
+        env:
+          WOW_VERIFY_REQUIRED: "1"
+          WOW_VERIFY_URL: "http://localhost:5176/"

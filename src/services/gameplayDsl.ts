@@ -1,8 +1,13 @@
-import type { AssetPack, GameHooks, GameplayDsl, GameplayDslRule } from "../core/types";
+import type { AssetPack, GameHooks, GameplayDsl, GameplayDslRule, GameplayDslV2 } from "../core/types";
 import { gameplayDslSchema } from "../core/schemas";
+import { createDslVm } from "../runtime/dsl/DslVm";
 
 type CompileResult =
-  | { success: true; hooks: Pick<GameHooks, "enemyArchetypes" | "encounterTimeline" | "impactRules" | "stageGoals"> }
+  | {
+      success: true;
+      hooks: Pick<GameHooks, "enemyArchetypes" | "encounterTimeline" | "impactRules" | "stageGoals">;
+      runtimeProgram?: GameplayDslV2;
+    }
   | { success: false; errors: string[] };
 
 const ENEMY_EVENTS = new Set<GameplayDslRule["do"]>(["spawn_wave", "spawn_mine", "projectile_burst"]);
@@ -14,9 +19,8 @@ export function validateGameplayDsl(payload: unknown, assetPack?: AssetPack) {
   }
 
   const assetKeys = new Set(assetPack?.assets.map((asset) => asset.assetKey) ?? []);
-  const missingAssets = parsed.data.rules
-    .flatMap((rule) => rule.assetKey ? [rule.assetKey] : [])
-    .filter((assetKey) => !assetKeys.has(assetKey));
+  const referencedAssetKeys = parsed.data.version === "1" ? v1AssetKeys(parsed.data.rules) : v2AssetKeys(parsed.data);
+  const missingAssets = referencedAssetKeys.filter((assetKey) => !assetKeys.has(assetKey));
 
   if (missingAssets.length > 0) {
     return {
@@ -31,6 +35,9 @@ export function validateGameplayDsl(payload: unknown, assetPack?: AssetPack) {
 export function compileGameplayDsl(payload: unknown, assetPack?: AssetPack): CompileResult {
   const validation = validateGameplayDsl(payload, assetPack);
   if (!validation.success) return { success: false, errors: validation.errors };
+  if (validation.dsl.version === "2") {
+    return compileGameplayDslV2(validation.dsl);
+  }
 
   const enemyArchetypes: NonNullable<GameHooks["enemyArchetypes"]> = [];
   const encounterTimeline: NonNullable<GameHooks["encounterTimeline"]> = [];
@@ -96,6 +103,48 @@ export function compileGameplayDsl(payload: unknown, assetPack?: AssetPack): Com
       }
     }
   };
+}
+
+export function createGameplayDslRuntime(payload: unknown, assetPack?: AssetPack) {
+  const compiled = compileGameplayDsl(payload, assetPack);
+  if (!compiled.success || !compiled.runtimeProgram) return undefined;
+  return createDslVm(compiled.runtimeProgram);
+}
+
+function compileGameplayDslV2(_dsl: GameplayDslV2): CompileResult {
+  return {
+    success: true,
+    runtimeProgram: _dsl,
+    hooks: {
+      enemyArchetypes: [],
+      encounterTimeline: [],
+      stageGoals: [],
+      impactRules: {
+        hitStopMs: 80,
+        screenShakeIntensity: 0.018,
+        explosionParticles: 22,
+        knockbackForce: 180,
+        invulnerabilityMs: 650,
+        comboWindowMs: 1800
+      }
+    }
+  };
+}
+
+function v1AssetKeys(rules: GameplayDslRule[]): string[] {
+  return rules.flatMap((rule) => rule.assetKey ? [rule.assetKey] : []);
+}
+
+function v2AssetKeys(dsl: GameplayDslV2): string[] {
+  const keys = new Set<string>();
+  for (const item of dsl.items ?? []) keys.add(item.assetKey);
+  for (const rule of dsl.rules) {
+    if (rule.when.type === "collected") keys.add(rule.when.assetKey);
+    for (const action of rule.do) {
+      if (action.type === "open_door" || action.type === "grant_item") keys.add(action.assetKey);
+    }
+  }
+  return Array.from(keys);
 }
 
 function triggerThreshold(value: string): number {

@@ -2,10 +2,14 @@ import type {
   AssetRequirement,
   ConfirmedThreeAssets,
   CoverPoster,
+  GameProductionBrief,
+  GameplayDslV2,
+  ModelPromptPack,
   MockProject,
   PipelineArtifact,
   PublishRecord,
   QaReport,
+  SceneMapPlan,
   ThreeAssetCandidates,
   ThreeAssetLoadReport,
   ThreeAssetPack,
@@ -18,6 +22,11 @@ import type {
 } from "../core/types";
 import { createPublishRecord } from "../core/pipeline";
 import { getThreeGenreProfile } from "../core/threeGenreProfiles";
+import {
+  createGameProductionBrief,
+  createModelPromptPack,
+  createSceneMapPlan
+} from "./productionPromptPacks";
 
 export interface ThreeGameGenerationRequest {
   idea: string;
@@ -65,7 +74,13 @@ export function generateThreeGameMvp(input: ThreeGameGenerationRequest): ThreeGa
     threeGameBrief,
     input.answers ?? []
   );
-  const threeAssetPlan = createThreeAssetPlan(versionId, threeGameBrief, threeSceneDirector);
+  const modelPromptPack = createModelPromptPack({
+    idea: input.idea,
+    threeGameBrief,
+    threeSceneDirector,
+    packId: `${input.projectId}-model-${versionId}`
+  });
+  const threeAssetPlan = createThreeAssetPlan(versionId, threeGameBrief, threeSceneDirector, modelPromptPack);
   const threeAssetPack = createThreeAssetPack(
     versionId,
     threeSceneDirector,
@@ -76,6 +91,17 @@ export function generateThreeGameMvp(input: ThreeGameGenerationRequest): ThreeGa
   const assetLoadReport = createThreeAssetLoadReport(threeAssetPack);
   const threeVerificationReport = createThreeVerificationReport(threeSceneDirector, threeAssetPack, assetLoadReport);
   const coverPoster = createThreeCoverPoster(input.projectId, versionId, title, input.idea, threeGameBrief, threeSceneDirector);
+  const gameProductionBrief = createGameProductionBrief({
+    idea: input.idea,
+    engineType: "threejs3d",
+    threeGenre: genre,
+    title,
+    gameTypeLabel: describeThreeGenre(genre)
+  });
+  const sceneMapPlan = createSceneMapPlan({
+    engineType: "threejs3d",
+    threeSceneDirector
+  });
   const publishRecord = createPublishRecord(input.projectId, versionId, title, {
     visibility: "public",
     baseUrl: input.baseUrl,
@@ -92,7 +118,10 @@ export function generateThreeGameMvp(input: ThreeGameGenerationRequest): ThreeGa
     threeAssetPack,
     threeVerificationReport,
     assetLoadReport,
-    coverPoster
+    coverPoster,
+    gameProductionBrief,
+    modelPromptPack,
+    sceneMapPlan
   });
   const fallbacksUsed = assetLoadReport.assets
     .filter((asset) => asset.fallback)
@@ -384,6 +413,7 @@ export function normalizeThreeSceneDirector(
       )
     },
     spawnTimeline: normalizeSpawnTimeline(director.spawnTimeline, fallback.spawnTimeline ?? []),
+    gameplayDsl: normalizeThreeGameplayDsl(director.gameplayDsl, brief.genre),
     stages,
     player: {
       speed: clampNumber(director.player?.speed, 3, 12, fallback.player.speed),
@@ -412,6 +442,27 @@ export function normalizeThreeSceneDirector(
       proceduralAudio: director.feedback?.proceduralAudio ?? true
     },
     towerDefense: normalizeTowerDefenseRules(director.towerDefense, fallback.towerDefense)
+  };
+}
+
+function normalizeThreeGameplayDsl(value: GameplayDslV2 | undefined, genre: ThreeGameGenre): GameplayDslV2 | undefined {
+  if (value?.version === "2" && value.rules.length > 0) return value;
+  if (genre !== "runner") return undefined;
+  return {
+    version: "2",
+    zones: [{ id: "runner-lane-pressure", x: 0, y: 0, width: 7.2, height: 12 }],
+    rules: [
+      {
+        id: "runner-pressure-wave",
+        when: { type: "score", op: ">=", value: 2 },
+        do: [{ type: "spawn_zone", zoneId: "runner-lane-pressure", enemyType: "charger", count: 3 }]
+      },
+      {
+        id: "runner-speed-ramp",
+        when: { type: "time", op: ">=", value: 12000 },
+        do: [{ type: "change_player_speed", multiplier: 1.18 }]
+      }
+    ]
   };
 }
 
@@ -654,16 +705,22 @@ function normalizeSpawnTimeline(
 function createThreeAssetPlan(
   versionId: string,
   brief: ThreeGameBrief,
-  director: ThreeSceneDirector
+  director: ThreeSceneDirector,
+  modelPromptPack?: ModelPromptPack
 ): ThreeAssetPlan {
   const profile = getThreeGenreProfile(brief.genre);
+  const modelPrompt = (assetKey: ModelPromptPack["prompts"][number]["assetKey"], fallback: string) =>
+    modelPromptPack?.prompts.find((prompt) => prompt.assetKey === assetKey)?.finalModelPrompt ?? fallback;
   const baseAssets: ThreeAssetPlan["assets"] = [
     {
       assetKey: "three.model.player",
       type: "model",
       provider: "builtin-three",
       purpose: `${profile.label} player model`,
-      prompt: `${profile.modelDirection.player}. ${brief.title}. ${brief.movementIntent}`,
+      prompt: modelPrompt(
+        "three.model.player",
+        `${profile.modelDirection.player}. ${brief.title}. ${brief.movementIntent}`
+      ),
       fallback: true,
       ...modelBudgetForSlot("player", director)
     },
@@ -672,7 +729,10 @@ function createThreeAssetPlan(
       type: "model",
       provider: "builtin-three",
       purpose: `${profile.label} hazard model`,
-      prompt: `${profile.modelDirection.hazard}. ${brief.title}. behavior ${director.enemies[0]?.behavior ?? "falling"}`,
+      prompt: modelPrompt(
+        "three.model.hazard",
+        `${profile.modelDirection.hazard}. ${brief.title}. behavior ${director.enemies[0]?.behavior ?? "falling"}`
+      ),
       fallback: true,
       ...modelBudgetForSlot("hazard", director)
     },
@@ -681,7 +741,10 @@ function createThreeAssetPlan(
       type: "model",
       provider: "builtin-three",
       purpose: `${profile.label} collectible model`,
-      prompt: `${profile.modelDirection.collectible}. ${brief.title}. visible in mobile camera`,
+      prompt: modelPrompt(
+        "three.model.collectible",
+        `${profile.modelDirection.collectible}. ${brief.title}. visible in mobile camera`
+      ),
       fallback: true,
       ...modelBudgetForSlot("collectible", director)
     },
@@ -788,7 +851,7 @@ function modelBudgetForSlot(
   };
 }
 
-function builtinThreeModelUrl(genre: ThreeGameGenre, assetKey: string): string {
+export function builtinThreeModelUrl(genre: ThreeGameGenre, assetKey: string): string {
   if (genre === "futuristic_tower_defense") {
     const towerMatch = assetKey.match(/^three\.tower\.(laser|missile|slow)$/);
     if (towerMatch) return `builtin://three/futuristic_tower_defense/tower/${towerMatch[1]}`;
@@ -818,9 +881,11 @@ function createThreeAssetPack(
           approvalStatus: "approved",
           generationParams: {
             ...confirmed.generationParams,
-            engineType: "threejs3d",
-            genreProfileId: director.genre,
-            runtimeLoader: asset.type === "model" ? "GLTFLoader" : "procedural"
+          engineType: "threejs3d",
+          genreProfileId: director.genre,
+          sourceSkill: "game-cog",
+          promptPack: "model-prompt-pack",
+          runtimeLoader: asset.type === "model" ? "GLTFLoader" : "procedural"
           }
         };
       }
@@ -835,7 +900,7 @@ function createThreeAssetPack(
           uploaded.fileUrl,
           uploaded.previewUrl ?? uploaded.fileUrl,
           uploaded.mimeType,
-          { genreProfileId: director.genre, roleInGameplay: asset.purpose }
+          { genreProfileId: director.genre, roleInGameplay: asset.purpose, sourceSkill: "game-cog", promptPack: "model-prompt-pack" }
         );
       }
       return threeAsset(
@@ -850,6 +915,8 @@ function createThreeAssetPack(
         {
           genreProfileId: director.genre,
           roleInGameplay: asset.purpose,
+          sourceSkill: "game-cog",
+          promptPack: "model-prompt-pack",
           qualityTier: asset.qualityTier ?? "builtin_low_poly",
           preferredSource: asset.preferredSource ?? "builtin_low_poly",
           polyBudget: asset.polyBudget ?? 1000,
@@ -1148,8 +1215,18 @@ function createThreeProject(input: {
   threeVerificationReport: ThreeVerificationReport;
   assetLoadReport: ThreeAssetLoadReport;
   coverPoster: CoverPoster;
+  gameProductionBrief: GameProductionBrief;
+  modelPromptPack: ModelPromptPack;
+  sceneMapPlan: SceneMapPlan;
 }): MockProject {
   const artifacts: PipelineArtifact[] = [
+    {
+      stage: "game-production-brief",
+      fileName: "game-production-brief.json",
+      format: "json",
+      title: "Game Production Brief",
+      content: input.gameProductionBrief
+    },
     {
       stage: "three-game-brief",
       fileName: "three-design-brief.json",
@@ -1177,6 +1254,20 @@ function createThreeProject(input: {
       format: "json",
       title: "Three.js Asset Pack",
       content: input.threeAssetPack
+    },
+    {
+      stage: "model-prompt-pack",
+      fileName: "model-prompt-pack.json",
+      format: "json",
+      title: "Model Prompt Pack",
+      content: input.modelPromptPack
+    },
+    {
+      stage: "scene-map-plan",
+      fileName: "scene-map-plan.json",
+      format: "json",
+      title: "Scene Map Plan",
+      content: input.sceneMapPlan
     },
     {
       stage: "three-verification-report",

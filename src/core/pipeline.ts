@@ -1,3 +1,4 @@
+import { evaluateVerificationGate } from "../services/verificationGate";
 import type {
   AssetPack,
   AssetRequirement,
@@ -13,6 +14,7 @@ import type {
   PipelineArtifact,
   PublishRecord,
   QaReport,
+  StyleSheet,
   TemplateFamily
 } from "./types";
 import { createMediaGateway } from "../services/mediaGateway";
@@ -190,6 +192,10 @@ export function runMockPipeline(idea: string): MockProject {
 }
 
 export function createGameHooks(config: GameConfig): GameHooks {
+  const isPlatformer = config.templateFamily === "platformer";
+  const isTowerDefense = config.templateFamily === "tower_defense";
+  const isGridLogic = config.templateFamily === "grid_logic";
+  const isUiHeavy = config.templateFamily === "ui_heavy";
   return {
     enemyRules: {
       movement:
@@ -200,8 +206,8 @@ export function createGameHooks(config: GameConfig): GameHooks {
             : config.gameplay.enemyBehavior === "patrol"
               ? "patrol"
               : "static",
-      speed: config.templateFamily === "tower_defense" ? 95 : config.templateFamily === "platformer" ? 130 : 150,
-      waveIntervalMs: config.templateFamily === "tower_defense" ? 1200 : 0
+      speed: isTowerDefense ? 95 : isPlatformer ? 130 : isGridLogic || isUiHeavy ? 0 : 150,
+      waveIntervalMs: isTowerDefense ? 1200 : 0
     },
     collectibleRules: {
       placement:
@@ -220,23 +226,31 @@ export function createGameHooks(config: GameConfig): GameHooks {
       target: config.level.winScore
     },
     failCondition: {
-      mode: config.templateFamily === "tower_defense" ? "base_destroyed" : "hit_hazard",
-      lives: config.templateFamily === "tower_defense" ? 5 : 1
+      mode:
+        config.templateFamily === "tower_defense"
+          ? "base_destroyed"
+          : config.templateFamily === "grid_logic"
+            ? "moves_exhausted"
+            : config.templateFamily === "ui_heavy"
+              ? "time_out"
+            : "hit_hazard",
+      lives: isTowerDefense ? 5 : isGridLogic ? 4 : isUiHeavy ? 60 : 1
     },
     numberTuning: {
-      playerSpeed: config.templateFamily === "platformer" ? 210 : 250,
-      jumpVelocity: config.templateFamily === "platformer" ? 430 : 0,
-      hazardSpeed: config.templateFamily === "tower_defense" ? 95 : 140
+      playerSpeed: isPlatformer ? 210 : isGridLogic || isUiHeavy ? 0 : 250,
+      jumpVelocity: isPlatformer ? 430 : 0,
+      hazardSpeed: isTowerDefense ? 95 : isGridLogic || isUiHeavy ? 0 : 140
     },
     levelLayout: {
-      platforms:
-        config.templateFamily === "platformer"
-          ? [
-              { x: 480, y: 510, width: 920, height: 28 },
-              { x: 360, y: 390, width: 180, height: 20 },
-              { x: 680, y: 290, width: 180, height: 20 }
-            ]
-          : [],
+      platforms: isPlatformer
+        ? [
+            { x: 480, y: 530, width: 920, height: 28 },
+            { x: 270, y: 430, width: 180, height: 20 },
+            { x: 470, y: 350, width: 180, height: 20 },
+            { x: 660, y: 270, width: 180, height: 20 },
+            { x: 840, y: 360, width: 140, height: 20 }
+          ]
+        : [],
       lanes:
         config.templateFamily === "tower_defense"
           ? [
@@ -245,37 +259,330 @@ export function createGameHooks(config: GameConfig): GameHooks {
               { y: 340, speed: 115, count: 2 }
             ]
           : [],
-      grid: config.templateFamily === "grid_logic" ? { columns: 8, rows: 5 } : { columns: 0, rows: 0 }
+      grid: config.templateFamily === "grid_logic" ? { columns: 5, rows: 3 } : { columns: 0, rows: 0 },
+      gridState:
+        config.templateFamily === "grid_logic"
+          ? [
+              [0, 0, 3, 0, 0],
+              [1, 2, 0, 2, 0],
+              [0, 0, 3, 0, 0]
+            ]
+          : undefined
     },
     levelFlow: createLevelFlow(config.templateFamily),
     collisionRules: {
-      collisionRadius: config.templateFamily === "platformer" ? 8 : 12,
+      collisionRadius: isPlatformer ? 8 : 12,
       invulnerabilityMs: 520,
-      knockbackForce: config.templateFamily === "platformer" ? 180 : 140
+      knockbackForce: isPlatformer ? 180 : 140
     },
     feedbackRules: {
-      particleCount: config.templateFamily === "platformer" ? 24 : 18,
-      screenShakeIntensity: config.templateFamily === "platformer" ? 0.016 : 0.012,
-      collectBurstCount: config.templateFamily === "platformer" ? 14 : 12,
+      particleCount: isPlatformer ? 24 : isTowerDefense ? 20 : isGridLogic ? 16 : isUiHeavy ? 10 : 18,
+      screenShakeIntensity: isPlatformer ? 0.016 : isUiHeavy || isGridLogic ? 0.006 : 0.012,
+      collectBurstCount: isPlatformer ? 14 : isTowerDefense ? 12 : isGridLogic ? 10 : isUiHeavy ? 8 : 12,
       floatingScore: true,
       comboText: config.templateFamily !== "ui_heavy",
       audioCueKeys: ["sfx.collect", "sfx.hit", "sfx.win", "sfx.lose"]
     },
     spawnRules: {
-      hazardIntervalMs: config.gameplay.spawnPattern === "waves" ? 700 : 1100,
-      maxActiveHazards: Math.max(1, config.level.hazards)
+      hazardIntervalMs: isUiHeavy || isGridLogic ? 0 : config.gameplay.spawnPattern === "waves" ? 700 : 1100,
+      maxActiveHazards: isUiHeavy || isGridLogic ? 0 : Math.max(1, config.level.hazards)
     },
     visualLayerRules: {
-      backgroundTreatment: config.templateFamily === "platformer" ? "parallax forest layers" : "parallax arena depth",
-      foregroundProps: config.templateFamily === "platformer" ? ["grass lip", "finish flag"] : ["danger markers", "score glints"],
-      uiBadgeStyle: "compact neon readable HUD"
+      backgroundTreatment: isPlatformer
+        ? "parallax forest layers"
+        : isTowerDefense
+          ? "top-down readable defense route"
+          : isGridLogic
+            ? "flat readable puzzle board"
+            : isUiHeavy
+              ? "dashboard management table"
+              : "parallax arena depth",
+      foregroundProps: isPlatformer
+        ? ["grass lip", "finish flag"]
+        : isTowerDefense
+          ? ["build pads", "base core", "wave path"]
+          : isGridLogic
+            ? ["target cells", "block sockets"]
+            : isUiHeavy
+              ? ["order cards", "mood meter", "income tickets"]
+              : ["danger markers", "score glints"],
+      uiBadgeStyle: isUiHeavy ? "large decision cards with resource badges" : "compact neon readable HUD"
     },
     difficultyRules: {
-      hazardRamp: config.templateFamily === "platformer" ? "teach jump before first hazard" : "pressure rises after two pickups",
-      enemyPacing: config.templateFamily === "tower_defense" ? "wave preview then slow first wave" : "early safe read then active threat",
-      collectibleSpacing: config.templateFamily === "platformer" ? "coin path follows jump arc" : "collectibles pull player across safe lanes",
-      checkpointPolicy: config.templateFamily === "platformer" ? "finish gate visible after first reward" : "short retry with no hidden loss"
+      hazardRamp: isPlatformer
+        ? "teach jump before first hazard"
+        : isTowerDefense
+          ? "first wave is readable, mixed wave arrives after one build"
+          : isGridLogic
+            ? "first move is safe, later moves require planning"
+            : isUiHeavy
+              ? "orders become stricter after two good choices"
+              : "pressure rises after two pickups",
+      enemyPacing: isTowerDefense
+        ? "wave preview then slow first wave"
+        : isGridLogic
+          ? "no enemy chase, pressure is move budget"
+          : isUiHeavy
+            ? "timer and mood pressure instead of physical enemies"
+            : "early safe read then active threat",
+      collectibleSpacing: isPlatformer
+        ? "coin path follows jump arc"
+        : isTowerDefense
+          ? "gold rewards appear after kills and support upgrades"
+          : isGridLogic
+            ? "targets sit on separated cells to force route planning"
+            : isUiHeavy
+              ? "rewards are order tickets and income badges"
+              : "collectibles pull player across safe lanes",
+      checkpointPolicy: isPlatformer
+        ? "finish gate visible after first reward"
+        : isGridLogic
+          ? "reset is immediate after move budget is spent"
+          : "short retry with no hidden loss"
+    },
+    stageGoals: createStageGoals(config),
+    scoreTiers: createScoreTiers(config)
+  };
+}
+
+function createStageGoals(config: GameConfig): NonNullable<GameHooks["stageGoals"]> {
+  const winScore = Math.max(1, config.level.winScore);
+  if (config.templateFamily === "tower_defense") {
+    return [
+      {
+        id: "route_preview",
+        label: "Route Preview",
+        startsAtMs: 0,
+        durationMs: 16000,
+        objective: "learn_controls",
+        target: 1,
+        enemyMix: [],
+        rewardPacing: "slow",
+        enemySpawnDelta: 0,
+        speedMultiplier: 0.9,
+        bgmIntensity: 0
+      },
+      {
+        id: "first_wave",
+        label: "First Wave",
+        startsAtMs: 16000,
+        durationMs: 30000,
+        objective: "survive",
+        target: Math.max(3, Math.ceil(winScore * 0.6)),
+        enemyMix: ["wave_runner"],
+        rewardPacing: "normal",
+        enemySpawnDelta: 2,
+        speedMultiplier: 1.05,
+        bgmIntensity: 1
+      },
+      {
+        id: "base_rush",
+        label: "Base Rush",
+        startsAtMs: 46000,
+        durationMs: 34000,
+        objective: "finale",
+        target: winScore,
+        enemyMix: ["wave_runner", "armored_wave"],
+        rewardPacing: "burst",
+        enemySpawnDelta: 4,
+        speedMultiplier: 1.25,
+        bgmIntensity: 2
+      }
+    ];
+  }
+  if (config.templateFamily === "grid_logic") {
+    return [
+      {
+        id: "read_board",
+        label: "Read Board",
+        startsAtMs: 0,
+        durationMs: 20000,
+        objective: "learn_controls",
+        target: 1,
+        enemyMix: [],
+        rewardPacing: "slow",
+        enemySpawnDelta: 0,
+        speedMultiplier: 1,
+        bgmIntensity: 0
+      },
+      {
+        id: "route_plan",
+        label: "Route Plan",
+        startsAtMs: 20000,
+        durationMs: 30000,
+        objective: "collect",
+        target: Math.max(2, Math.ceil(winScore * 0.5)),
+        enemyMix: ["blocker"],
+        rewardPacing: "normal",
+        enemySpawnDelta: 0,
+        speedMultiplier: 1,
+        bgmIntensity: 1
+      },
+      {
+        id: "move_budget",
+        label: "Move Budget",
+        startsAtMs: 50000,
+        durationMs: 30000,
+        objective: "finale",
+        target: winScore,
+        enemyMix: ["blocker"],
+        rewardPacing: "burst",
+        enemySpawnDelta: 0,
+        speedMultiplier: 1,
+        bgmIntensity: 2
+      }
+    ];
+  }
+  if (config.templateFamily === "ui_heavy") {
+    return [
+      {
+        id: "first_order",
+        label: "First Order",
+        startsAtMs: 0,
+        durationMs: 18000,
+        objective: "learn_controls",
+        target: 1,
+        enemyMix: [],
+        rewardPacing: "slow",
+        enemySpawnDelta: 0,
+        speedMultiplier: 1,
+        bgmIntensity: 0
+      },
+      {
+        id: "rush_hour",
+        label: "Rush Hour",
+        startsAtMs: 18000,
+        durationMs: 32000,
+        objective: "survive",
+        target: Math.max(2, Math.ceil(winScore * 0.6)),
+        enemyMix: ["timer"],
+        rewardPacing: "normal",
+        enemySpawnDelta: 0,
+        speedMultiplier: 1,
+        bgmIntensity: 1
+      },
+      {
+        id: "daily_summary",
+        label: "Daily Summary",
+        startsAtMs: 50000,
+        durationMs: 28000,
+        objective: "finale",
+        target: winScore,
+        enemyMix: ["timer", "mood"],
+        rewardPacing: "burst",
+        enemySpawnDelta: 0,
+        speedMultiplier: 1,
+        bgmIntensity: 2
+      }
+    ];
+  }
+  if (config.templateFamily === "platformer") {
+    return [
+      {
+        id: "safe_route",
+        label: "起步与教学",
+        startsAtMs: 0,
+        durationMs: 20000,
+        objective: "learn_controls",
+        target: 1,
+        enemyMix: [],
+        rewardPacing: "slow",
+        enemySpawnDelta: 0,
+        speedMultiplier: 1,
+        bgmIntensity: 0
+      },
+      {
+        id: "pressure_route",
+        label: "金币路径压力",
+        startsAtMs: 20000,
+        durationMs: 30000,
+        objective: "collect",
+        target: Math.max(2, Math.ceil(winScore * 0.6)),
+        enemyMix: ["patroller"],
+        rewardPacing: "normal",
+        enemySpawnDelta: 1,
+        speedMultiplier: 1.1,
+        bgmIntensity: 1
+      },
+      {
+        id: "finale_route",
+        label: "终点冲刺",
+        startsAtMs: 50000,
+        durationMs: 30000,
+        objective: "finale",
+        target: winScore,
+        enemyMix: ["patroller", "charger"],
+        rewardPacing: "burst",
+        enemySpawnDelta: 2,
+        speedMultiplier: 1.25,
+        bgmIntensity: 2
+      }
+    ];
+  }
+  return [
+    {
+      id: "warmup",
+      label: "热身",
+      startsAtMs: 0,
+      durationMs: 18000,
+      objective: "learn_controls",
+      target: 1,
+      enemyMix: [],
+      rewardPacing: "slow",
+      enemySpawnDelta: 0,
+      speedMultiplier: 1,
+      bgmIntensity: 0
+    },
+    {
+      id: "pressure",
+      label: "压力上升",
+      startsAtMs: 18000,
+      durationMs: 32000,
+      objective: "collect",
+      target: Math.max(2, Math.ceil(winScore * 0.6)),
+      enemyMix: ["chaser"],
+      rewardPacing: "normal",
+      enemySpawnDelta: 1,
+      speedMultiplier: 1.15,
+      bgmIntensity: 1
+    },
+    {
+      id: "finale",
+      label: "终局",
+      startsAtMs: 50000,
+      durationMs: 30000,
+      objective: "finale",
+      target: winScore,
+      enemyMix: ["chaser", "charger"],
+      rewardPacing: "burst",
+      enemySpawnDelta: 2,
+      speedMultiplier: 1.3,
+      bgmIntensity: 2
     }
+  ];
+}
+
+function createScoreTiers(config: GameConfig): NonNullable<GameHooks["scoreTiers"]> {
+  const winScore = Math.max(1, config.level.winScore);
+  const targetDurationMs = 75000;
+  return {
+    targetDurationMs,
+    gold: {
+      minScore: winScore,
+      maxDeathCount: 0,
+      maxDurationMs: Math.round(targetDurationMs * 0.75)
+    },
+    silver: {
+      minScore: Math.max(1, Math.ceil(winScore * 0.7)),
+      maxDeathCount: 1
+    },
+    bronze: {
+      minScore: Math.max(1, Math.ceil(winScore * 0.4))
+    },
+    rationale:
+      config.templateFamily === "platformer"
+        ? "金=无失误且 ≤56 秒抵达终点；银=熟练玩家通关；铜=完成主线即可。"
+        : "金=完美收集且快速；银=熟练通关；铜=达成基本目标。"
   };
 }
 
@@ -285,15 +592,30 @@ export function createMatureGameBrief(templateFamily: TemplateFamily): MatureGam
   return {
     referencePatternId: pattern.id,
     coreLoop: isPlatformer
-      ? ["起步安全区", "沿金币路径跳跃", "躲避危险物", "抵达终点门"]
+      ? ["起步安全区", "沿金币路径跳跃", "发现隐藏路线", "躲避巡逻危险物", "抵达终点 gate"]
       : ["进入安全区", "收集目标", "应对敌人压力", "完成胜利条件"],
     firstThirtySeconds: isPlatformer
-      ? ["0-5 秒看到目标和金币路径", "5-15 秒完成教学跳跃", "15-25 秒遇到第一个危险物", "25-30 秒接近终点"]
+      ? [
+          "0-5 秒看到起步平台、金币路径和终点旗帜",
+          "5-15 秒完成低高度教学跳跃，拿到第一枚金币",
+          "15-25 秒分支：低空稳路线或高空隐藏路线",
+          "25-30 秒第一个巡逻危险物出现，接近第二段平台"
+        ]
       : ["0-5 秒理解移动和目标", "5-15 秒收集第一个奖励", "15-25 秒出现敌人压力", "25-30 秒形成逃脱和收集循环"],
-    visualTheme: isPlatformer ? "森林平台、清晰地面剪影、背景 parallax" : "高对比竞技场、清晰角色和危险物",
+    visualTheme: isPlatformer
+      ? "森林平台、清晰地面剪影、3 段递进高度、背景 parallax 与终点旗"
+      : "高对比竞技场、清晰角色和危险物",
     feedbackChecklist: ["收集粒子", "命中闪烁", "屏幕轻微震动", "胜利庆祝", "失败重试提示"],
-    difficultyCurve: pattern.difficultyPrinciples,
-    gameFeelMoments: isPlatformer ? ["金币路径引导跳跃", "落地反馈", "终点门庆祝"] : ["擦边逃脱", "连收奖励", "危险接近提示"]
+    difficultyCurve: isPlatformer
+      ? [
+          "20 秒内全部为安全教学，仅金币奖励",
+          "20-50 秒进入压力段：1 个巡逻敌人 + 隐藏路线分支",
+          "50-90 秒终点冲刺：2 个巡逻敌人 + 终点 gate 显眼提示"
+        ]
+      : pattern.difficultyPrinciples,
+    gameFeelMoments: isPlatformer
+      ? ["金币路径引导跳跃", "落地反馈", "隐藏路线发现彩蛋", "终点 gate 庆祝", "失败重试 0.5 秒内重启"]
+      : ["擦边逃脱", "连收奖励", "危险接近提示"]
   };
 }
 
@@ -580,6 +902,67 @@ export function createAssetStyleGuide(input: {
   };
 }
 
+export function createStyleSheet(input: {
+  idea: string;
+  templateFamily: TemplateFamily;
+  title: string;
+}): StyleSheet {
+  const normalized = `${input.idea} ${input.title}`.toLowerCase();
+  const sciFi = normalized.includes("space") || normalized.includes("ship") || normalized.includes("sci") || input.templateFamily === "top_down";
+  const forest = normalized.includes("forest") || normalized.includes("ninja") || input.templateFamily === "platformer";
+  const defense = normalized.includes("tower") || normalized.includes("defense") || input.templateFamily === "tower_defense";
+  const grid = normalized.includes("grid") || normalized.includes("puzzle") || input.templateFamily === "grid_logic";
+
+  if (defense) {
+    return {
+      palette: ["#172033", "#2f6f73", "#74c365", "#f2c14e", "#f25f5c"],
+      brushwork: "vector_flat",
+      lighting: "rim",
+      era: "sci_fi",
+      subjectScale: "small",
+      negativePrompt: "no text, no watermark, no mixed art styles, no foreground UI, no blurry silhouettes"
+    };
+  }
+  if (forest) {
+    return {
+      palette: ["#132a13", "#31572c", "#90a955", "#ecf39e", "#c1121f"],
+      brushwork: "cel_shaded",
+      lighting: "soft",
+      era: "fantasy",
+      subjectScale: "medium",
+      negativePrompt: "no text, no watermark, no photorealism, no dirty cutout edges, no extra limbs"
+    };
+  }
+  if (grid) {
+    return {
+      palette: ["#202124", "#3c4043", "#8ab4f8", "#fdd663", "#81c995"],
+      brushwork: "pixel_clean",
+      lighting: "flat",
+      era: "retro",
+      subjectScale: "small",
+      negativePrompt: "no text, no watermark, no perspective tilt, no clutter, no low contrast tiles"
+    };
+  }
+  if (sciFi) {
+    return {
+      palette: ["#08111f", "#12355b", "#00b4d8", "#ffbe0b", "#ff006e"],
+      brushwork: "low_poly",
+      lighting: "neon",
+      era: "sci_fi",
+      subjectScale: "medium",
+      negativePrompt: "no text, no watermark, no realistic photo texture, no UI overlay, no muddy background"
+    };
+  }
+  return {
+    palette: ["#233d4d", "#619b8a", "#a1c181", "#fcca46", "#fe7f2d"],
+    brushwork: "cel_shaded",
+    lighting: "soft",
+    era: "modern",
+    subjectScale: "medium",
+    negativePrompt: "no text, no watermark, no inconsistent palette, no clutter, no blurry edges"
+  };
+}
+
 function mockImage(assetKey: string, purpose: string, spec: string): AssetRequirement {
   const isCharacter = assetKey.startsWith("player.");
   const isEnvironment = assetKey.startsWith("world.") || assetKey === "cover.main";
@@ -689,7 +1072,13 @@ export function createGameConfig(
     playerGoal:
       templateFamily === "platformer"
         ? "Jump through hazards and collect enough gems to reach the flag."
-        : "Move through the arena, avoid hazards, and collect enough stars to win.",
+        : templateFamily === "tower_defense"
+          ? "Build towers on the route, defeat waves, earn gold, and protect the base."
+          : templateFamily === "grid_logic"
+            ? "Push blocks through the grid and solve every glowing target before moves run out."
+            : templateFamily === "ui_heavy"
+              ? "Choose the best orders, manage mood and income, and survive the rush timer."
+              : "Move through the arena, avoid hazards, and collect enough stars to win.",
     controls:
       templateFamily === "platformer"
         ? ["ArrowLeft", "ArrowRight", "Space"]
@@ -704,8 +1093,8 @@ export function createGameConfig(
     level: {
       width: 960,
       height: 540,
-      collectibles: 6,
-      hazards: templateFamily === "tower_defense" ? 8 : templateFamily === "platformer" ? 3 : 4,
+      collectibles: templateFamily === "ui_heavy" ? 5 : 6,
+      hazards: templateFamily === "tower_defense" ? 8 : templateFamily === "platformer" ? 3 : templateFamily === "grid_logic" || templateFamily === "ui_heavy" ? 0 : 4,
       winScore: 6
     }
   };
@@ -760,7 +1149,7 @@ function createGameplayContract(templateFamily: TemplateFamily): GameConfig["gam
 export function createQaReport(config: GameConfig, assetPack: AssetPack): QaReport {
   const missingAssets = validateAssetReferences(config, assetPack);
   const blockingAssets = assetPack.assets.filter((asset) => asset.status === "missing" || asset.status === "failed");
-  return {
+  const report: QaReport = {
     scores: {
       buildHealth: missingAssets.length === 0 && blockingAssets.length === 0 ? 92 : 40,
       visualUsability: 88,
@@ -781,6 +1170,8 @@ export function createQaReport(config: GameConfig, assetPack: AssetPack): QaRepo
             ...blockingAssets.map((asset) => `asset not ready: ${asset.assetKey}`)
           ]
   };
+  report.gate = evaluateVerificationGate(report);
+  return report;
 }
 
 export function createArtifacts(input: {
@@ -810,6 +1201,11 @@ export function createArtifacts(input: {
     numbers: { winScore: input.gameConfig.level.winScore, hazards: input.gameConfig.level.hazards },
     implementationRoute: `Use ${input.classification.templateFamily} Phaser template with config-only generation.`
   };
+  const styleSheet = createStyleSheet({
+    idea: input.idea,
+    title: input.title,
+    templateFamily: input.classification.templateFamily
+  });
   const iterationReport = {
     source: "mock play feedback",
     recommendedChanges: [
@@ -827,6 +1223,8 @@ export function createArtifacts(input: {
     mdArtifact("mature-game-brief", "mature-game-brief.md", "Mature Game Brief", input.matureGameBrief),
     jsonArtifact("gdd", "gdd.json", "Technical GDD", gdd),
     mdArtifact("gdd", "gdd.md", "Technical GDD", gdd),
+    jsonArtifact("style-sheet", "style-sheet.json", "Style Sheet", styleSheet),
+    mdArtifact("style-sheet", "style-sheet.md", "Style Sheet", styleSheet),
     jsonArtifact("asset-style-guide", "asset-style-guide.json", "Asset Style Guide", input.assetStyleGuide),
     mdArtifact("asset-style-guide", "asset-style-guide.md", "Asset Style Guide", input.assetStyleGuide),
     jsonArtifact("asset-requirements", "asset-requirements.json", "Asset Requirements", input.assetRequirements),

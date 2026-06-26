@@ -1,4 +1,5 @@
 import type { AssetPack, RuntimeAssetReport, RuntimeAssetSlotName, RuntimeAssetSlotReport } from "../core/types";
+import { getCompatibleAssetKeysForSlot } from "../services/gameAssetProfiles";
 
 export interface PreviewRuntimeAssets {
   player?: string;
@@ -46,10 +47,10 @@ export function selectPreviewRuntimeAssets(assetPack?: AssetPack): PreviewRuntim
       asset.status !== "failed"
   );
   return {
-    player: findAssetUrl(imageAssets, [coreSlotKeys.player]),
-    collectible: findAssetUrl(imageAssets, [coreSlotKeys.collectible]),
-    hazard: findAssetUrl(imageAssets, [coreSlotKeys.hazard]),
-    background: findAssetUrl(imageAssets, [coreSlotKeys.background]),
+    player: findAssetUrl(imageAssets, getCompatibleAssetKeysForSlot("player")),
+    collectible: findAssetUrl(imageAssets, getCompatibleAssetKeysForSlot("collectible")),
+    hazard: findAssetUrl(imageAssets, getCompatibleAssetKeysForSlot("hazard")),
+    background: findAssetUrl(imageAssets, getCompatibleAssetKeysForSlot("background")),
     tile: findAssetUrl(imageAssets, ["world.tiles", "world.path"]),
     bgm: findAssetUrl(audioAssets, ["bgm.loop"]),
     sfx: {
@@ -63,9 +64,10 @@ export function selectPreviewRuntimeAssets(assetPack?: AssetPack): PreviewRuntim
 
 export function createRuntimeAssetReport(assetPack?: AssetPack): RuntimeAssetReport {
   const slots = (Object.keys(coreSlotKeys) as RuntimeAssetSlotName[]).map((slot) => {
-    const assetKey = coreSlotKeys[slot];
+    const compatibleKeys = getCompatibleAssetKeysForSlot(slot);
+    const asset = assetPack?.assets.find((item) => compatibleKeys.includes(item.assetKey));
+    const assetKey = asset?.assetKey ?? coreSlotKeys[slot];
     const size = runtimeSlotSizes[slot];
-    const asset = assetPack?.assets.find((item) => item.assetKey === assetKey);
     const fileUrl = asset?.fileUrl ?? "";
     const validUrl = Boolean(fileUrl) && isRuntimeImageUrl(fileUrl);
     const failed = asset?.status === "failed" || asset?.status === "missing";

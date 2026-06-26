@@ -78,7 +78,7 @@ async function greenEdgeResidueSprite(): Promise<Uint8Array> {
   const svg = `
     <svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
       <rect width="128" height="128" fill="#00ff00"/>
-      <rect x="0" y="0" width="128" height="8" fill="#12f912"/>
+      <circle cx="64" cy="64" r="30" fill="#62d862"/>
       <circle cx="64" cy="64" r="24" fill="#ff3355"/>
     </svg>
   `;
@@ -195,7 +195,7 @@ describe("image cutout service", () => {
     expect(blue.validation.chromaKeyColor).toBe("#0066ff");
   });
 
-  it("fails sprites with chroma residue touching the output edge", async () => {
+  it("fails sprites with chroma residue around the subject edge", async () => {
     const result = await processGeneratedImageForSlot({
       slot: "player",
       assetKey: "player.ship",
@@ -204,7 +204,7 @@ describe("image cutout service", () => {
     });
 
     expect(result.validation.validationStatus).toBe("failed");
-    expect(result.validation.validationErrors.join(" ")).toContain("edge residue");
+    expect(result.validation.validationErrors.join(" ")).toContain("chroma spill residue");
   });
 
   it("fails sprites that still contain checkerboard residue after cutout", async () => {

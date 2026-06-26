@@ -3,6 +3,21 @@ import { createAssetRequirements, createAssetStyleGuide, runMockPipeline } from 
 import { createGenerationService } from "../src/services/generationService";
 import { createMediaGateway } from "../src/services/mediaGateway";
 import { createRuntimeAssetReport, selectPreviewRuntimeAssets } from "../src/ui/previewAssets";
+import sharp from "sharp";
+
+async function pngDataUrl(width: number, height: number): Promise<string> {
+  const buffer = await sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: { r: 255, g: 255, b: 255, alpha: 1 }
+    }
+  })
+    .png()
+    .toBuffer();
+  return `data:image/png;base64,${buffer.toString("base64")}`;
+}
 
 describe("procedural game resources", () => {
   it("creates a standard asset style guide for generated resources", () => {
@@ -366,8 +381,8 @@ describe("procedural game resources", () => {
             style: "neon",
             purpose: "background",
             acceptedFileTypes: ["image/*"],
-            previewUrl: "data:image/png;base64,bg",
-            fileUrl: "data:image/png;base64,bg",
+            previewUrl: await pngDataUrl(160, 90),
+            fileUrl: await pngDataUrl(160, 90),
             source: "generated",
             provider: "agnes",
             approvalStatus: "approved"
@@ -381,8 +396,8 @@ describe("procedural game resources", () => {
             style: "neon",
             purpose: "player",
             acceptedFileTypes: ["image/*"],
-            previewUrl: "data:image/png;base64,player",
-            fileUrl: "data:image/png;base64,player",
+            previewUrl: await pngDataUrl(32, 32),
+            fileUrl: await pngDataUrl(32, 32),
             source: "generated",
             provider: "agnes",
             approvalStatus: "approved"
@@ -396,8 +411,8 @@ describe("procedural game resources", () => {
             style: "neon",
             purpose: "hazard",
             acceptedFileTypes: ["image/*"],
-            previewUrl: "data:image/png;base64,hazard",
-            fileUrl: "data:image/png;base64,hazard",
+            previewUrl: await pngDataUrl(32, 32),
+            fileUrl: await pngDataUrl(32, 32),
             source: "generated",
             provider: "agnes",
             approvalStatus: "approved"
@@ -411,8 +426,8 @@ describe("procedural game resources", () => {
             style: "neon",
             purpose: "collectible",
             acceptedFileTypes: ["image/*"],
-            previewUrl: "data:image/png;base64,item",
-            fileUrl: "data:image/png;base64,item",
+            previewUrl: await pngDataUrl(32, 32),
+            fileUrl: await pngDataUrl(32, 32),
             source: "generated",
             provider: "agnes",
             approvalStatus: "approved"

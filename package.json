@@ -6,13 +6,18 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "dev:auto": "vite --host 0.0.0.0",
+    "predev:demo": "node scripts/free-port.mjs 5175",
     "dev:demo": "vite --host 0.0.0.0 --port 5175 --strictPort",
     "dev:fixed": "vite --host 0.0.0.0 --port 5173 --strictPort",
     "build": "tsc && vite build",
     "build:analyze": "npm.cmd run build && node scripts/analyze-build.mjs",
+    "check:providers": "node scripts/check-providers.mjs",
+    "ci": "npm run build && npm test && npm run verify:browser",
+    "golden": "vitest run tests/golden/index.test.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "verify:browser": "node scripts/verify-browser.mjs",
+    "verify:browser:matrix": "node scripts/verify-browser.mjs --genre=flight && node scripts/verify-browser.mjs --genre=runner && node scripts/verify-browser.mjs --genre=td && node scripts/verify-browser.mjs --genre=platformer && node scripts/verify-browser.mjs --genre=grid",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

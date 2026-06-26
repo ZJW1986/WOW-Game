@@ -4,7 +4,8 @@ import type {
   DesignBrief,
   MockProject,
   RevisionAnalysis,
-  ThreeAssetCandidates
+  ThreeAssetCandidates,
+  UserMaterialSlot
 } from "../core/types";
 import type { getMessages } from "./i18n";
 
@@ -41,7 +42,7 @@ export interface StudioChatMessage {
 }
 
 export interface AssetProgressStep {
-  slot: "background" | "player" | "hazard" | "collectible";
+  slot: Extract<UserMaterialSlot, "background" | "player" | "hazard" | "collectible">;
   label: string;
   status: "generating";
 }
@@ -76,7 +77,8 @@ export function buildStudioChatMessages({
   revisionHistory,
   assetCandidates,
   threeAssetCandidates,
-  assetCandidateStatus
+  assetCandidateStatus,
+  currentAssetGeneratingSlots
 }: {
   idea: string;
   followups: StudioFollowup[];
@@ -90,6 +92,7 @@ export function buildStudioChatMessages({
   assetCandidates?: AssetCandidates | null;
   threeAssetCandidates?: ThreeAssetCandidates | null;
   assetCandidateStatus?: "idle" | "loading" | "ready" | "failed";
+  currentAssetGeneratingSlots?: Array<Extract<UserMaterialSlot, "background" | "player" | "hazard" | "collectible">>;
 }): StudioChatMessage[] {
   const splitIdea = splitIdeaTurns(idea);
   const normalizedFollowups =
@@ -177,8 +180,17 @@ export function buildStudioChatMessages({
   }
 
   if (assetCandidateStatus === "loading") {
-    const assetProgress = createAssetProgressSteps();
+    const assetProgress = createAssetProgressSteps(currentAssetGeneratingSlots);
     const isThreeAssets = phase === "three_asset_generating";
+    if (!isThreeAssets && assetCandidates?.candidates.length) {
+      result.push({
+        id: "asset-candidates",
+        role: "assistant",
+        meta: "素材确认",
+        content: "已生成的素材会保留在这里。确认后继续生成下一张素材，最终游戏只读取确认后的 asset-pack.json。",
+        assetCandidates
+      });
+    }
     result.push({
       id: isThreeAssets ? "three-asset-candidates-loading" : "asset-candidates-loading",
       role: "assistant",
@@ -261,7 +273,18 @@ export function buildStudioChatMessages({
   return result;
 }
 
-function createAssetProgressSteps(): AssetProgressStep[] {
+function createAssetProgressSteps(
+  slots?: Array<Extract<UserMaterialSlot, "background" | "player" | "hazard" | "collectible">>
+): AssetProgressStep[] {
+  if (slots?.length) {
+    const labels: Record<Extract<UserMaterialSlot, "background" | "player" | "hazard" | "collectible">, string> = {
+      background: "背景",
+      player: "主角",
+      hazard: "危险物",
+      collectible: "收集物"
+    };
+    return slots.map((slot) => ({ slot, label: labels[slot], status: "generating" }));
+  }
   return [
     { slot: "background", label: "背景", status: "generating" },
     { slot: "player", label: "主角", status: "generating" },

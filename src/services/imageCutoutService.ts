@@ -35,7 +35,8 @@ export interface CutoutResult {
 const spriteSlots = new Set(["player", "hazard", "collectible"]);
 const transparentThreshold = 38;
 const spriteCanvasSize = 128;
-const chromaTolerance = 24;
+const chromaTolerance = 42;
+const chromaSoftTolerance = 92;
 const chromaKeys: Array<{ hex: string; color: [number, number, number] }> = [
   { hex: "#00ff00", color: [0, 255, 0] },
   { hex: "#ff00ff", color: [255, 0, 255] },
@@ -72,7 +73,7 @@ export async function processGeneratedImageForSlot(input: CutoutInput): Promise<
   for (let index = 0; index < pixels.length; index += 4) {
     if (pixels[index + 3] === 0) continue;
     if (
-      (chromaKey && isChromaPixel(pixels, index, chromaKey.color)) ||
+      (chromaKey && applyChromaAlpha(pixels, index, chromaKey.color)) ||
       (!chromaKey && isBackgroundPixel(pixels, index, background, checkerboardColors))
     ) {
       pixels[index + 3] = 0;
@@ -113,9 +114,11 @@ export async function processGeneratedImageForSlot(input: CutoutInput): Promise<
     .toBuffer();
   const outputBytes = new Uint8Array(png);
   const validation = await validateProcessedSprite(outputBytes);
+  const spillScore = chromaKey ? measureChromaSpill(pixels, chromaKey.color) : 0;
   const validationErrors = [
     ...validation.validationErrors,
-    ...(sourceEdgeResidueScore > 0 ? ["Sprite has edge residue or subject touches the image edge after cutout."] : [])
+    ...(sourceEdgeResidueScore > 0 ? ["Sprite has edge residue or subject touches the image edge after cutout."] : []),
+    ...(chromaKey && spillScore > 0.015 ? ["Sprite has chroma spill residue after cutout."] : [])
   ];
   return {
     outputBytes,
@@ -129,7 +132,7 @@ export async function processGeneratedImageForSlot(input: CutoutInput): Promise<
       chromaKeyColor: chromaKey?.hex,
       chromaTolerance: chromaKey ? chromaTolerance : undefined,
       edgeResidueScore: Math.max(validation.edgeResidueScore ?? 0, sourceEdgeResidueScore),
-      spillScore: chromaKey ? measureChromaSpill(pixels, chromaKey.color) : undefined
+      spillScore: chromaKey ? spillScore : undefined
     }
   };
 }
@@ -149,10 +152,10 @@ export async function validateProcessedSprite(bytes: Uint8Array): Promise<Sprite
     const checkerboardResidueScore = measureCheckerboardResidue(pixels, width, height);
     const errors: string[] = [];
     if (!bounds) errors.push("Sprite PNG must contain a visible subject.");
-    if (alphaCoverage <= 0.02) errors.push("Sprite subject is too small after cutout.");
-    if (alphaCoverage >= 0.85) errors.push("Sprite background is not transparent enough.");
-    if (edgeResidueScore > 0.01) errors.push("Sprite has edge residue after cutout.");
-    if (checkerboardResidueScore > 0.08) errors.push("Sprite has checkerboard residue after cutout.");
+    if (alphaCoverage < 0.05) errors.push("Sprite subject is too small after cutout.");
+    if (alphaCoverage > 0.7) errors.push("Sprite background is not transparent enough.");
+    if (edgeResidueScore > 0.005) errors.push("Sprite has edge residue after cutout.");
+    if (checkerboardResidueScore > 0.04) errors.push("Sprite has checkerboard residue after cutout.");
     return {
       validationStatus: errors.length > 0 ? "failed" : "passed",
       validationErrors: errors,
@@ -307,9 +310,22 @@ function isBackgroundPixel(
   return distance <= transparentThreshold || checkerDistance || (isNeutral && (isNearWhite || isNearBlack));
 }
 
-function isChromaPixel(pixels: Uint8Array, offset: number, chroma: [number, number, number]): boolean {
+function applyChromaAlpha(pixels: Uint8Array, offset: number, chroma: [number, number, number]): boolean {
   const pixel: [number, number, number] = [pixels[offset], pixels[offset + 1], pixels[offset + 2]];
-  return colorDistance(pixel, chroma) <= chromaTolerance;
+  const distance = colorDistance(pixel, chroma);
+  if (distance <= chromaTolerance) return true;
+  if (distance > chromaSoftTolerance) return false;
+
+  const dominantChannel = chroma[1] > chroma[0] && chroma[1] > chroma[2] ? 1 : chroma[0] > chroma[2] ? 0 : 2;
+  const values = [pixel[0], pixel[1], pixel[2]];
+  const otherMax = Math.max(...values.filter((_, index) => index !== dominantChannel));
+  const chromaDominance = values[dominantChannel] - otherMax;
+  if (chromaDominance < 24) return false;
+
+  const fade = (distance - chromaTolerance) / (chromaSoftTolerance - chromaTolerance);
+  pixels[offset + 3] = Math.min(pixels[offset + 3], Math.round(255 * fade));
+  reduceChromaSpill(pixels, offset, chroma);
+  return false;
 }
 
 function reduceChromaSpill(pixels: Uint8Array, offset: number, chroma: [number, number, number]): void {
@@ -408,13 +424,17 @@ function measureCanvasEdgeResidue(pixels: Uint8Array, width: number, height: num
 }
 
 function measureChromaSpill(pixels: Uint8Array, chroma: [number, number, number]): number {
+  const dominantChannel = chroma[1] > chroma[0] && chroma[1] > chroma[2] ? 1 : chroma[0] > chroma[2] ? 0 : 2;
   let opaque = 0;
   let spill = 0;
   for (let offset = 0; offset < pixels.length; offset += 4) {
     if (pixels[offset + 3] <= 16) continue;
     opaque += 1;
     const pixel: [number, number, number] = [pixels[offset], pixels[offset + 1], pixels[offset + 2]];
-    if (colorDistance(pixel, chroma) <= 64) spill += 1;
+    const values = [pixel[0], pixel[1], pixel[2]];
+    const otherMax = Math.max(...values.filter((_, index) => index !== dominantChannel));
+    const chromaDominance = values[dominantChannel] - otherMax;
+    if (values[dominantChannel] >= 150 && chromaDominance >= 38) spill += 1;
   }
   return opaque > 0 ? spill / opaque : 0;
 }

@@ -45,7 +45,9 @@ function confirmedAssetsFixture() {
         previewUrl: "data:image/png;base64,bg",
         fileUrl: "data:image/png;base64,bg",
         source: "generated",
-        approvalStatus: "approved"
+        approvalStatus: "approved",
+        validationStatus: "passed",
+        validationErrors: []
       },
       {
         slot: "player",
@@ -59,7 +61,9 @@ function confirmedAssetsFixture() {
         previewUrl: "data:image/png;base64,player",
         fileUrl: "data:image/png;base64,player",
         source: "generated",
-        approvalStatus: "approved"
+        approvalStatus: "approved",
+        validationStatus: "passed",
+        validationErrors: []
       },
       {
         slot: "hazard",
@@ -73,7 +77,9 @@ function confirmedAssetsFixture() {
         previewUrl: "data:image/png;base64,hazard",
         fileUrl: "data:image/png;base64,hazard",
         source: "generated",
-        approvalStatus: "approved"
+        approvalStatus: "approved",
+        validationStatus: "passed",
+        validationErrors: []
       },
       {
         slot: "collectible",
@@ -87,7 +93,9 @@ function confirmedAssetsFixture() {
         previewUrl: "data:image/png;base64,item",
         fileUrl: "data:image/png;base64,item",
         source: "generated",
-        approvalStatus: "approved"
+        approvalStatus: "approved",
+        validationStatus: "passed",
+        validationErrors: []
       }
     ]
   };
@@ -405,7 +413,9 @@ describe("AI creative chain", () => {
 
     expect(response.status).toBe(200);
     expect(requests).toHaveLength(4);
-    expect(requests[0].prompt).toContain("专业游戏背景图提示词");
+    expect(requests[0].prompt).toContain("Professional game environment background");
+    expect(requests[0].prompt).toContain("top-down playable arena map");
+    expect((requests[0].prompt ?? "").split("negative constraints:")[0]).not.toMatch(/飞船|ship|player|陨石|asteroid|collect|energy|能量/i);
     expect(response.body.assetCandidates.candidates[0].previewUrl).toContain(
       "/projects/asset-candidates/assets-"
     );
@@ -505,15 +515,17 @@ describe("AI creative chain", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.body.assetCandidates.candidates.map((candidate: { label: string }) => candidate.label)).toEqual([
-      "太空背景",
-      "太空猫飞船",
-      "陨石危险物",
-      "鱼干收集物"
+    expect(response.body.assetCandidates.candidates.map((candidate: { slot: string }) => candidate.slot)).toEqual([
+      "background",
+      "player",
+      "hazard",
+      "collectible"
     ]);
-    expect(response.body.assetCandidates.candidates.map((candidate: { prompt: string }) => candidate.prompt).join("\n")).toContain(
-      "太空猫驾驶飞船躲避陨石，收集鱼干"
-    );
+    const finalPrompts = response.body.assetCandidates.candidates.map((candidate: { prompt: string }) => candidate.prompt);
+    expect(finalPrompts[0].split("negative constraints:")[0]).not.toMatch(/飞船|ship|player|陨石|asteroid|collect|鱼干/i);
+    expect(finalPrompts[1]).toContain("太空猫飞船");
+    expect(finalPrompts[2]).toContain("陨石危险物");
+    expect(finalPrompts[3]).toContain("鱼干收集物");
     expect(requests.map((request) => request.prompt).join("\n")).toContain("slot: player");
     expect(new Set(requests.map((request) => request.prompt)).size).toBe(4);
   });

@@ -34,7 +34,7 @@ describe("fast playable generation experience", () => {
               message: {
                 content: JSON.stringify({
                   templateFamily: "top_down",
-                  reasons: ["飞船躲避陨石是俯视角移动与碰撞玩法"],
+                  reasons: ["top-down dodge and collect movement"],
                   risks: [],
                   unsupportedRequests: []
                 })
@@ -46,7 +46,7 @@ describe("fast playable generation experience", () => {
 
     const result = await executor.runJsonTask({
       taskType: "llm.classification",
-      prompt: "判断模板",
+      prompt: "鍒ゆ柇妯℃澘",
       model: "deepseek-v4-flash"
     });
 
@@ -64,35 +64,35 @@ describe("fast playable generation experience", () => {
         if (prompt.includes("llm.classification")) {
           content = {
             templateFamily: "platformer",
-            reasons: ["横版跳跃和重力节奏是核心机制"],
-            risks: ["第一版只支持配置驱动关卡"],
+            reasons: ["platform jump and gravity rhythm are core mechanics"],
+            risks: ["first version stays config driven"],
             unsupportedRequests: []
           };
         } else if (prompt.includes("llm.gdd")) {
           content = {
-            concept: "跃动森林",
-            loop: ["开始", "移动", "跳跃", "收集", "抵达终点"],
-            entities: ["玩家", "金币", "尖刺", "终点旗"],
+            concept: "Forest Jump",
+            loop: ["start", "move", "jump", "collect", "reach finish"],
+            entities: ["player", "coin", "spike", "finish flag"],
             level: { width: 960, height: 540, collectibles: 6, hazards: 3, winScore: 6 },
             numbers: { playerSpeed: 230, jumpVelocity: 430 },
-            implementationRoute: "使用 platformer Phaser 模板，只生成配置和资源引用。"
+            implementationRoute: "Use platformer Phaser template with config and asset references."
           };
         } else if (prompt.includes("llm.mature_game_brief")) {
           content = {
             referencePatternId: "pattern-platformer-first-run",
-            coreLoop: ["安全起步", "跳跃收集", "躲避尖刺", "抵达终点"],
-            firstThirtySeconds: ["看到金币路径", "完成第一跳", "遇到尖刺", "接近终点"],
-            visualTheme: "森林平台和 parallax 背景",
-            feedbackChecklist: ["收集粒子", "命中闪烁", "胜利庆祝"],
-            difficultyCurve: ["先教学", "再危险", "最后终点"],
-            gameFeelMoments: ["金币路径", "落地反馈", "终点庆祝"]
+            coreLoop: ["safe start", "jump collect", "avoid spikes", "reach finish"],
+            firstThirtySeconds: ["see coin route", "complete first jump", "meet spike", "approach finish"],
+            visualTheme: "forest platformer with parallax background",
+            feedbackChecklist: ["collect particles", "hit flash", "victory celebration"],
+            difficultyCurve: ["teach", "add danger", "final gate"],
+            gameFeelMoments: ["coin route", "landing feedback", "finish celebration"]
           };
         } else if (prompt.includes("llm.gameplay_dsl")) {
           content = {
             version: "1",
             rules: [
-              { id: "score-wave", when: "score >= 2", do: "spawn_wave", enemyType: "charger", count: 2, message: "冲刺敌人进入" },
-              { id: "time-reward", when: "timeMs >= 6000", do: "reward_burst", count: 2, message: "金币奖励路线打开" }
+              { id: "score-wave", when: "score >= 2", do: "spawn_wave", enemyType: "charger", count: 2, message: "Charger enters" },
+              { id: "time-reward", when: "timeMs >= 6000", do: "reward_burst", count: 2, message: "Reward route opened" }
             ]
           };
         } else if (prompt.includes("llm.game_hooks")) {
@@ -114,9 +114,9 @@ describe("fast playable generation experience", () => {
         } else {
           content = {
             templateFamily: "platformer",
-            title: "跃动森林",
-            pitch: "横版跳跃收集金币",
-            playerGoal: "收集 6 枚金币并抵达终点",
+            title: "Forest Jump",
+            pitch: "Platform jumping coin collection",
+            playerGoal: "Collect 6 coins and reach the finish",
             controls: ["ArrowLeft", "ArrowRight", "Space"],
             difficulty: "normal",
             referencedAssetKeys: ["cover.main", "ui.button", "player.hero", "world.tiles"],
@@ -128,8 +128,8 @@ describe("fast playable generation experience", () => {
     });
 
     const result = await service.generatePlayableVersion({
-      idea: "做一个横版跳跃收集金币的森林游戏",
-      answers: [{ questionId: "goal", value: "收集金币并到达终点", answeredAt: "2026-06-17T00:00:00.000Z" }],
+      idea: "Forest platformer collect coins",
+      answers: [{ questionId: "goal", value: "Collect coins and reach finish", answeredAt: "2026-06-17T00:00:00.000Z" }],
       templateFamily: "platformer",
       projectId: "project-deepseek-1",
       baseUrl: "https://wow-game.example",
@@ -137,7 +137,7 @@ describe("fast playable generation experience", () => {
     });
 
     expect(result.project.classification.templateFamily).toBe("platformer");
-    expect(result.project.gameConfig.title).toBe("跃动森林");
+    expect(result.project.gameConfig.title).toBe("Forest Jump");
     expect(result.modelTasks.map((task) => task.taskType)).toEqual([
       "llm.classification",
       "llm.mature_game_brief",
@@ -168,27 +168,27 @@ describe("fast playable generation experience", () => {
                   questions: [
                     {
                       id: "control_mode",
-                      label: "操作方式",
-                      prompt: "玩家主要如何操作角色？",
+                      label: "Control Mode",
+                      prompt: "How should the player control the hero?",
                       inputType: "single_choice",
-                      options: ["方向键移动", "WASD 移动", "鼠标点击"],
-                      defaultAnswer: "方向键移动",
+                      options: ["Arrow keys", "WASD", "Mouse click"],
+                      defaultAnswer: "Arrow keys",
                       required: true
                     },
                     {
                       id: "win_goal",
-                      label: "胜利目标",
-                      prompt: "玩家完成什么目标后胜利？",
+                      label: "Win Goal",
+                      prompt: "What goal completes the level?",
                       inputType: "short_text",
-                      defaultAnswer: "收集 6 颗星星并到达出口",
+                      defaultAnswer: "Collect six stars and reach the exit",
                       required: true
                     },
                     {
                       id: "fail_state",
-                      label: "失败条件",
-                      prompt: "玩家遇到什么情况会失败？",
+                      label: "Fail State",
+                      prompt: "What makes the player lose?",
                       inputType: "short_text",
-                      defaultAnswer: "碰到陨石或生命值耗尽",
+                      defaultAnswer: "Hit an asteroid or lose all lives",
                       required: true
                     }
                   ]
@@ -200,7 +200,7 @@ describe("fast playable generation experience", () => {
     });
 
     const result = await service.generateGuidedQuestions({
-      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      idea: "spaceship dodge asteroids and collect stars",
       templateFamily: "top_down",
       projectId: "project-guided-1",
       model: "deepseek-v4-flash"
@@ -208,7 +208,7 @@ describe("fast playable generation experience", () => {
 
     expect(result.fallbackUsed).toBe(false);
     expect(result.modelTask.taskType).toBe("llm.guided_questions");
-    expect(result.questions.map((question) => question.prompt)).toContain("玩家主要如何操作角色？");
+    expect(result.questions.map((question) => question.prompt)).toContain("How should the player control the hero?");
   });
 
   it("keeps guided questions in Chinese when the model returns English copy for a Chinese idea", async () => {
@@ -255,7 +255,7 @@ describe("fast playable generation experience", () => {
     });
 
     const result = await service.generateGuidedQuestions({
-      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      idea: "鍋氫竴涓鑸硅翰閬块櫒鐭冲苟鏀堕泦鏄熸槦鐨勫皬娓告垙",
       templateFamily: "top_down",
       model: "deepseek-v4-flash"
     });
@@ -264,8 +264,8 @@ describe("fast playable generation experience", () => {
       .flatMap((question) => [question.label, question.prompt, question.defaultAnswer, ...(question.options ?? [])])
       .join(" ");
 
-    expect(visibleText).toContain("玩家怎样才算赢？");
-    expect(visibleText).toContain("关卡节奏");
+    expect(visibleText).toMatch(/武器|敌机编队|弹幕|护盾|Boss/);
+    expect(visibleText).not.toContain("请生成一款 2D Phaser 游戏");
     expect(visibleText).not.toContain("How will the player move");
     expect(visibleText).not.toContain("Arrow keys");
   });
@@ -280,22 +280,22 @@ describe("fast playable generation experience", () => {
     });
 
     const result = await service.generateGuidedQuestions({
-      idea: "做一个横版跳跃收集金币的森林游戏",
+      idea: "鍋氫竴涓í鐗堣烦璺冩敹闆嗛噾甯佺殑妫灄娓告垙",
       templateFamily: "platformer",
       model: "deepseek-v4-flash"
     });
 
     expect(result.fallbackUsed).toBe(true);
     expect(result.questions).toHaveLength(5);
-    expect(result.questions[0].prompt).toContain("玩家怎样才算赢");
-    expect(result.questions[0].defaultAnswer).toContain("金币");
+    expect(result.questions[0].prompt).toMatch(/跳跃|平台|检查点/);
+    expect(result.questions.map((question) => question.prompt).join(" ")).toMatch(/隐藏奖励|移动平台|机关/);
   });
 
   it("falls back to mock artifacts when DeepSeek key is missing", async () => {
     const service = createGenerationService();
 
     const result = await service.generatePlayableVersion({
-      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      idea: "鍋氫竴涓鑸硅翰閬块櫒鐭冲苟鏀堕泦鏄熸槦鐨勫皬娓告垙",
       answers: [],
       templateFamily: "top_down",
       projectId: "project-fallback-1",
@@ -325,27 +325,39 @@ describe("fast playable generation experience", () => {
         const prompt = body.messages.at(-1)?.content ?? "";
         const content = prompt.includes("llm.classification")
           ? {
-              templateFamily: "俯视角",
-              reasons: "飞船躲避陨石是自由移动碰撞玩法",
-              risks: "第一版只支持配置驱动",
+              templateFamily: "top-down",
+              reasons: "spaceship dodge is free movement collision gameplay",
+              risks: "first version stays config driven",
               unsupportedRequests: ""
             }
+          : prompt.includes("llm.gameplay_dsl")
+            ? {
+                version: "2",
+                zones: [{ id: "asteroid-lane", x: 620, y: 120, width: 180, height: 280 }],
+                rules: [
+                  {
+                    id: "score-pressure",
+                    when: { type: "score", op: ">=", value: 2 },
+                    do: [{ type: "spawn_zone", zoneId: "asteroid-lane", enemyType: "chaser", count: 2 }]
+                  }
+                ]
+              }
           : prompt.includes("llm.gdd")
             ? {
-                concept: "星尘航线",
-                loop: "开始, 移动, 躲避, 收集, 胜利",
-                entities: [{ name: "飞船" }, { name: "星星" }, { name: "陨石" }],
+                concept: "Star Route",
+                loop: "start, move, dodge, collect, win",
+                entities: [{ name: "ship" }, { name: "star" }, { name: "asteroid" }],
                 level: "960x540, 6 collectibles, 4 hazards",
                 numbers: { speed: 260 },
-                implementationRoute: "使用 top_down 模板和配置驱动关卡。"
+                implementationRoute: "Use top_down template and config hooks."
               }
             : {
                 templateFamily: "top_down",
-                title: "星尘航线",
-                pitch: "飞船躲避陨石并收集星星",
-                playerGoal: "收集 6 颗星星",
+                title: "Star Route",
+                pitch: "Spaceship dodges asteroids and collects stars",
+                playerGoal: "Collect 6 stars",
                 controls: "ArrowUp, ArrowDown, ArrowLeft, ArrowRight",
-                difficulty: "中等",
+                difficulty: "medium",
                 referencedAssetKeys: "cover.main, player.ship, world.background",
                 level: { width: 960, height: 540, collectibles: 6, hazards: 4, winScore: 6 }
               };
@@ -354,7 +366,7 @@ describe("fast playable generation experience", () => {
     });
 
     const result = await service.generatePlayableVersion({
-      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      idea: "spaceship dodge asteroids and collect stars",
       answers: [],
       templateFamily: "top_down",
       projectId: "project-repair-1",
@@ -398,9 +410,9 @@ describe("fast playable generation experience", () => {
               }
             : {
                 templateFamily: "platformer",
-                title: "星际躲避",
-                pitch: "飞船躲避陨石并收集星星",
-                playerGoal: "收集 6 个星星",
+                title: "Space Dodge",
+                pitch: "Spaceship dodges asteroids and collects stars",
+                playerGoal: "Collect 6 stars",
                 controls: ["ArrowLeft", "ArrowRight", "Space"],
                 difficulty: "normal",
                 referencedAssetKeys: ["player.ship", "world.background", "hazard.enemy", "item.collectible"],
@@ -418,7 +430,7 @@ describe("fast playable generation experience", () => {
     });
 
     const result = await service.generatePlayableVersion({
-      idea: "做一个飞船躲避陨石并收集星星的小游戏",
+      idea: "spaceship dodge asteroids and collect stars",
       answers: [],
       templateFamily: "top_down",
       projectId: "project-template-lock",
@@ -435,9 +447,9 @@ describe("fast playable generation experience", () => {
     const service = createGenerationService();
 
     const result = await service.generatePlayableVersion({
-      idea: "做一个横版跳跃收集金币的森林游戏",
+      idea: "Forest platformer collect coins",
       answers: [
-        { questionId: "goal", value: "收集金币并到达终点", answeredAt: "2026-06-17T00:00:00.000Z" }
+        { questionId: "goal", value: "Collect coins and reach finish", answeredAt: "2026-06-17T00:00:00.000Z" }
       ],
       templateFamily: "platformer",
       projectId: "project-share-1",

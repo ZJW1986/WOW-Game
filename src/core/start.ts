@@ -1,4 +1,5 @@
 import type { EngineType, TemplateFamily, ThreeGameGenre, UserMaterialSlot, ViewportMode } from "./types";
+import { getRegisteredPhaserTemplate } from "../runtime/phaser/registry";
 
 export type StartModelId = "deepseek-v4-flash" | "gemini-flash" | "mock-designer" | "custom-provider";
 
@@ -30,6 +31,8 @@ export interface StartTemplateTile {
   shortLabel: string;
   hint: string;
   visualClass: string;
+  runtimeStatus: "available" | "coming_soon";
+  disabledReason?: string;
 }
 
 export interface StartThreeGameTypeTile {
@@ -71,14 +74,15 @@ export const templateOptions: Array<{ id: TemplateFamily; label: string; descrip
   { id: "ui_heavy", label: "经营/卡牌", description: "菜单、卡牌、养成、对话" }
 ];
 
-export function createStartTemplateTiles(): StartTemplateTile[] {
+export function createStartTemplateTiles(options?: { registeredTemplateIds?: TemplateFamily[] }): StartTemplateTile[] {
+  const registeredTemplateIds = options?.registeredTemplateIds;
   return [
-    { templateFamily: "top_down", icon: "TD", shortLabel: "俯视角", hint: "躲避收集", visualClass: "type-top-down" },
-    { templateFamily: "platformer", icon: "JP", shortLabel: "平台跳跃", hint: "跳跃闯关", visualClass: "type-platformer" },
-    { templateFamily: "grid_logic", icon: "GR", shortLabel: "格子解谜", hint: "推演解题", visualClass: "type-grid" },
-    { templateFamily: "tower_defense", icon: "DF", shortLabel: "塔防", hint: "路线防守", visualClass: "type-defense" },
-    { templateFamily: "ui_heavy", icon: "UI", shortLabel: "经营卡牌", hint: "养成决策", visualClass: "type-ui" }
-  ];
+    { templateFamily: "top_down" as const, icon: "TD", shortLabel: "俯视", hint: "躲避收集", visualClass: "type-top-down" },
+    { templateFamily: "platformer" as const, icon: "JP", shortLabel: "平台跳跃", hint: "跳跃闯关", visualClass: "type-platformer" },
+    { templateFamily: "grid_logic" as const, icon: "GR", shortLabel: "格子解谜", hint: "推演解题", visualClass: "type-grid" },
+    { templateFamily: "tower_defense" as const, icon: "DF", shortLabel: "塔防", hint: "路线防守", visualClass: "type-defense" },
+    { templateFamily: "ui_heavy" as const, icon: "UI", shortLabel: "经营卡牌", hint: "养成决策", visualClass: "type-ui" }
+  ].map((tile) => withRuntimeStatus(tile, registeredTemplateIds));
 }
 
 export function createStartThreeGameTypeTiles(): StartThreeGameTypeTile[] {
@@ -87,7 +91,7 @@ export function createStartThreeGameTypeTiles(): StartThreeGameTypeTile[] {
     { genre: "runner", icon: "RN", shortLabel: "3D 跑酷", hint: "冲刺收集", visualClass: "type-runner" },
     { genre: "third_person_collect", icon: "TP", shortLabel: "第三人称", hint: "探索收集", visualClass: "type-third-person" },
     { genre: "exploration", icon: "EX", shortLabel: "探索展示", hint: "场景漫游", visualClass: "type-exploration" },
-    { genre: "futuristic_tower_defense", icon: "TD", shortLabel: "3D 塔防", hint: "炮塔防守", visualClass: "type-defense" }
+    { genre: "futuristic_tower_defense", icon: "TD", shortLabel: "3D 塔防", hint: "炮塔防御", visualClass: "type-defense" }
   ];
 }
 
@@ -136,4 +140,14 @@ export function buildOptimizedGamePrompt(draft: StartGameDraft): string {
       : "2D 要求：明确角色、背景、危险物、收集物、阶段节奏、碰撞反馈，并在生成游戏前完成核心素材确认。",
     "输出要求：玩法目标清楚，前 30 秒有奖励和压力变化，HUD 不遮挡主体，失败要公平，反馈要明显。"
   ].join("\n");
+}
+
+function withRuntimeStatus(
+  tile: Omit<StartTemplateTile, "runtimeStatus" | "disabledReason">,
+  registeredTemplateIds?: TemplateFamily[]
+): StartTemplateTile {
+  if (registeredTemplateIds ? registeredTemplateIds.includes(tile.templateFamily) : getRegisteredPhaserTemplate(tile.templateFamily)) {
+    return { ...tile, runtimeStatus: "available" };
+  }
+  return { ...tile, runtimeStatus: "coming_soon", disabledReason: "暂未上线" };
 }

@@ -1,6 +1,6 @@
 import { createConversationSession } from "../core/conversation";
 import type { PublishRecord } from "../core/types";
-import type { createInMemoryBackend } from "./backend";
+import { VerificationGateError, type createInMemoryBackend } from "./backend";
 
 type Backend = ReturnType<typeof createInMemoryBackend>;
 
@@ -29,11 +29,18 @@ export function createApiRouter(backend: Backend) {
       }
 
       if (method === "POST" && path === "/api/publish") {
-        const publishRecord = backend.play.publish(requireString(body.versionId, "versionId"), {
-          visibility: optionalVisibility(body.visibility),
-          baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined
-        });
-        return { status: 200, body: { publishRecord } };
+        try {
+          const publishRecord = backend.play.publish(requireString(body.versionId, "versionId"), {
+            visibility: optionalVisibility(body.visibility),
+            baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined
+          });
+          return { status: 200, body: { publishRecord } };
+        } catch (error) {
+          if (error instanceof VerificationGateError) {
+            return { status: 409, body: { error: "Verification gate failed", reasons: error.reasons } };
+          }
+          throw error;
+        }
       }
 
       if (method === "POST" && path === "/api/feedback") {

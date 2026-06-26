@@ -73,6 +73,7 @@ import {
   type StudioChatMessage,
   type StudioFollowup
 } from "./studioChat";
+import { getPhaserAssetProfile, type RuntimeImageSlot } from "../services/gameAssetProfiles";
 import { createMediaGateway } from "../services/mediaGateway";
 import {
   requestAssetCandidates,
@@ -82,6 +83,7 @@ import {
   requestThreeAssetCandidates,
   requestProcessUploadedMaterial,
   requestRegenerateAssetCandidate,
+  requestRegenerateThreeAssetCandidate,
   requestRevisionAnalysis,
   requestThreeGameGeneration,
   replacePackageAsset,
@@ -124,6 +126,12 @@ interface GenerationNotice {
   tone: GenerationNoticeTone;
   title: string;
   detail: string;
+}
+
+export interface RecentFailure {
+  stage: string;
+  detail: string;
+  createdAt: string;
 }
 
 export interface ProjectRecord {
@@ -245,14 +253,15 @@ export function hasConfirmedCoreAssets(confirmedAssets?: ConfirmedAssets | null)
 
 export function buildConfirmedCoreAssets(
   assetCandidates?: AssetCandidates | null,
-  uploadedMaterials: StartUploadedMaterial[] = []
+  uploadedMaterials: StartUploadedMaterial[] = [],
+  templateFamily: TemplateFamily = "top_down"
 ): ConfirmedAssets {
   const assets = new Map<UserMaterialSlot, ConfirmedAssets["assets"][number]>();
   for (const candidate of assetCandidates?.candidates ?? []) {
     if (isConfirmableImageAsset(candidate)) {
       assets.set(candidate.slot, {
         ...candidate,
-        assetKey: resolveMaterialAssetKey(candidate.slot, "top_down"),
+        assetKey: resolveMaterialAssetKey(candidate.slot, templateFamily),
         approvalStatus: "approved"
       });
     }
@@ -262,7 +271,7 @@ export function buildConfirmedCoreAssets(
     if (!isRuntimeImageUrl(material.fileUrl) || !isRuntimeImageUrl(material.previewUrl)) continue;
     assets.set(material.slot, {
       slot: material.slot,
-      assetKey: resolveMaterialAssetKey(material.slot, "top_down"),
+      assetKey: resolveMaterialAssetKey(material.slot, templateFamily),
       type: "image",
       label: material.fileName,
       prompt: `用户上传素材：${material.fileName}`,
@@ -381,6 +390,33 @@ function readGenerationError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+export function recordRecentFailure(
+  current: Array<Pick<RecentFailure, "stage" | "detail"> & Partial<RecentFailure>>,
+  stage: string,
+  detail: string
+): RecentFailure[] {
+  const entry: RecentFailure = {
+    stage,
+    detail,
+    createdAt: new Date().toISOString()
+  };
+  return [
+    entry,
+    ...current.map((failure) => ({
+      stage: failure.stage,
+      detail: failure.detail,
+      createdAt: failure.createdAt ?? new Date().toISOString()
+    }))
+  ].slice(0, 5);
+}
+
+function nextAssetSlotRevisionId(candidate: AssetCandidates["candidates"][number]): string {
+  const current = String(candidate.generationParams?.slotRevisionId ?? "");
+  const matched = current.match(/rev-(\d+)/);
+  const nextNumber = matched ? Number(matched[1]) + 1 : 1;
+  return `rev-${nextNumber}`;
+}
+
 function canStartAssetGeneration(
   session: ConversationSession,
   designBrief: DesignBrief | null,
@@ -393,6 +429,30 @@ function canStartAssetGeneration(
     !assetCandidates &&
     ["chatting", "guided_questions", "asset_review", "revision"].includes(creationPhase)
   );
+}
+
+export function readNextRequestedAssetSlots(
+  templateFamily: TemplateFamily,
+  assetCandidates?: AssetCandidates | null,
+  confirmedAssets?: ConfirmedAssets | null
+): RuntimeImageSlot[] {
+  const profile = getPhaserAssetProfile(templateFamily);
+  const confirmedSlots = new Set(
+    (confirmedAssets?.assets ?? [])
+      .filter((asset) => asset.approvalStatus !== "rejected" && isRuntimeImageUrl(asset.fileUrl) && isRuntimeImageUrl(asset.previewUrl))
+      .map((asset) => asset.slot)
+  );
+  const visibleSlots = new Set((assetCandidates?.candidates ?? []).map((candidate) => candidate.slot));
+  for (const step of profile.generationOrder) {
+    if (step.some((slot) => !confirmedSlots.has(slot))) {
+      return step.filter((slot) => !confirmedSlots.has(slot) && !visibleSlots.has(slot));
+    }
+  }
+  return [];
+}
+
+export function shouldUseStagedAssetGeneration(templateFamily: TemplateFamily): boolean {
+  return getPhaserAssetProfile(templateFamily).generationOrder.length > 1;
 }
 
 function playGenerationSuccessTone() {
@@ -447,6 +507,7 @@ export function App() {
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
   const [guidedQuestionStatus, setGuidedQuestionStatus] = useState<GuidedQuestionStatus>("idle");
   const [generationNotice, setGenerationNotice] = useState<GenerationNotice | null>(null);
+  const [recentFailures, setRecentFailures] = useState<RecentFailure[]>([]);
   const [uploadedPackageMessage, setUploadedPackageMessage] = useState("");
   const [referencePackage, setReferencePackage] = useState<ReferencePackageSummary | null>(null);
   const [designBrief, setDesignBrief] = useState<DesignBrief | null>(null);
@@ -455,10 +516,15 @@ export function App() {
   const [threeAssetCandidates, setThreeAssetCandidates] = useState<ThreeAssetCandidates | null>(null);
   const [confirmedThreeAssets, setConfirmedThreeAssets] = useState<ConfirmedThreeAssets | null>(null);
   const [assetCandidateStatus, setAssetCandidateStatus] = useState<AssetCandidateStatus>("idle");
+  const [currentAssetGeneratingSlots, setCurrentAssetGeneratingSlots] = useState<RuntimeImageSlot[]>([]);
   const [regeneratingAssetSlots, setRegeneratingAssetSlots] = useState<Set<UserMaterialSlot>>(() => new Set());
   const regeneratingAssetSlotsRef = useRef<Set<UserMaterialSlot>>(new Set());
   const [revisionHistory, setRevisionHistory] = useState<RevisionAnalysis[]>([]);
   const [shareOpen, setShareOpen] = useState(false);
+
+  const recordFailure = (stage: string, error: unknown) => {
+    setRecentFailures((current) => recordRecentFailure(current, stage, readGenerationError(error)));
+  };
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -525,7 +591,7 @@ export function App() {
         detail: "上传素材已写入当前试玩 asset-pack，可直接重新开始试玩。"
       });
     }
-    const nextConfirmedAssets = buildConfirmedCoreAssets(assetCandidates, mergedMaterials);
+    const nextConfirmedAssets = buildConfirmedCoreAssets(assetCandidates, mergedMaterials, activeDraft.templateFamily);
     setConfirmedAssets(nextConfirmedAssets);
     if (assetCandidates) {
       setCreationPhase(hasConfirmedCoreAssets(nextConfirmedAssets) ? "assets_confirmed" : "asset_review");
@@ -714,6 +780,7 @@ export function App() {
       window.setTimeout(() => setGenerationNotice(null), 4200);
       playGenerationSuccessTone();
     } catch (error) {
+      recordFailure("2D playable generation", error);
       setGenerationResult(null);
       setGeneratedProject(null);
       setCreationPhase(hasConfirmedCoreAssets(confirmedAssets) ? "assets_confirmed" : "asset_review");
@@ -769,6 +836,7 @@ export function App() {
       });
       window.setTimeout(() => setGenerationNotice(null), 4200);
     } catch (error) {
+      recordFailure("3D playable generation", error);
       setGeneratedProject(null);
       setCreationPhase(hasConfirmedThreeCoreAssets(confirmedThreeAssets) ? "three_assets_confirmed" : "three_asset_review");
       setGenerationNotice({
@@ -857,7 +925,10 @@ export function App() {
     }
   };
 
-  const startAssetGeneration = async () => {
+  const startAssetGeneration = async (
+    requestedSlotsOverride?: RuntimeImageSlot[],
+    options: { preserveExisting?: boolean } = {}
+  ) => {
     const currentDesignBrief = designBrief;
     const hasAnsweredAllQuestions = session.answers.length >= session.questions.length;
     const canRequestAssets =
@@ -874,11 +945,18 @@ export function App() {
       return;
     }
     const nextIdea = buildGenerationIdea(idea, followups);
+    const requestedSlots =
+      requestedSlotsOverride ??
+      readNextRequestedAssetSlots(activeDraft.templateFamily, assetCandidates, confirmedAssets);
+    if (requestedSlots.length === 0) return;
     setPage("studio");
     setActiveTab("preview");
-    setAssetCandidates(null);
-    setConfirmedAssets(null);
+    if (!options.preserveExisting) {
+      setAssetCandidates(null);
+      setConfirmedAssets(null);
+    }
     setAssetCandidateStatus("loading");
+    setCurrentAssetGeneratingSlots(requestedSlots);
     setCreationPhase("asset_generating");
     try {
       const assetResult = await requestAssetCandidates({
@@ -896,16 +974,28 @@ export function App() {
           fileUrl: material.fileUrl,
           previewUrl: material.previewUrl,
           mimeType: material.mimeType
-        }))
+        })),
+        requestedSlots
       });
-      setAssetCandidates(assetResult.assetCandidates);
-      setConfirmedAssets(null);
+      setAssetCandidates((current) => {
+        if (!options.preserveExisting || !current) return assetResult.assetCandidates;
+        const bySlot = new Map(current.candidates.map((candidate) => [candidate.slot, candidate]));
+        for (const candidate of assetResult.assetCandidates.candidates) {
+          bySlot.set(candidate.slot, candidate);
+        }
+        return { candidates: Array.from(bySlot.values()) };
+      });
       setAssetCandidateStatus("ready");
+      setCurrentAssetGeneratingSlots([]);
       setCreationPhase("asset_review");
-    } catch {
-      setAssetCandidates(null);
-      setConfirmedAssets(null);
+    } catch (error) {
+      recordFailure("2D asset candidates", error);
+      if (!options.preserveExisting) {
+        setAssetCandidates(null);
+        setConfirmedAssets(null);
+      }
       setAssetCandidateStatus("failed");
+      setCurrentAssetGeneratingSlots([]);
       setCreationPhase("asset_review");
     }
   };
@@ -946,6 +1036,7 @@ export function App() {
         detail: "请确认三个核心模型后，再生成 Three.js 可玩游戏。"
       });
     } catch (error) {
+      recordFailure("3D asset candidates", error);
       setThreeAssetCandidates(null);
       setConfirmedThreeAssets(null);
       setAssetCandidateStatus("failed");
@@ -967,7 +1058,8 @@ export function App() {
       const result = await requestRegenerateAssetCandidate({
         idea: nextIdea,
         templateFamily: activeDraft.templateFamily,
-        candidate
+        candidate,
+        slotRevisionId: nextAssetSlotRevisionId(candidate)
       });
       setAssetCandidates((current) => {
         const nextCandidates = current
@@ -977,7 +1069,7 @@ export function App() {
               )
             }
           : { candidates: [result.assetCandidate] };
-        const nextConfirmedAssets = buildConfirmedCoreAssets(nextCandidates, activeDraft.uploadedMaterials);
+        const nextConfirmedAssets = buildConfirmedCoreAssets(nextCandidates, activeDraft.uploadedMaterials, activeDraft.templateFamily);
         setConfirmedAssets(nextConfirmedAssets);
         setCreationPhase(hasConfirmedCoreAssets(nextConfirmedAssets) ? "assets_confirmed" : "asset_review");
         return nextCandidates;
@@ -990,6 +1082,7 @@ export function App() {
           `${materialSlotLabels[result.assetCandidate.slot]} 已更新，不会影响其他已生成素材。`
       });
     } catch (error) {
+      recordFailure("2D asset regeneration", error);
       setGenerationNotice({
         tone: "error",
         title: "单素材重生成失败",
@@ -1002,6 +1095,79 @@ export function App() {
       setRegeneratingAssetSlots((current) => {
         const next = new Set(current);
         next.delete(candidate.slot);
+        return next;
+      });
+    }
+  };
+
+  const regenerateThreeAssetCandidate = async (candidate: ThreeAssetCandidates["assets"][number]) => {
+    const slot = candidate.assetKey as "three.model.player" | "three.model.hazard" | "three.model.collectible";
+    if (regeneratingAssetSlotsRef.current.has(slot as UserMaterialSlot)) return;
+    const nextIdea = buildGenerationIdea(idea, followups);
+    regeneratingAssetSlotsRef.current = new Set(regeneratingAssetSlotsRef.current).add(slot as UserMaterialSlot);
+    setRegeneratingAssetSlots((current) => new Set(current).add(slot as UserMaterialSlot));
+    try {
+      const result = await requestRegenerateThreeAssetCandidate({
+        idea: nextIdea,
+        projectId: `three-assets-${Date.now()}`,
+        baseUrl: getBrowserBaseUrl(),
+        engineType: "threejs3d",
+        viewportMode: activeDraft.viewportMode,
+        gameType3d: activeDraft.threeGameGenre,
+        answers: session.answers,
+        userMaterials: activeDraft.uploadedMaterials,
+        threeDesignBrief: resultThreeBriefFromDesignBrief(
+          designBrief ?? {
+            coreGameplay: idea,
+            playerGoal: idea,
+            referenceTakeaways: [],
+            risks: [],
+            questionFocus: [],
+            developerPrompt: idea
+          },
+          activeDraft.threeGameGenre,
+          activeDraft.viewportMode
+        ),
+        threeAssetCandidates: threeAssetCandidates ?? undefined,
+        assetKey: slot,
+        slotRevisionId: `rev-${Date.now()}`
+      });
+      const nextAsset = result.threeAssetCandidates.assets.find((item) => item.assetKey === slot);
+      if (nextAsset) {
+        setThreeAssetCandidates((current) => {
+          const nextCandidates = current
+            ? {
+                ...current,
+                assets: current.assets.map((item) => (item.assetKey === slot ? nextAsset : item))
+              }
+            : result.threeAssetCandidates;
+          const nextConfirmedThreeAssets = buildConfirmedThreeAssets(nextCandidates);
+          setConfirmedThreeAssets(nextConfirmedThreeAssets);
+          setCreationPhase(
+            hasConfirmedThreeCoreAssets(nextConfirmedThreeAssets) ? "three_assets_confirmed" : "three_asset_review"
+          );
+          return nextCandidates;
+        });
+      }
+      setGenerationNotice({
+        tone: "success",
+        title: "3D 模型已重新生成",
+        detail: `${slot} 已刷新，不会影响其他 3D 模型。`
+      });
+    } catch (error) {
+      recordFailure("3D asset regeneration", error);
+      setGenerationNotice({
+        tone: "error",
+        title: "3D 单模型重生成失败",
+        detail: readGenerationError(error)
+      });
+    } finally {
+      const nextRef = new Set(regeneratingAssetSlotsRef.current);
+      nextRef.delete(slot as UserMaterialSlot);
+      regeneratingAssetSlotsRef.current = nextRef;
+      setRegeneratingAssetSlots((current) => {
+        const next = new Set(current);
+        next.delete(slot as UserMaterialSlot);
         return next;
       });
     }
@@ -1033,7 +1199,7 @@ export function App() {
               )
             }
           : { candidates: [result.assetCandidate] };
-        const nextConfirmedAssets = buildConfirmedCoreAssets(nextCandidates);
+        const nextConfirmedAssets = buildConfirmedCoreAssets(nextCandidates, [], activeDraft.templateFamily);
         setConfirmedAssets(nextConfirmedAssets);
         setCreationPhase(hasConfirmedCoreAssets(nextConfirmedAssets) ? "assets_confirmed" : "asset_review");
         return nextCandidates;
@@ -1046,12 +1212,36 @@ export function App() {
           `${materialSlotLabels[result.assetCandidate.slot]} 已经过后端抠图/校验，可用于素材确认。`
       });
     } catch (error) {
+      recordFailure("uploaded asset processing", error);
       setGenerationNotice({
         tone: "error",
         title: "上传素材处理失败",
         detail: readGenerationError(error)
       });
     }
+  };
+
+  const confirmAssetCandidates = async (candidates: AssetCandidates) => {
+    const nextConfirmedAssets = buildConfirmedCoreAssets(
+      candidates,
+      activeDraft.uploadedMaterials,
+      activeDraft.templateFamily
+    );
+    setConfirmedAssets(nextConfirmedAssets);
+    if (hasConfirmedCoreAssets(nextConfirmedAssets)) {
+      setCreationPhase("assets_confirmed");
+      return;
+    }
+    const nextSlots = readNextRequestedAssetSlots(
+      activeDraft.templateFamily,
+      candidates,
+      nextConfirmedAssets
+    );
+    if (nextSlots.length > 0) {
+      await startAssetGeneration(nextSlots, { preserveExisting: true });
+      return;
+    }
+    setCreationPhase("asset_review");
   };
 
   const openIdeaDialog = (nextIdea: string, templateFamily?: TemplateFamily) => {
@@ -1080,6 +1270,7 @@ export function App() {
     setThreeAssetCandidates(null);
     setConfirmedThreeAssets(null);
     setAssetCandidateStatus("idle");
+    setCurrentAssetGeneratingSlots([]);
     setRevisionHistory([]);
     setCreationPhase("chatting");
     setActiveTab("preview");
@@ -1113,6 +1304,7 @@ export function App() {
     setThreeAssetCandidates(null);
     setConfirmedThreeAssets(null);
     setAssetCandidateStatus("idle");
+    setCurrentAssetGeneratingSlots([]);
     setRevisionHistory([]);
     setCreationPhase(nextProject ? "ready" : "chatting");
     setActiveTab("preview");
@@ -1235,6 +1427,7 @@ export function App() {
         onPlay={() => setPage("play")}
         onProjects={() => setPage("projects")}
         uploadMessage={uploadedPackageMessage}
+        recentFailures={recentFailures}
         referencePackage={referencePackage}
         onRemoveReferencePackage={() => {
           setReferencePackage(null);
@@ -1379,6 +1572,7 @@ export function App() {
           <AgentHeader project={project} messages={t} />
           <div className="agent-scroll" ref={chatScrollRef}>
             <StudioChatFlow
+              templateFamily={activeDraft.templateFamily}
               messages={buildStudioChatMessages({
                 idea,
                 followups,
@@ -1391,13 +1585,10 @@ export function App() {
                 revisionHistory,
                 assetCandidates,
                 threeAssetCandidates,
-                assetCandidateStatus
+                assetCandidateStatus,
+                currentAssetGeneratingSlots
               })}
-              onConfirmAssets={(candidates) => {
-                const nextConfirmedAssets = buildConfirmedCoreAssets(candidates, activeDraft.uploadedMaterials);
-                setConfirmedAssets(nextConfirmedAssets);
-                setCreationPhase(hasConfirmedCoreAssets(nextConfirmedAssets) ? "assets_confirmed" : "asset_review");
-              }}
+              onConfirmAssets={confirmAssetCandidates}
               onConfirmThreeAssets={(candidates) => {
                 const nextConfirmedThreeAssets = buildConfirmedThreeAssets(candidates);
                 setConfirmedThreeAssets(nextConfirmedThreeAssets);
@@ -1407,6 +1598,7 @@ export function App() {
               }}
               onUploadAsset={uploadAssetCandidateReplacement}
               onRegenerateAsset={regenerateAssetCandidate}
+              onRegenerateThreeAsset={regenerateThreeAssetCandidate}
               regeneratingSlots={regeneratingAssetSlots}
             />
           </div>
@@ -1735,7 +1927,8 @@ function StartPage({
   onUploadPackage,
   referencePackage,
   onRemoveReferencePackage,
-  uploadMessage
+  uploadMessage,
+  recentFailures
 }: {
   draft: StartGameDraft;
   locale: Locale;
@@ -1750,6 +1943,7 @@ function StartPage({
   referencePackage: ReferencePackageSummary | null;
   onRemoveReferencePackage: () => void;
   uploadMessage: string;
+  recentFailures: RecentFailure[];
 }) {
   const canCreate = draft.idea.trim().length > 0;
   const t = getMessages(locale);
@@ -1897,6 +2091,7 @@ function StartPage({
                     : `template-icon-card ${template.visualClass}`
                 }
                 onClick={() => {
+                  if (template.runtimeStatus !== "available") return;
                   const templateFamily = template.templateFamily as TemplateFamily;
                   updateDraft({
                     templateFamily,
@@ -1906,10 +2101,11 @@ function StartPage({
                     }))
                   });
                 }}
+                disabled={template.runtimeStatus !== "available"}
               >
                 <i>{template.icon}</i>
                 <strong>{template.shortLabel}</strong>
-                <span>{template.hint}</span>
+                <span>{template.disabledReason ?? template.hint}</span>
               </button>
             )) : threeTypeTiles.map((type) => (
               <button
@@ -2038,6 +2234,21 @@ function StartPage({
             {uploadMessage ? <p className="upload-message">{uploadMessage}</p> : null}
           </div>
         </section>
+
+        {recentFailures.length > 0 ? (
+          <aside className="recent-failure-panel">
+            <strong>最近失败</strong>
+            <span>最近 5 条生成/素材卡点</span>
+            <div>
+              {recentFailures.map((failure) => (
+                <p key={`${failure.createdAt}-${failure.stage}`}>
+                  <b>{failure.stage}</b>
+                  {failure.detail}
+                </p>
+              ))}
+            </div>
+          </aside>
+        ) : null}
       </section>
       {showTemplateLibrary ? (
         <div className="official-template-modal" role="dialog" aria-modal="true" aria-label="官方模板库">
@@ -2330,7 +2541,21 @@ function PlayableDetailPage({
           {record.uploadedPackage ? (
             <UploadedPackagePreview packageRecord={record.uploadedPackage} title={project.title} />
           ) : (
-            <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} gameHooks={project.gameHooks} />
+            <PhaserPreview
+              config={project.gameConfig}
+              assetPack={project.assetPack}
+              gameHooks={project.gameHooks}
+              iterationHint={feedbackMessage || undefined}
+              onSubmitFeedback={async ({ rating: overlayRating, comment: overlayComment }) => {
+                const payload = await submitPlayableFeedback(projectId, versionId, {
+                  rating: overlayRating,
+                  comment: overlayComment.trim() || messages.playDetail.defaultFeedback,
+                  playerName: "guest"
+                });
+                setFeedbackMessage(payload.feedback.iterationSuggestion);
+                setRating(overlayRating);
+              }}
+            />
           )}
         </div>
         <aside className="play-detail-side">
@@ -2947,17 +3172,21 @@ function UserPrompt({ text }: { text: string }) {
 
 function StudioChatFlow({
   messages,
+  templateFamily,
   onConfirmAssets,
   onConfirmThreeAssets,
   onUploadAsset,
   onRegenerateAsset,
+  onRegenerateThreeAsset,
   regeneratingSlots
 }: {
   messages: StudioChatMessage[];
+  templateFamily: TemplateFamily;
   onConfirmAssets: (assetCandidates: AssetCandidates) => void;
   onConfirmThreeAssets: (assetCandidates: ThreeAssetCandidates) => void;
   onUploadAsset: (slot: UserMaterialSlot, files: File[]) => Promise<void>;
   onRegenerateAsset: (assetCandidate: AssetCandidates["candidates"][number]) => void;
+  onRegenerateThreeAsset: (assetCandidate: ThreeAssetCandidates["assets"][number]) => void;
   regeneratingSlots: Set<UserMaterialSlot>;
 }) {
   return (
@@ -2970,6 +3199,7 @@ function StudioChatFlow({
           {message.assetCandidates ? (
             <AssetCandidateReview
               assetCandidates={message.assetCandidates}
+              templateFamily={templateFamily}
               onConfirm={() => onConfirmAssets(message.assetCandidates as AssetCandidates)}
               onUploadAsset={onUploadAsset}
               onRegenerateAsset={onRegenerateAsset}
@@ -2980,6 +3210,7 @@ function StudioChatFlow({
             <ThreeAssetCandidateReview
               assetCandidates={message.threeAssetCandidates}
               onConfirm={() => onConfirmThreeAssets(message.threeAssetCandidates as ThreeAssetCandidates)}
+              onRegenerateThreeAsset={onRegenerateThreeAsset}
             />
           ) : null}
         </article>
@@ -3090,28 +3321,34 @@ function PromptDock({
 
 function AssetCandidateReview({
   assetCandidates,
+  templateFamily,
   onConfirm,
   onUploadAsset,
   onRegenerateAsset,
   regeneratingSlots
 }: {
   assetCandidates: AssetCandidates;
+  templateFamily: TemplateFamily;
   onConfirm: () => void;
   onUploadAsset: (slot: UserMaterialSlot, files: File[]) => Promise<void>;
   onRegenerateAsset: (assetCandidate: AssetCandidates["candidates"][number]) => void;
   regeneratingSlots: Set<UserMaterialSlot>;
 }) {
-  const confirmableAssets = buildConfirmedCoreAssets(assetCandidates);
-  const canConfirmDirection = hasConfirmedCoreAssets(confirmableAssets);
+  const visibleSlots = assetCandidates.candidates.map((candidate) => candidate.slot);
+  const isBackgroundOnlyStep = visibleSlots.length === 1 && visibleSlots[0] === "background";
+  const canConfirmDirection =
+    assetCandidates.candidates.length > 0 &&
+    assetCandidates.candidates.every((candidate) => isConfirmableImageAsset(candidate));
+  const hasFullCoreAssets = hasConfirmedCoreAssets(buildConfirmedCoreAssets(assetCandidates, [], templateFamily));
   return (
     <section className="asset-candidate-review">
       <div className="asset-candidate-header">
         <span>素材确认</span>
-        <strong>AI 已生成四张核心图片素材</strong>
+        <strong>{isBackgroundOnlyStep ? "AI 已生成背景/地图素材" : "AI 已生成当前批次图片素材"}</strong>
         <button type="button" onClick={onConfirm} disabled={!canConfirmDirection}>
-          确认素材方向
+          {hasFullCoreAssets ? "确认素材方向" : isBackgroundOnlyStep ? "确认背景并继续生成" : "确认当前批次素材"}
         </button>
-        {!canConfirmDirection ? <small>补齐四个核心素材后可确认；失败素材可重试或上传替换。</small> : null}
+        {!canConfirmDirection ? <small>当前批次素材可用后才能确认；失败素材可重试或上传替换。</small> : null}
       </div>
       <div className="asset-candidate-grid">
         {assetCandidates.candidates.map((candidate) => {
@@ -3179,12 +3416,10 @@ function AssetCandidateReview({
                   <span className={canConfirm ? "asset-candidate-status ready" : "asset-candidate-status failed"}>
                     {canConfirm ? (hasWarning ? "可用但建议优化" : "素材可用") : "需要重试或替换"}
                   </span>
-                  {!canConfirm ? (
-                    <button type="button" onClick={() => onRegenerateAsset(candidate)} disabled={isRegenerating}>
-                      <RefreshCcw size={13} />
-                      {isRegenerating ? "生成中" : "重新生成此素材"}
-                    </button>
-                  ) : null}
+                  <button type="button" onClick={() => onRegenerateAsset(candidate)} disabled={isRegenerating}>
+                    <RefreshCcw size={13} />
+                    {isRegenerating ? "生成中" : "重新生成此素材"}
+                  </button>
                   {typeof candidate.generationParams?.originalLibraryUrl === "string" ? (
                     <a href={candidate.generationParams.originalLibraryUrl} download>
                       下载原图
@@ -3214,10 +3449,12 @@ function AssetCandidateReview({
 
 function ThreeAssetCandidateReview({
   assetCandidates,
-  onConfirm
+  onConfirm,
+  onRegenerateThreeAsset
 }: {
   assetCandidates: ThreeAssetCandidates;
   onConfirm: () => void;
+  onRegenerateThreeAsset: (assetCandidate: ThreeAssetCandidates["assets"][number]) => void;
 }) {
   const confirmableAssets = buildConfirmedThreeAssets(assetCandidates);
   const canConfirmDirection = hasConfirmedThreeCoreAssets(confirmableAssets);
@@ -3264,6 +3501,10 @@ function ThreeAssetCandidateReview({
                   <span className={canConfirm ? "asset-candidate-status ready" : "asset-candidate-status failed"}>
                     {canConfirm ? "模型可用" : "等待模型或需要重试"}
                   </span>
+                  <button type="button" onClick={() => onRegenerateThreeAsset(candidate)}>
+                    <RefreshCcw size={13} />
+                    重新生成此模型
+                  </button>
                   {candidate.fileUrl ? (
                     <a href={candidate.fileUrl} target="_blank" rel="noreferrer">
                       打开模型
@@ -3419,7 +3660,11 @@ function PreviewWorkspace({
                 viewportMode={viewportMode}
               />
             ) : (
-              <PhaserPreview config={project.gameConfig} assetPack={project.assetPack} gameHooks={project.gameHooks} />
+              <PhaserPreview
+                config={project.gameConfig}
+                assetPack={project.assetPack}
+                gameHooks={project.gameHooks}
+              />
             )}
           </div>
           <div className="floating-status">
@@ -3462,6 +3707,7 @@ function AssetWorkspace({
   const [query, setQuery] = useState("");
   const [selectedKey, setSelectedKey] = useState(project.assetPack.assets[0]?.assetKey ?? "");
   const mediaGateway = useMemo(() => createMediaGateway(), []);
+
   useEffect(() => {
     setAssets(project.assetPack.assets);
     setSelectedKey(project.assetPack.assets[0]?.assetKey ?? "");

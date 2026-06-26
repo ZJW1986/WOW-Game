@@ -212,6 +212,27 @@ describe("threejs 3D generation", () => {
     });
   });
 
+  it("adds a GameplayDSL v2 runtime rule to 3D runner directors", () => {
+    const result = generateThreeGameMvp({
+      idea: "3D 跑酷收集金币，三车道加速和压力波次",
+      projectId: "three-runner-dsl",
+      baseUrl: "https://wow.example",
+      viewportMode: "app_9_16",
+      gameType3d: "runner"
+    });
+
+    expect(result.threeSceneDirector.gameplayDsl?.version).toBe("2");
+    expect(result.threeSceneDirector.gameplayDsl?.rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "runner-pressure-wave",
+          when: { type: "score", op: ">=", value: 2 },
+          do: expect.arrayContaining([expect.objectContaining({ type: "spawn_zone" })])
+        })
+      ])
+    );
+  });
+
   it("creates an independent Three.js MVP project with readable Chinese 3D artifacts", () => {
     const result = generateThreeGameMvp({
       idea: "手机竖屏太空飞船躲避陨石收集能量",
@@ -413,6 +434,204 @@ describe("threejs 3D generation", () => {
     }
   });
 
+  it("returns explicit builtin fallback metadata when Tripo is not configured for 3D asset candidates", async () => {
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-three-test",
+        PUBLIC_BASE_URL: "https://wow.example"
+      },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/three-asset-candidates",
+      body: {
+        idea: "3D 跑酷收集金币",
+        projectId: "three-missing-tripo",
+        gameType3d: "runner"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    const assets = response.body.threeAssetCandidates.assets;
+    expect(assets).toHaveLength(3);
+    for (const asset of assets) {
+      expect(asset.status).toBe("missing");
+      expect(asset.error).toContain("TRIPO_API_KEY");
+      expect(asset.generationParams.tripoStatus).toBe("missing_api_key");
+      expect(asset.generationParams.fallbackProvider).toBe("builtin-three");
+      expect(asset.generationParams.canUseBuiltinFallback).toBe(true);
+      expect(asset.generationParams.fallbackFileUrl).toMatch(/^builtin:\/\/three\/runner\//);
+    }
+  });
+
+  it("returns explicit builtin fallback metadata when Tripo model generation fails", async () => {
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-three-test",
+        PUBLIC_BASE_URL: "https://wow.example",
+        TRIPO_API_KEY: "test-tripo-key",
+        TRIPO_BASE_URL: "https://openapi.tripo3d.com",
+        TRIPO_POLL_INTERVAL_MS: "0"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ url }) => {
+        if (url.includes("/v3/generation/text-to-model")) {
+          return JSON.stringify({ code: 0, data: { task_id: "failed-task" } });
+        }
+        return JSON.stringify({
+          code: 0,
+          data: {
+            status: "failed",
+            error: "mock Tripo failure"
+          }
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/three-asset-candidates",
+      body: {
+        idea: "3D 飞机躲避陨石收集能量",
+        projectId: "three-failed-tripo",
+        gameType3d: "flight_shooter"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    const assets = response.body.threeAssetCandidates.assets;
+    expect(assets).toHaveLength(3);
+    for (const asset of assets) {
+      expect(asset.status).toBe("failed");
+      expect(asset.generationParams.tripoStatus).toBe("task_failed");
+      expect(asset.generationParams.fallbackProvider).toBe("builtin-three");
+      expect(asset.generationParams.canUseBuiltinFallback).toBe(true);
+      expect(asset.generationParams.fallbackFileUrl).toMatch(/^builtin:\/\/three\/flight_shooter\//);
+    }
+  });
+
+  it("regenerates only one 3D model slot and keeps the other slot candidates intact", async () => {
+    const prompts: string[] = [];
+    const handler = createGenerationApiHandler({
+      env: {
+        DATA_DIR: "data-three-test",
+        PUBLIC_BASE_URL: "https://wow.example",
+        TRIPO_API_KEY: "test-tripo-key",
+        TRIPO_BASE_URL: "https://openapi.tripo3d.com",
+        TRIPO_POLL_INTERVAL_MS: "0"
+      },
+      storeIO: memoryStore(),
+      fetcher: async ({ url, init }) => {
+        if (url.includes("/v3/generation/text-to-model")) {
+          const body = JSON.parse(init.body);
+          prompts.push(body.prompt);
+          return JSON.stringify({ code: 0, data: { task_id: `task-${prompts.length}` } });
+        }
+        return JSON.stringify({
+          code: 0,
+          data: {
+            status: "success",
+            output: {
+              model_url: `https://cdn.example.com/model-${prompts.length}.glb`,
+              rendered_image_url: `https://cdn.example.com/model-${prompts.length}.png`
+            }
+          }
+        });
+      }
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/regenerate-three-asset-candidate",
+      body: {
+        idea: "3D 跑酷收集金币",
+        projectId: "three-regenerate-slot",
+        baseUrl: "https://wow.example",
+        viewportMode: "app_9_16",
+        gameType3d: "runner",
+        assetKey: "three.model.player",
+        slotRevisionId: "rev-9",
+        threeAssetCandidates: {
+          versionId: "three-assets-original",
+          engineType: "threejs3d",
+          assets: [
+            {
+              assetKey: "three.model.player",
+              type: "model",
+              purpose: "player",
+              style: "low-poly",
+              generationMode: "model",
+              copyrightStatus: "generated",
+              spec: "old player",
+              status: "generated",
+              prompt: "old player prompt",
+              acceptedFileTypes: [".glb", ".gltf"],
+              previewUrl: "https://cdn.example.com/old-player.png",
+              source: "generated",
+              fileUrl: "https://cdn.example.com/old-player.glb",
+              provider: "tripo",
+              model: "tripo-text-to-model",
+              generationParams: { taskId: "old-player-task" },
+              approvalStatus: "approved"
+            },
+            {
+              assetKey: "three.model.hazard",
+              type: "model",
+              purpose: "hazard",
+              style: "low-poly",
+              generationMode: "model",
+              copyrightStatus: "generated",
+              spec: "old hazard",
+              status: "generated",
+              prompt: "old hazard prompt",
+              acceptedFileTypes: [".glb", ".gltf"],
+              previewUrl: "https://cdn.example.com/old-hazard.png",
+              source: "generated",
+              fileUrl: "https://cdn.example.com/old-hazard.glb",
+              provider: "tripo",
+              model: "tripo-text-to-model",
+              generationParams: { taskId: "old-hazard-task" },
+              approvalStatus: "approved"
+            },
+            {
+              assetKey: "three.model.collectible",
+              type: "model",
+              purpose: "collectible",
+              style: "low-poly",
+              generationMode: "model",
+              copyrightStatus: "generated",
+              spec: "old collectible",
+              status: "generated",
+              prompt: "old collectible prompt",
+              acceptedFileTypes: [".glb", ".gltf"],
+              previewUrl: "https://cdn.example.com/old-collectible.png",
+              source: "generated",
+              fileUrl: "https://cdn.example.com/old-collectible.glb",
+              provider: "tripo",
+              model: "tripo-text-to-model",
+              generationParams: { taskId: "old-collectible-task" },
+              approvalStatus: "approved"
+            }
+          ]
+        }
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(prompts).toHaveLength(1);
+    expect(response.body.threeAssetCandidates.assets.find((asset: { assetKey: string }) => asset.assetKey === "three.model.player")?.fileUrl).toContain(
+      "model-1.glb"
+    );
+    expect(response.body.threeAssetCandidates.assets.find((asset: { assetKey: string }) => asset.assetKey === "three.model.hazard")?.fileUrl).toContain(
+      "old-hazard.glb"
+    );
+    expect(response.body.threeAssetCandidates.assets.find((asset: { assetKey: string }) => asset.assetKey === "three.model.collectible")?.fileUrl).toContain(
+      "old-collectible.glb"
+    );
+  });
+
   it("uses confirmed Tripo models in the 3D asset pack", () => {
     const confirmedThreeAssets = confirmedCoreModels();
     const result = generateThreeGameMvp({
@@ -481,6 +700,56 @@ describe("threejs 3D generation", () => {
     expect(response.body.assetLoadReport.ready).toBe(true);
     expect(response.body.project.playUrl).toBe("/play/three-project-api/v1");
     expect(Array.from(store.writes.keys()).some((path) => path.includes("three-project-api"))).toBe(true);
+  });
+
+  it("serves 3D design briefs as an active Three.js director task instead of a fallback", async () => {
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-three-brief-test", PUBLIC_BASE_URL: "https://wow.example" },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/design-brief",
+      body: {
+        idea: "3D runner collect coins on a neon track",
+        engineType: "threejs3d",
+        projectId: "three-brief-api",
+        baseUrl: "https://wow.example",
+        viewportMode: "app_9_16",
+        gameType3d: "runner"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.threeDesignBrief.genre).toBe("runner");
+    expect(response.body.modelTask.status).toBe("ok");
+    expect(response.body.modelTask.model).toBe("three-scene-director");
+    expect(response.body.fallbackUsed).toBe(false);
+  });
+
+  it("serves 3D guided questions as an active genre profile task instead of a fallback", async () => {
+    const handler = createGenerationApiHandler({
+      env: { DATA_DIR: "data-three-questions-test", PUBLIC_BASE_URL: "https://wow.example" },
+      storeIO: memoryStore()
+    });
+
+    const response = await handler({
+      method: "POST",
+      path: "/api/guided-questions",
+      body: {
+        idea: "3D tower defense with laser turrets",
+        engineType: "threejs3d",
+        templateFamily: "top_down",
+        gameType3d: "futuristic_tower_defense"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.questions).toHaveLength(5);
+    expect(response.body.modelTask.status).toBe("ok");
+    expect(response.body.modelTask.model).toBe("three-genre-profile");
+    expect(response.body.fallbackUsed).toBe(false);
   });
 
   it("localizes remote Tripo model URLs before saving a 3D playable", async () => {

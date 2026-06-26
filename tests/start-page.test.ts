@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   buildOptimizedGamePrompt,
   createStartGameDraft,
@@ -9,6 +10,7 @@ import {
   templateOptions
 } from "../src/core/start";
 import { getOfficialTemplates } from "../src/core/templateCatalog";
+import { getRegisteredPhaserTemplates } from "../src/runtime/phaser/registry";
 
 describe("start page draft", () => {
   it("uses DeepSeek v4 flash and top_down template by default", () => {
@@ -85,6 +87,16 @@ describe("start page draft", () => {
     expect(tiles.every((tile) => tile.icon.length <= 2)).toBe(true);
     expect(tiles.every((tile) => tile.shortLabel.length <= 6)).toBe(true);
     expect(tiles.every((tile) => tile.visualClass.startsWith("type-"))).toBe(true);
+    expect(tiles.filter((tile) => tile.runtimeStatus === "available").map((tile) => tile.templateFamily)).toEqual([
+      "top_down",
+      "platformer",
+      "grid_logic",
+      "tower_defense"
+    ]);
+    expect(tiles.find((tile) => tile.templateFamily === "ui_heavy")).toMatchObject({
+      runtimeStatus: "coming_soon",
+      disabledReason: "暂未上线"
+    });
     expect(createStartThreeGameTypeTiles().every((tile) => tile.visualClass.startsWith("type-"))).toBe(true);
     expect(getOfficialTemplates().length).toBeGreaterThan(0);
   });
@@ -112,5 +124,55 @@ describe("start page draft", () => {
     expect(threeDPrompt).not.toBe(twoDPrompt);
     expect(getGenerationPrompt({ ...twoD, optimizedPrompt: "优化后的正式提示词" })).toBe("优化后的正式提示词");
     expect(getGenerationPrompt(twoD)).toBe(twoD.idea);
+  });
+
+  it("disables 2D template tiles that do not have a registered runtime", () => {
+    const source = readFileSync("src/ui/App.tsx", "utf8");
+
+    expect(source).toContain('disabled={template.runtimeStatus !== "available"}');
+    expect(source).toContain("template.disabledReason");
+  });
+
+  it("derives tile availability from the Phaser runtime registry", () => {
+    const registeredIds = getRegisteredPhaserTemplates().map((template) => template.id);
+    const tiles = createStartTemplateTiles({ registeredTemplateIds: registeredIds });
+
+    expect(tiles.filter((tile) => tile.runtimeStatus === "available").map((tile) => tile.templateFamily)).toEqual([
+      "top_down",
+      "platformer",
+      "grid_logic",
+      "tower_defense"
+    ]);
+    expect(new Set(registeredIds)).toEqual(new Set(["top_down", "platformer", "grid_logic", "tower_defense"]));
+    expect(tiles.find((tile) => tile.templateFamily === "ui_heavy")).toMatchObject({
+      runtimeStatus: "coming_soon",
+      disabledReason: "暂未上线"
+    });
+  });
+
+  it("greys out a catalog tile when its runtime adapter is absent", () => {
+    const tiles = createStartTemplateTiles({ registeredTemplateIds: ["top_down", "platformer"] });
+
+    expect(tiles.find((tile) => tile.templateFamily === "tower_defense")).toMatchObject({
+      runtimeStatus: "coming_soon",
+      disabledReason: "暂未上线"
+    });
+  });
+  it("keeps only the five most recent generation failures for the start page", async () => {
+    const { recordRecentFailure } = await import("../src/ui/App");
+    const failures = ["one", "two", "three", "four", "five", "six"].reduce(
+      (current, detail, index) => recordRecentFailure(current, `stage-${index}`, detail),
+      [] as Array<{ stage: string; detail: string }>
+    );
+
+    expect(failures).toHaveLength(5);
+    expect(failures.map((failure) => failure.detail)).toEqual(["six", "five", "four", "three", "two"]);
+  });
+
+  it("renders a recent failure panel on the start page", () => {
+    const source = readFileSync("src/ui/App.tsx", "utf8");
+
+    expect(source).toContain("recent-failure-panel");
+    expect(source).toContain("最近失败");
   });
 });

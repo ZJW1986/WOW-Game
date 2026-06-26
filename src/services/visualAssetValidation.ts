@@ -4,6 +4,8 @@ import type {
   RuntimeAssetSlotName,
   VisualAssetReport
 } from "../core/types";
+import { getCompatibleAssetKeysForSlot } from "./gameAssetProfiles";
+import { analyzeVisualCoherence } from "./visualCoherence";
 
 const coreAssetKeys: Record<RuntimeAssetSlotName, string> = {
   background: "world.background",
@@ -18,6 +20,8 @@ const runtimeSizes: Record<RuntimeAssetSlotName, { width: number; height: number
   hazard: { width: 58, height: 58 },
   collectible: { width: 42, height: 42 }
 };
+
+const coherenceThreshold = 0.6;
 
 export function validateCoreAssetCandidate(candidate: AssetCandidate): AssetCandidate {
   const slot = normalizeCoreSlot(candidate.slot);
@@ -43,7 +47,7 @@ export function validateCoreAssetCandidate(candidate: AssetCandidate): AssetCand
   const validationStatus = errors.length > 0 ? "failed" : png || isRuntimeLocalUrl(candidate.fileUrl) ? "passed" : "warning";
   return {
     ...candidate,
-    assetKey: coreAssetKeys[slot],
+    assetKey: candidate.assetKey || coreAssetKeys[slot],
     slotRole: role,
     requiresTransparency,
     subjectBounds: png ? { x: 0, y: 0, width: png.width, height: png.height } : undefined,
@@ -54,9 +58,10 @@ export function validateCoreAssetCandidate(candidate: AssetCandidate): AssetCand
   };
 }
 
-export function createVisualAssetReport(assetPack: AssetPack): VisualAssetReport {
+export async function createVisualAssetReport(assetPack: AssetPack): Promise<VisualAssetReport> {
   const slots = (Object.keys(coreAssetKeys) as RuntimeAssetSlotName[]).map((slot) => {
-    const asset = assetPack.assets.find((item) => item.assetKey === coreAssetKeys[slot]);
+    const compatibleKeys = getCompatibleAssetKeysForSlot(slot);
+    const asset = assetPack.assets.find((item) => compatibleKeys.includes(item.assetKey));
     const requiresTransparency = slot !== "background";
     const size = runtimeSizes[slot];
     const errors: string[] = [];
@@ -70,7 +75,7 @@ export function createVisualAssetReport(assetPack: AssetPack): VisualAssetReport
     }
     return {
       slot,
-      assetKey: coreAssetKeys[slot],
+      assetKey: asset?.assetKey ?? coreAssetKeys[slot],
       fileUrl: asset?.fileUrl ?? "",
       requiresTransparency,
       validationStatus: errors.length > 0 ? "failed" as const : "passed" as const,
@@ -80,8 +85,11 @@ export function createVisualAssetReport(assetPack: AssetPack): VisualAssetReport
     };
   });
   const errors = slots.flatMap((slot) => slot.validationErrors);
+  const coherenceScore = await analyzeVisualCoherence(assetPack).then((report) => report.score);
   return {
-    ready: errors.length === 0,
+    ready: errors.length === 0 && coherenceScore >= coherenceThreshold,
+    coherenceScore,
+    coherenceThreshold,
     slots,
     errors
   };
@@ -97,7 +105,9 @@ function isRuntimeLocalUrl(value?: string): boolean {
 }
 
 function looksLikeCheckerboard(prompt = "", style = ""): boolean {
-  return /checkerboard|checkboard|grid background|white background/i.test(`${prompt} ${style}`);
+  const normalized = `${prompt} ${style}`
+    .replace(/\b(no|without)\s+[^.;,\n]*(checkerboard|checkboard|grid background|white background|background)[^.;,\n]*/gi, "");
+  return /checkerboard|checkboard|grid background|white background/i.test(normalized);
 }
 
 function readPngMetadata(dataUrl?: string): { width: number; height: number; hasAlpha: boolean } | null {

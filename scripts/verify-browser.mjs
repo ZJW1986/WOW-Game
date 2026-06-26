@@ -1,19 +1,29 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
 const baseUrl = process.env.WOW_VERIFY_URL || "http://localhost:5176/";
 process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || ".playwright-browsers";
+const required = process.env.WOW_VERIFY_REQUIRED === "1";
+const genre = readGenreArg(process.argv.slice(2));
+const verificationProfile = createVerificationProfile(genre);
+const startedAt = Date.now();
 
 async function main() {
   let chromium;
   try {
     ({ chromium } = await import("playwright"));
   } catch {
-    console.log(
-      "[verify:browser] skipped: Playwright is not installed. Run `$env:PLAYWRIGHT_BROWSERS_PATH='.playwright-browsers'; npx playwright install chromium` before full browser acceptance."
-    );
+    const message = "[verify:browser] skipped: Playwright is not installed. Run `$env:PLAYWRIGHT_BROWSERS_PATH='.playwright-browsers'; npx playwright install chromium` before full browser acceptance.";
+    if (required) throw new Error(message);
+    console.log(message);
     return;
   }
 
   const browser = await launchAvailableBrowser(chromium);
-  if (!browser) return;
+  if (!browser) {
+    if (required) throw new Error("No browser could be launched while WOW_VERIFY_REQUIRED=1.");
+    return;
+  }
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const consoleErrors = [];
   page.on("console", (message) => {
@@ -26,7 +36,9 @@ async function main() {
   try {
     await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 15000 });
     const ideaInput = page.locator("textarea").first();
+    await ideaInput.fill(verificationProfile.idea);
     await ideaInput.fill("手机竖屏太空飞船躲避陨石收集能量");
+    await ideaInput.fill(verificationProfile.idea);
     await clickFirst(page, [
       page.getByTestId("start-engine-threejs3d"),
       page.getByRole("button", { name: /3D 游戏|3D Three\.js/i })
@@ -60,9 +72,11 @@ async function main() {
     const startButton = page.getByTestId("three-preview-start").first();
     if (await startButton.isVisible()) await startButton.click();
 
-    await page.keyboard.down("ArrowRight");
-    await page.waitForTimeout(500);
-    await page.keyboard.up("ArrowRight");
+    for (const key of verificationProfile.keys) {
+      await page.keyboard.down(key);
+      await page.waitForTimeout(verificationProfile.keyHoldMs);
+      await page.keyboard.up(key);
+    }
     await page.waitForTimeout(250);
 
     const moved = await page.locator("[data-player-moved='true']").first().count();
@@ -98,11 +112,117 @@ async function main() {
     if (!movedAfterResize) throw new Error("Keyboard input did not work after switching to Web 16:9.");
 
     if (consoleErrors.length > 0) throw new Error(`Console errors: ${consoleErrors.join(" | ")}`);
+    const perfSample = await collectPerfSample(page, genre, startedAt);
+    await writePerfBaseline("data/perf-baseline.json", perfSample);
 
-    console.log("[verify:browser] passed: 3D canvas, HUD, APP/Web aspect ratios, and keyboard movement verified.");
+    console.log(`[verify:browser] passed ${genre}: 3D canvas, HUD, APP/Web aspect ratios, and keyboard movement verified.`);
   } finally {
     await browser.close();
   }
+}
+
+function readGenreArg(args) {
+  const raw = args.find((arg) => arg.startsWith("--genre="))?.slice("--genre=".length) || "flight";
+  const aliases = {
+    flight: "flight",
+    flight_shooter: "flight",
+    runner: "runner",
+    td: "td",
+    tower_defense: "td",
+    futuristic_tower_defense: "td",
+    topdown: "topdown",
+    top_down: "topdown",
+    platformer: "platformer",
+    grid: "grid",
+    grid_logic: "grid"
+  };
+  const genre = aliases[raw];
+  if (!genre) {
+    throw new Error(`Unsupported --genre=${raw}. Expected flight, runner, td, topdown, platformer, or grid.`);
+  }
+  return genre;
+}
+
+function createVerificationProfile(genre) {
+  const profiles = {
+    flight: {
+      idea: "3D flight shooter: dodge asteroids, collect energy cores, avoid frontal hazards",
+      keys: ["ArrowRight"],
+      keyHoldMs: 500
+    },
+    runner: {
+      idea: "3D runner: three-lane futuristic track, collect coins, jump gates and roadblocks",
+      keys: ["ArrowRight", "Space"],
+      keyHoldMs: 300
+    },
+    td: {
+      idea: "3D futuristic tower defense: build laser towers and missile towers to defend the base",
+      keys: ["ArrowRight"],
+      keyHoldMs: 250
+    },
+    topdown: {
+      idea: "2D top-down spaceship game: dodge asteroids and collect energy",
+      keys: ["ArrowRight"],
+      keyHoldMs: 350
+    },
+    platformer: {
+      idea: "2D ninja platformer: jump over spikes, collect scrolls, reach the checkpoint",
+      keys: ["ArrowRight", "Space"],
+      keyHoldMs: 300
+    },
+    grid: {
+      idea: "2D grid puzzle: push energy blocks onto target tiles with limited moves",
+      keys: ["ArrowRight"],
+      keyHoldMs: 350
+    }
+  };
+  return profiles[genre] || profiles.flight;
+}
+
+async function collectPerfSample(page, genre, startedAtMs) {
+  const browserPerf = await page.evaluate(() => {
+    const paintEntries = performance.getEntriesByType("paint").map((entry) => ({
+      name: entry.name,
+      startTime: entry.startTime
+    }));
+    return {
+      paintEntries,
+      now: performance.now()
+    };
+  });
+  const elapsedMs = Math.max(1, Date.now() - startedAtMs);
+  const estimatedFps = Math.max(1, Math.min(60, Math.round(1000 / Math.max(16, browserPerf.now / 300))));
+  return {
+    genre,
+    checkedAt: new Date().toISOString(),
+    elapsedMs,
+    estimatedFps,
+    paintEntries: browserPerf.paintEntries
+  };
+}
+
+async function writePerfBaseline(filePath, sample) {
+  let previous = {};
+  try {
+    previous = JSON.parse(await readFile(filePath, "utf8"));
+  } catch {
+    previous = {};
+  }
+  const existing = previous[sample.genre];
+  if (existing?.estimatedFps && sample.estimatedFps < existing.estimatedFps * 0.8) {
+    throw new Error(
+      `Performance regression for ${sample.genre}: fps ${sample.estimatedFps} is below baseline ${existing.estimatedFps}.`
+    );
+  }
+  const next = {
+    ...previous,
+    [sample.genre]: {
+      ...sample,
+      baselineFps: Math.max(sample.estimatedFps, existing?.baselineFps ?? 0)
+    }
+  };
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
 }
 
 async function launchAvailableBrowser(chromium) {

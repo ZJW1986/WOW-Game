@@ -57,6 +57,21 @@ export interface ThreeAssetCandidatesRequest {
   userMaterials?: UserMaterial[];
 }
 
+export interface RegenerateThreeAssetCandidateRequest {
+  idea: string;
+  projectId: string;
+  baseUrl: string;
+  engineType?: EngineType;
+  viewportMode?: ViewportMode;
+  gameType3d?: ThreeGameGenre;
+  answers?: UserAnswer[];
+  threeDesignBrief?: ThreeGameBrief;
+  userMaterials?: UserMaterial[];
+  threeAssetCandidates?: ThreeAssetCandidates;
+  assetKey: "three.model.player" | "three.model.hazard" | "three.model.collectible";
+  slotRevisionId?: string;
+}
+
 export interface UploadPlayablePackageRequest {
   packageName: string;
   packageFileName: string;
@@ -93,12 +108,14 @@ export interface DesignBriefRequest {
 export interface AssetCandidatesRequest extends DesignBriefRequest {
   designBrief?: DesignBrief;
   answers?: UserAnswer[];
+  requestedSlots?: Array<"background" | "player" | "hazard" | "collectible">;
 }
 
 export interface RegenerateAssetCandidateRequest {
   idea: string;
   templateFamily: TemplateFamily;
   candidate: AssetCandidate;
+  slotRevisionId?: string;
 }
 
 export interface ProcessUploadedMaterialRequest {
@@ -112,6 +129,43 @@ export interface ProcessUploadedMaterialRequest {
   label?: string;
   prompt?: string;
   style?: string;
+}
+
+export interface GenerateProductionBriefRequest {
+  idea: string;
+  engineType?: EngineType;
+  templateFamily?: TemplateFamily;
+  gameType3d?: ThreeGameGenre;
+}
+
+export interface GenerateGameDevPromptBundleRequest {
+  idea: string;
+  engineType?: EngineType;
+  profileId?: string;
+}
+
+export interface GeneratePromptPackRequest extends GenerateProductionBriefRequest {
+  projectId?: string;
+  baseUrl?: string;
+  viewportMode?: ViewportMode;
+  answers?: UserAnswer[];
+  threeDesignBrief?: ThreeGameBrief;
+  userMaterials?: UserMaterial[];
+}
+
+export interface CellCogGenerateAssetRequest {
+  promptPackId: string;
+  slot: string;
+  prompt: string;
+  requestedOutput: "png" | "webp" | "glb" | "mp3" | "html" | "pdf";
+}
+
+export interface ReplaceAssetCandidateRequest {
+  projectId?: string;
+  assetKey: string;
+  previousFileUrl?: string;
+  candidateFileUrl: string;
+  reason?: string;
 }
 
 export interface RevisionAnalysisRequest extends DesignBriefRequest {
@@ -207,6 +261,86 @@ export async function requestThreeAssetCandidates(
     threeDesignBrief: ThreeGameBrief;
     threeSceneDirector: Record<string, any>;
   };
+}
+
+export async function requestRegenerateThreeAssetCandidate(
+  input: RegenerateThreeAssetCandidateRequest,
+  fetcher: BrowserFetcher = fetch,
+  options: RequestClientOptions = {}
+): Promise<{
+  threeAssetCandidates: ThreeAssetCandidates;
+  threeDesignBrief: ThreeGameBrief;
+  threeSceneDirector: Record<string, any>;
+}> {
+  const response = await withTimeout(
+    fetcher("/api/regenerate-three-asset-candidate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(input)
+    }),
+    options.timeoutMs ?? 180000,
+    "Three.js asset regeneration request timed out"
+  );
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`Three.js asset regeneration request failed: ${readError(payload, response)}`);
+  }
+  return payload as {
+    threeAssetCandidates: ThreeAssetCandidates;
+    threeDesignBrief: ThreeGameBrief;
+    threeSceneDirector: Record<string, any>;
+  };
+}
+
+export async function requestProductionBrief(
+  input: GenerateProductionBriefRequest,
+  fetcher: BrowserFetcher = fetch
+) {
+  return postJson("/api/generate-production-brief", input, "Production brief request failed", fetcher);
+}
+
+export async function requestGameDevPromptBundle(
+  input: GenerateGameDevPromptBundleRequest,
+  fetcher: BrowserFetcher = fetch
+) {
+  return postJson("/api/generate-game-dev-prompt-bundle", input, "Game dev prompt bundle request failed", fetcher);
+}
+
+export async function requestUiAssetKit(
+  input: GeneratePromptPackRequest,
+  fetcher: BrowserFetcher = fetch
+) {
+  return postJson("/api/generate-ui-asset-kit", input, "UI asset kit request failed", fetcher);
+}
+
+export async function requestAudioPromptPack(
+  input: GeneratePromptPackRequest,
+  fetcher: BrowserFetcher = fetch
+) {
+  return postJson("/api/generate-audio-prompt-pack", input, "Audio prompt pack request failed", fetcher);
+}
+
+export async function requestModelPromptPack(
+  input: GeneratePromptPackRequest,
+  fetcher: BrowserFetcher = fetch
+) {
+  return postJson("/api/generate-model-prompt-pack", input, "Model prompt pack request failed", fetcher);
+}
+
+export async function requestCellCogAssetGeneration(
+  input: CellCogGenerateAssetRequest,
+  fetcher: BrowserFetcher = fetch
+) {
+  return postJson("/api/cellcog/generate-asset", input, "CellCog asset request failed", fetcher);
+}
+
+export async function requestAssetCandidateReplacement(
+  input: ReplaceAssetCandidateRequest,
+  fetcher: BrowserFetcher = fetch
+) {
+  return postJson("/api/replace-asset-candidate", input, "Asset replacement request failed", fetcher);
 }
 
 export async function requestTripoBalance(fetcher: BrowserFetcher = fetch) {
@@ -493,6 +627,26 @@ export async function replacePackageAsset(
   const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(`Package asset replacement failed: ${readError(payload, response)}`);
+  }
+  return payload;
+}
+
+async function postJson(
+  path: string,
+  input: Record<string, any>,
+  errorPrefix: string,
+  fetcher: BrowserFetcher
+) {
+  const response = await fetcher(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(`${errorPrefix}: ${readError(payload, response)}`);
   }
   return payload;
 }

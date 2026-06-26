@@ -7,6 +7,7 @@ import {
   createGameHooks,
   createPublishRecord,
   createQaReport,
+  createStyleSheet,
   runMockPipeline,
   validateAssetReferences
 } from "../core/pipeline";
@@ -29,10 +30,12 @@ import type {
   AssetPack,
   AssetRequirement,
   BrowserVerificationReport,
+  AudioPromptPack,
   ConfirmedAssets,
   CoverPoster,
   DesignBrief,
   DesignQuestion,
+  GameProductionBrief,
   GameConfig,
   GameHooks,
   GameplayDsl,
@@ -45,9 +48,12 @@ import type {
   ReferencePackageSummary,
   RuntimeAssetReport,
   RevisionAnalysis,
+  SceneMapPlan,
   TemplateFamily,
+  UiAssetKit,
   UserMaterial,
-  UserAnswer
+  UserAnswer,
+  VisualPromptPack
 } from "../core/types";
 import type { StartModelId } from "../core/start";
 import type { ModelTaskRequest } from "./backend";
@@ -64,6 +70,28 @@ import {
   validateCoreAssetCandidate
 } from "./visualAssetValidation";
 import { compileGameplayDsl } from "./gameplayDsl";
+import { requestGameplayDsl } from "./gameplayDslRequest";
+import {
+  createAudioPromptPack,
+  createGameProductionBrief,
+  createSceneMapPlan,
+  createUiAssetKit,
+  createVisualPromptPack
+} from "./productionPromptPacks";
+import {
+  buildGameDevPromptBundle,
+  buildGuidedQuestionPromptBundle,
+  buildProfileGameplayPlan,
+  buildProfileGuidedQuestions,
+  selectGameDevPromptProfile
+} from "./gameDevPromptLibrary";
+import {
+  getAssetKeyForTemplateSlot,
+  getPhaserAssetProfile,
+  getPhaserSlotProfile,
+  refineAssetSubjectForIdea,
+  type RuntimeImageSlot
+} from "./gameAssetProfiles";
 
 export interface GeneratePlayableInput {
   idea: string;
@@ -101,12 +129,16 @@ export interface GenerateDesignBriefInput {
 export interface GenerateAssetCandidatesInput extends GenerateDesignBriefInput {
   designBrief?: DesignBrief;
   answers?: UserAnswer[];
+  visualPromptPack?: VisualPromptPack;
+  requestedSlots?: RuntimeImageSlot[];
 }
 
 export interface RegenerateAssetCandidateInput {
   idea: string;
   templateFamily: TemplateFamily;
   candidate: AssetCandidate;
+  visualPromptPack?: VisualPromptPack;
+  slotRevisionId?: string;
 }
 
 export interface GenerateRevisionAnalysisInput extends GenerateDesignBriefInput {
@@ -208,7 +240,21 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
     },
 
     async generateGuidedQuestions(input: GenerateGuidedQuestionsInput) {
-      const fallbackQuestions = createGuidedQuestions(input.idea);
+      const profileId = selectGameDevPromptProfile({
+        idea: input.idea,
+        templateFamily: input.templateFamily
+      });
+      const guidedQuestionPromptBundle = buildGuidedQuestionPromptBundle({
+        idea: input.idea,
+        profileId,
+        engineType: "phaser2d"
+      });
+      const gameDevPromptBundle = buildGameDevPromptBundle({
+        idea: input.idea,
+        profileId,
+        engineType: "phaser2d"
+      });
+      const fallbackQuestions = buildProfileGuidedQuestions(profileId, input.idea);
       const useRealModel = (input.model ?? "deepseek-v4-flash") === "deepseek-v4-flash";
       const provider = useRealModel ? "deepseek" : "mock";
       const model = useRealModel ? "deepseek-v4-flash" : "mock-designer";
@@ -224,6 +270,9 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           referencePackageSummary: input.referencePackageSummary,
           userMaterials: input.userMaterials,
           previousAnswers: input.previousAnswers,
+          profileId,
+          guidedQuestionPromptBundle,
+          gameDevPromptBundle,
           designGuardrails: [
             "Only ask questions that can affect a first playable 2D game.",
             "Prefer controls, win condition, fail condition, visual style, target duration.",
@@ -243,7 +292,17 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
     },
 
     async generateAssetCandidates(input: GenerateAssetCandidatesInput) {
-      const fallback = createFallbackAssetCandidates(input);
+      const fallback = createProfileAssetCandidates(input);
+      const productionBrief = createGameProductionBrief({
+        idea: input.idea,
+        engineType: "phaser2d",
+        templateFamily: input.templateFamily
+      });
+      const visualPromptPack = input.visualPromptPack ?? createVisualPromptPack({
+        idea: input.idea,
+        engineType: "phaser2d",
+        productionBrief
+      });
       const useRealModel = (input.model ?? "deepseek-v4-flash") === "deepseek-v4-flash";
       const provider = useRealModel ? "deepseek" : "mock";
       const model = useRealModel ? "deepseek-v4-flash" : "mock-designer";
@@ -251,13 +310,19 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         taskType: "llm.asset_prompts",
         provider,
         model,
-        prompt: createPromptForTask("llm.asset_prompts", input as unknown as Record<string, unknown>),
+        prompt: createPromptForTask("llm.asset_prompts", {
+          ...input,
+          visualPromptPack
+        } as unknown as Record<string, unknown>),
         schema: generatedAssetCandidatesSchema,
-        preprocess: (raw) => withCandidatePreviews(normalizeAssetCandidates(raw, fallback)),
+        preprocess: (raw) => withCandidatePreviews(normalizeAssetCandidates(raw, fallback, input)),
         fallback
       });
-      const parsedCandidates = normalizeCoreImageCandidates(generatedAssetCandidatesSchema.parse(task.output), fallback);
-      const assetCandidates = await generateCandidateMedia(parsedCandidates, input.templateFamily, mediaGateway, input);
+      const parsedCandidates = normalizeCoreImageCandidates(generatedAssetCandidatesSchema.parse(task.output), fallback, input);
+      const assetCandidates = await generateCandidateMedia(parsedCandidates, input.templateFamily, mediaGateway, {
+        ...input,
+        visualPromptPack
+      });
       return {
         assetCandidates,
         confirmedAssets: confirmedAssetsSchema.parse({
@@ -267,19 +332,31 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           }))
         }),
         modelTask: task,
-        fallbackUsed: task.status === "fallback"
+        fallbackUsed: task.status === "fallback",
+        visualPromptPack
       };
     },
 
     async regenerateAssetCandidate(input: RegenerateAssetCandidateInput) {
+      const slotRevisionId = input.slotRevisionId ?? nextSlotRevisionId(input.candidate);
+      const candidate = applyRegenerationPromptVariation(input.candidate, slotRevisionId);
       const assetCandidates = await generateCandidateMedia(
-        { candidates: [input.candidate] },
+        { candidates: [candidate] },
         input.templateFamily,
         mediaGateway,
-        input
+        {
+          ...input,
+          slotRevisionId
+        }
       );
       return {
-        assetCandidate: assetCandidates.candidates[0]
+        assetCandidate: {
+          ...assetCandidates.candidates[0],
+          generationParams: {
+            ...(assetCandidates.candidates[0].generationParams ?? {}),
+            slotRevisionId
+          }
+        }
       };
     },
 
@@ -317,6 +394,15 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       const useRealModel = (input.model ?? "deepseek-v4-flash") === "deepseek-v4-flash";
       const provider = useRealModel ? "deepseek" : "mock";
       const model = useRealModel ? "deepseek-v4-flash" : "mock-designer";
+      const profileId = selectGameDevPromptProfile({
+        idea: input.idea,
+        templateFamily: input.templateFamily
+      });
+      const gameDevPromptBundle = buildGameDevPromptBundle({
+        idea: input.idea,
+        profileId,
+        engineType: "phaser2d"
+      });
 
       const classificationTask = await gateway.runModelTask({
         taskType: "llm.classification",
@@ -329,7 +415,9 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           confirmedAssets: input.confirmedAssets,
           revisionHistory: input.revisionHistory,
           preferredTemplate: input.templateFamily,
-          referencePackageSummary: input.referencePackageSummary
+          referencePackageSummary: input.referencePackageSummary,
+          profileId,
+          gameDevPromptBundle
         }),
         schema: classificationSchema,
         preprocess: (raw) => normalizeClassification(raw, input.templateFamily),
@@ -362,7 +450,9 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           classification,
           referencePattern,
           referencePackageSummary: input.referencePackageSummary,
-          userMaterials: input.userMaterials
+          userMaterials: input.userMaterials,
+          profileId,
+          gameDevPromptBundle
         }),
         schema: matureGameBriefSchema,
         preprocess: (raw) => normalizeMatureGameBrief(raw, fallbackMatureGameBrief),
@@ -385,7 +475,9 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           revisionHistory: input.revisionHistory,
           classification: classificationTask.output,
           matureGameBrief: matureBriefTask.output,
-          referencePackageSummary: input.referencePackageSummary
+          referencePackageSummary: input.referencePackageSummary,
+          profileId,
+          gameDevPromptBundle
         }),
         schema: gddSchema,
         preprocess: (raw) => normalizeGdd(raw, parsedFallbackGdd),
@@ -442,7 +534,9 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           matureGameBrief: matureBriefTask.output,
           gdd: gddTask.output,
           assetPack,
-          referencePackageSummary: input.referencePackageSummary
+          referencePackageSummary: input.referencePackageSummary,
+          profileId,
+          gameDevPromptBundle
         }),
         schema: gameConfigSchema,
         preprocess: (raw) => normalizeGameConfig(raw, fallbackConfig),
@@ -479,7 +573,9 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           gdd: gddTask.output,
           matureGameBrief: matureBriefTask.output,
           gameConfig,
-          referencePackageSummary: input.referencePackageSummary
+          referencePackageSummary: input.referencePackageSummary,
+          profileId,
+          gameDevPromptBundle
         }),
         schema: gameHooksSchema,
         preprocess: (raw) => normalizeGameHooks(raw, fallbackHooks),
@@ -489,27 +585,42 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
       trackFallback(hooksTask, fallbacksUsed);
 
       const fallbackDsl = createFallbackGameplayDsl(gameConfig);
-      const dslTask = await gateway.runModelTask({
-        taskType: "llm.gameplay_dsl",
-        provider,
-        model,
-        prompt: createPromptForTask("llm.gameplay_dsl", {
+      const dslResult = await requestGameplayDsl({
+        idea: input.idea,
+        designBrief: input.designBrief ?? createFallbackDesignBrief({
           idea: input.idea,
-          answers: input.answers,
-          designBrief: input.designBrief,
-          revisionHistory: input.revisionHistory,
-          classification,
-          gdd: gddTask.output,
-          matureGameBrief: matureBriefTask.output,
-          gameConfig,
-          gameHooks: hooksTask.output,
-          assetPack,
-          referencePackageSummary: input.referencePackageSummary
+          templateFamily: classification.templateFamily,
+          model: input.model,
+          referencePackageSummary: input.referencePackageSummary,
+          userMaterials: input.userMaterials
         }),
-        schema: gameplayDslSchema,
-        preprocess: (raw) => normalizeGameplayDsl(raw, fallbackDsl),
-        fallback: fallbackDsl
+        gameConfig,
+        assetPack,
+        fallback: fallbackDsl,
+        provider: async (request) => {
+          if (request.provider !== "deepseek") return JSON.stringify(fallbackDsl);
+          const result = await executor.runJsonTask(request);
+          if (result.status !== "success") {
+            throw new Error(result.error ?? `DeepSeek task failed: ${result.status}`);
+          }
+          return result.rawJson;
+        },
+        providerName: provider,
+        model
       });
+      const dslTask: GatewayResult<ReturnType<typeof gameplayDslSchema.parse>> = {
+        id: "model-llm.gameplay_dsl",
+        status: dslResult.status,
+        provider: dslResult.status === "fallback" ? "mock" : provider,
+        model: dslResult.status === "fallback" ? "schema-fallback" : model,
+        taskType: "llm.gameplay_dsl",
+        output: dslResult.dsl,
+        error: dslResult.validationErrors.join("; ") || undefined,
+        costEstimate: {
+          inputTokens: 0,
+          outputTokens: Math.ceil(JSON.stringify(dslResult.dsl).length / 4)
+        }
+      };
       modelTasks.push(dslTask);
       trackFallback(dslTask, fallbacksUsed);
 
@@ -518,9 +629,41 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
         gameConfig,
         input
       );
+      const gameProductionBrief = createGameProductionBrief({
+        idea: input.idea,
+        engineType: "phaser2d",
+        templateFamily: classification.templateFamily,
+        title: gameConfig.title
+      });
+      const styleSheet = createStyleSheet({
+        idea: input.idea,
+        templateFamily: classification.templateFamily,
+        title: gameConfig.title
+      });
+      const visualPromptPack = createVisualPromptPack({
+        idea: input.idea,
+        engineType: "phaser2d",
+        productionBrief: gameProductionBrief,
+        packId: `${input.projectId}-visual-v1`,
+        styleSheet
+      });
+      const uiAssetKit = createUiAssetKit({
+        idea: input.idea,
+        productionBrief: gameProductionBrief,
+        packId: `${input.projectId}-ui-v1`
+      });
+      const audioPromptPack = createAudioPromptPack({
+        idea: input.idea,
+        productionBrief: gameProductionBrief,
+        packId: `${input.projectId}-audio-v1`
+      });
+      const sceneMapPlan = createSceneMapPlan({
+        engineType: "phaser2d",
+        templateFamily: classification.templateFamily
+      });
       const runtimeAssetReport = createRuntimeAssetReport(assetPack);
-      const visualAssetReport = createVisualAssetReport(assetPack);
-      const playableDirector = createPlayableDirector(gameConfig, gameHooks, runtimeAssetReport);
+      const visualAssetReport = await createVisualAssetReport(assetPack);
+      const playableDirector = createPlayableDirector(gameConfig, gameHooks, runtimeAssetReport, profileId);
       const verificationReport = createBrowserVerificationReport(runtimeAssetReport, playableDirector);
       const deliveryReady = verificationReport.passed && visualAssetReport.ready;
       const developerBrief = createDeveloperBrief(input, gameConfig, playableDirector);
@@ -582,6 +725,15 @@ export function createGenerationService(options: GenerationServiceOptions = {}) 
           }
         ])
         .concat(createDeliveryArtifacts(playableDirector, runtimeAssetReport, visualAssetReport, verificationReport))
+        .concat(
+          createProductionArtifacts({
+            gameProductionBrief,
+            visualPromptPack,
+            uiAssetKit,
+            audioPromptPack,
+            sceneMapPlan
+          })
+        )
         .concat(createDeveloperBriefArtifacts(developerBrief))
         .concat(createCoverPosterArtifacts(coverPoster))
         .concat(
@@ -698,16 +850,97 @@ function normalizeMatureGameBrief(raw: unknown, fallback: MatureGameBrief): Matu
 }
 
 function createFallbackAssetCandidates(input: GenerateAssetCandidatesInput): AssetCandidates {
-  const brief = input.designBrief ?? createFallbackDesignBrief(input);
-  const commonStyle = brief.developerPrompt.includes("cat") || input.idea.includes("猫") ? "cute sci-fi" : "arcade sci-fi";
+  const profile = getPhaserAssetProfile(input.templateFamily);
   return withCandidatePreviews({
     candidates: [
-      createCandidate("background", "world.background", "image", labelForAssetSlot("background", input.idea), promptForAssetSlot("background", input.idea), commonStyle, "游戏背景", ["image/*"]),
-      createCandidate("player", "player.ship", "image", labelForAssetSlot("player", input.idea), promptForAssetSlot("player", input.idea), commonStyle, "玩家角色", ["image/*"]),
-      createCandidate("hazard", "hazard.enemy", "image", labelForAssetSlot("hazard", input.idea), promptForAssetSlot("hazard", input.idea), commonStyle, "危险物", ["image/*"]),
-      createCandidate("collectible", "item.collectible", "image", labelForAssetSlot("collectible", input.idea), promptForAssetSlot("collectible", input.idea), commonStyle, "得分道具", ["image/*"])
+      createCandidate(
+        "background",
+        profile.slots.background.assetKey,
+        "image",
+        profile.slots.background.label,
+        buildProfileSlotPrompt(input.idea, input.templateFamily, "background"),
+        profile.slots.background.composition,
+        profile.slots.background.purpose,
+        ["image/*"]
+      ),
+      createCandidate(
+        "player",
+        profile.slots.player.assetKey,
+        "image",
+        profile.slots.player.label,
+        buildProfileSlotPrompt(input.idea, input.templateFamily, "player"),
+        profile.slots.player.composition,
+        profile.slots.player.purpose,
+        ["image/*"]
+      ),
+      createCandidate(
+        "hazard",
+        profile.slots.hazard.assetKey,
+        "image",
+        profile.slots.hazard.label,
+        buildProfileSlotPrompt(input.idea, input.templateFamily, "hazard"),
+        profile.slots.hazard.composition,
+        profile.slots.hazard.purpose,
+        ["image/*"]
+      ),
+      createCandidate(
+        "collectible",
+        profile.slots.collectible.assetKey,
+        "image",
+        profile.slots.collectible.label,
+        buildProfileSlotPrompt(input.idea, input.templateFamily, "collectible"),
+        profile.slots.collectible.composition,
+        profile.slots.collectible.purpose,
+        ["image/*"]
+      )
     ]
   });
+}
+
+function createProfileAssetCandidates(input: GenerateAssetCandidatesInput): AssetCandidates {
+  const profile = getPhaserAssetProfile(input.templateFamily);
+  return withCandidatePreviews({
+    candidates: requestedImageSlots(input.requestedSlots).map((slotName) => {
+      const slot = profile.slots[slotName];
+      return createCandidate(
+        slot.slot,
+        slot.assetKey,
+        "image",
+        slot.label,
+        buildProfileSlotPrompt(input.idea, input.templateFamily, slot.slot),
+        "profile-specific game asset",
+        slot.purpose,
+        ["image/*"]
+      );
+    })
+  });
+}
+
+function requestedImageSlots(slots?: RuntimeImageSlot[]): RuntimeImageSlot[] {
+  const allowed: RuntimeImageSlot[] = ["background", "player", "hazard", "collectible"];
+  if (!slots?.length) return allowed;
+  const requested = slots.filter((slot): slot is RuntimeImageSlot => allowed.includes(slot));
+  return requested.length > 0 ? Array.from(new Set(requested)) : allowed;
+}
+
+function buildProfileSlotPrompt(idea: string, templateFamily: TemplateFamily, slotName: RuntimeImageSlot): string {
+  const slot = getPhaserSlotProfile(templateFamily, slotName);
+  const subject = refineAssetSubjectForIdea(idea, slotName, slot.subject);
+  const output =
+    slot.promptType === "background"
+      ? "Output: 16:9 gameplay background or tileable map, environment only, no foreground gameplay subjects."
+      : "Output: single isolated centered runtime sprite, transparent PNG or clean chroma key background, no scene background.";
+  return [
+    "Image generation prompt",
+    `game idea: ${idea}`,
+    `template: ${templateFamily}`,
+    `assetKey: ${slot.assetKey}`,
+    `slot: ${slot.slot}`,
+    `subject: ${subject}`,
+    slot.composition,
+    output,
+    `negative constraints: ${slot.negativePrompt}`
+  ].join("; ");
 }
 
 function createCandidate(
@@ -737,17 +970,26 @@ function createCandidate(
 
 function finalizeAssetCandidatePrompts(
   assetCandidates: AssetCandidates,
-  input: Pick<GenerateAssetCandidatesInput, "idea" | "designBrief" | "answers"> | Pick<RegenerateAssetCandidateInput, "idea">
+  input:
+    | Pick<GenerateAssetCandidatesInput, "idea" | "designBrief" | "answers" | "visualPromptPack">
+    | Pick<RegenerateAssetCandidateInput, "idea" | "visualPromptPack" | "slotRevisionId">
 ): AssetCandidates {
   return {
     candidates: assetCandidates.candidates.map((candidate) => {
-      const modelPrompt = candidate.prompt;
-      const finalImagePrompt = buildSlotSpecificImagePrompt(candidate, {
-        idea: input.idea,
-        designBrief: "designBrief" in input ? input.designBrief : undefined,
-        answers: "answers" in input ? input.answers : undefined,
-        modelPrompt
-      });
+      const basePrompt = candidate.generationParams?.baseFinalPrompt ?? candidate.prompt;
+      const modelPrompt = normalizeString(basePrompt, candidate.prompt);
+      const packPrompt = findVisualPromptForCandidate(input.visualPromptPack, candidate);
+      const legacySlotPrompt = buildProfileAwareSlotSpecificImagePrompt(candidate, {
+          idea: input.idea,
+          templateFamily: findTemplateFamilyForCandidate(candidate, input.visualPromptPack),
+          designBrief: "designBrief" in input ? input.designBrief : undefined,
+          answers: "answers" in input ? input.answers : undefined,
+          modelPrompt
+        });
+      const finalImagePrompt = appendRegenerationVariation(
+        packPrompt?.finalImagePrompt ?? legacySlotPrompt,
+        candidate.generationParams?.regenerationVariation
+      );
       const promptSanitized = didSanitizeImagePrompt(candidate, {
         designBrief: "designBrief" in input ? input.designBrief : undefined,
         answers: "answers" in input ? input.answers : undefined,
@@ -766,11 +1008,16 @@ function finalizeAssetCandidatePrompts(
         prompt: finalImagePrompt,
         generationParams: {
           ...(candidate.generationParams ?? {}),
+          baseFinalPrompt: basePrompt,
           modelPrompt,
           modelAssetPrompt: modelPrompt,
+          promptPackId: input.visualPromptPack?.packId ?? "",
+          promptSource: packPrompt ? "visual-prompt-pack" : "slot-specific-fallback",
           finalPrompt: finalImagePrompt,
           finalImagePrompt,
-          displayPromptSummary: buildAssetPromptSummary(candidate.slot, input.idea),
+          negativePrompt: packPrompt?.negativePrompt ?? "",
+          runtimeUse: packPrompt?.runtimeUse ?? "runtime_after_confirmation",
+          displayPromptSummary: buildProfileAwareAssetPromptSummary(candidate.slot, input.idea, findTemplateFamilyForCandidate(candidate, input.visualPromptPack)),
           promptSanitized,
           ...(removedPromptContamination ? { removedPromptContamination } : {})
         }
@@ -779,13 +1026,133 @@ function finalizeAssetCandidatePrompts(
   };
 }
 
+function findVisualPromptForCandidate(
+  visualPromptPack: VisualPromptPack | undefined,
+  candidate: AssetCandidate
+): VisualPromptPack["prompts"][number] | undefined {
+  if (!visualPromptPack) return undefined;
+  return visualPromptPack.prompts.find(
+    (prompt) => prompt.assetKey === candidate.assetKey || prompt.slot === candidate.slot
+  );
+}
+
+function findTemplateFamilyForCandidate(
+  candidate: AssetCandidate,
+  visualPromptPack?: VisualPromptPack
+): TemplateFamily | undefined {
+  const runtimePrompt = visualPromptPack?.prompts.find(
+    (prompt) => prompt.assetKey === candidate.assetKey || prompt.slot === candidate.slot
+  );
+  const key = runtimePrompt?.assetKey ?? candidate.assetKey;
+  if (key === "world.path" || key === "player.tower") return "tower_defense";
+  if (key === "world.tiles" || key === "player.cursor" || key === "hazard.block") return "grid_logic";
+  if (key === "player.hero" || key === "hazard.spike") return "platformer";
+  if (key === "player.panel" || key === "hazard.timer") return "ui_heavy";
+  if (key === "world.background" || key === "player.ship") return "top_down";
+  return undefined;
+}
+
+function buildProfileAwareSlotSpecificImagePrompt(
+  candidate: AssetCandidate,
+  input: {
+    idea: string;
+    templateFamily?: TemplateFamily;
+    designBrief?: DesignBrief;
+    answers?: UserAnswer[];
+    modelPrompt?: string;
+  }
+): string {
+  if (input.templateFamily && ["background", "player", "hazard", "collectible"].includes(candidate.slot)) {
+    return buildProfileSlotPrompt(input.idea, input.templateFamily, candidate.slot as RuntimeImageSlot);
+  }
+  return buildSlotSpecificImagePrompt(candidate, input);
+}
+
+function buildProfileAwareAssetPromptSummary(
+  slot: AssetCandidate["slot"],
+  idea: string,
+  templateFamily?: TemplateFamily
+): string {
+  if (templateFamily && ["background", "player", "hazard", "collectible"].includes(slot)) {
+    const profileSlot = getPhaserSlotProfile(templateFamily, slot as RuntimeImageSlot);
+    return `${profileSlot.purpose}: ${profileSlot.subject}`;
+  }
+  return buildAssetPromptSummary(slot, idea);
+}
+
+function appendRegenerationVariation(prompt: string, variation: unknown): string {
+  if (typeof variation !== "string" || !variation.trim()) return prompt;
+  return prompt.includes(variation) ? prompt : `${prompt}\n${variation}`;
+}
+
+function nextSlotRevisionId(candidate: AssetCandidate): string {
+  const current = String(candidate.generationParams?.slotRevisionId ?? "");
+  const matched = current.match(/rev-(\d+)/);
+  const nextNumber = matched ? Number(matched[1]) + 1 : 1;
+  return `rev-${nextNumber}`;
+}
+
+function applyRegenerationPromptVariation(candidate: AssetCandidate, slotRevisionId: string): AssetCandidate {
+  const variation = buildRegenerationVariationInstruction(candidate.slot, slotRevisionId);
+  const previousPrompt =
+    candidate.generationParams?.baseFinalPrompt ??
+    candidate.generationParams?.finalImagePrompt ??
+    candidate.generationParams?.finalPrompt ??
+    candidate.prompt;
+  return {
+    ...candidate,
+    prompt: `${previousPrompt}\n${variation}`,
+    generationParams: {
+      ...(candidate.generationParams ?? {}),
+      previousFinalPrompt: previousPrompt,
+      baseFinalPrompt: previousPrompt,
+      slotRevisionId,
+      regenerationVariation: variation
+    }
+  };
+}
+
+function buildRegenerationVariationInstruction(slot: AssetCandidate["slot"], slotRevisionId: string): string {
+  const revisionNumber = Number(slotRevisionId.match(/rev-(\d+)/)?.[1] ?? 1);
+  const variants = {
+    background: [
+      "Variation revision: use a deeper nebula layer, different star density, and clearer empty play space.",
+      "Variation revision: use distant planets on the horizon, cooler color balance, and wider parallax depth.",
+      "Variation revision: use cosmic dust lanes and brighter far stars while keeping the scene free of foreground objects."
+    ],
+    player: [
+      "Variation revision: change the silhouette, wing shape, cockpit position, and accent colors while keeping one centered subject.",
+      "Variation revision: create a sleeker alternate profile with different fins, engine shape, and neon accents.",
+      "Variation revision: create a chunkier readable hero silhouette with a different nose, thrusters, and color layout."
+    ],
+    hazard: [
+      "Variation revision: change the outline, surface cracks, threat color, and silhouette while keeping one centered dangerous subject.",
+      "Variation revision: make a sharper alternate hazard with different spikes, craters, and warning glow.",
+      "Variation revision: make a heavier alternate obstacle with asymmetric shape and high-contrast damage marks."
+    ],
+    collectible: [
+      "Variation revision: change the reward shape, inner glow pattern, color accent, and silhouette while keeping one centered pickup.",
+      "Variation revision: make a clearer alternate pickup with a different star/orb outline and brighter readable center.",
+      "Variation revision: make a compact alternate reward with different glow ring, core shape, and color contrast."
+    ],
+    cover: [
+      "Variation revision: use a new key-art composition with different framing and lighting.",
+      "Variation revision: use a stronger title-safe composition with different visual rhythm.",
+      "Variation revision: use a more dramatic promotional layout while preserving the same game theme."
+    ],
+    bgm: ["Variation revision: change the rhythmic motif and instrumentation."],
+    sfx: ["Variation revision: change the transient, pitch, and tail."]
+  } satisfies Record<AssetCandidate["slot"], string[]>;
+  const pool = variants[slot] ?? variants.cover;
+  return pool[(revisionNumber - 1) % pool.length];
+}
+
 function buildAssetPromptSummary(slot: AssetCandidate["slot"], idea: string): string {
-  const concept = idea.trim() || "当前游戏创意";
-  if (slot === "background") return `生成 ${concept} 的 16:9 游戏背景图，不包含角色、敌人、UI 或文字。`;
-  if (slot === "player") return `生成 ${concept} 的玩家主角单体精灵，主体清晰居中，和敌人、收集物明显不同。`;
-  if (slot === "hazard") return `生成 ${concept} 的危险物或敌人单体精灵，外形有威胁感，和主角、收集物明显区分。`;
-  if (slot === "collectible") return `生成 ${concept} 的奖励收集物单体精灵，小尺寸也能辨认，和危险物明显不同。`;
-  return `生成 ${concept} 的游戏素材。`;
+  if (slot === "background") return "空间背景图：只生成星空、星云、远景行星等环境，不包含飞船、角色、敌人、收集物、UI 或文字。";
+  if (slot === "player") return `玩家主角精灵：${labelForAssetSlot(slot, idea)} 单体居中，绿幕背景，不能包含危险物或收集物。`;
+  if (slot === "hazard") return `危险物精灵：${labelForAssetSlot(slot, idea)} 单体居中，绿幕背景，不能包含玩家飞船或奖励物。`;
+  if (slot === "collectible") return `收集物精灵：${labelForAssetSlot(slot, idea)} 单体居中，绿幕背景，不能包含玩家飞船、陨石或敌人。`;
+  return "游戏素材：按槽位生成单一用途素材。";
 }
 
 function buildSlotSpecificImagePrompt(
@@ -815,7 +1182,6 @@ function buildSlotSpecificImagePrompt(
     `asset title: ${labelForAssetSlot(candidate.slot, input.idea)}`,
     `slot: ${candidate.slot}`,
     `assetKey: ${assetKeyForSlot(candidate.slot)}`,
-    `visual concept: ${input.idea}`,
     answerSummary ? `visual notes: ${answerSummary}` : "",
     modelPrompt,
     slotInstruction,
@@ -884,6 +1250,7 @@ function labelForAssetSlot(slot: AssetCandidate["slot"], idea: string): string {
   }
   if (slot === "collectible") {
     if (idea.includes("鱼干")) return "鱼干收集物";
+    if (idea.includes("能量")) return "能量收集物";
     if (idea.includes("星星")) return "星星收集物";
     if (idea.includes("金币")) return "金币收集物";
     return "收集物";
@@ -892,20 +1259,19 @@ function labelForAssetSlot(slot: AssetCandidate["slot"], idea: string): string {
 }
 
 function promptForAssetSlot(slot: AssetCandidate["slot"], idea: string): string {
-  const concept = idea.trim() || "WOW Game 2D demo";
   if (slot === "background") {
-    return `根据玩家创意「${concept}」生成游戏背景：16:9 宽幅场景图，突出世界观和空间层次，不包含主角、敌人、UI、文字`;
+    return "生成空间背景图：深空星场、星云、远景行星、宇宙尘埃、空旷可读的游戏区域，16:9 宽幅场景图，不画飞船、角色、敌人、收集物、UI 或文字";
   }
   if (slot === "player") {
-    return `根据玩家创意「${concept}」生成玩家主角精灵：主体清晰居中，和危险物/收集物明显不同，适合 2D 游戏操作`;
+    return `生成玩家主角精灵：${labelForAssetSlot(slot, idea)}，单个主体清晰居中，绿幕背景，和危险物/收集物明显不同，适合 2D 游戏操作`;
   }
   if (slot === "hazard") {
-    return `根据玩家创意「${concept}」生成危险物或敌人精灵：必须表现威胁感，形状和颜色区别于主角与收集物`;
+    return `生成危险物或敌人精灵：${labelForAssetSlot(slot, idea)}，单个主体清晰居中，绿幕背景，必须表现威胁感，不能包含玩家飞船或收集物`;
   }
   if (slot === "collectible") {
-    return `根据玩家创意「${concept}」生成收集物精灵：必须表现奖励感，小尺寸也能辨认，区别于危险物`;
+    return `生成收集物精灵：${labelForAssetSlot(slot, idea)}，单个主体清晰居中，绿幕背景，必须表现奖励感，小尺寸也能辨认，不能包含玩家飞船、陨石或敌人`;
   }
-  return `根据玩家创意「${concept}」生成游戏素材`;
+  return "生成单一用途游戏素材";
 }
 
 function shouldReplaceGenericAssetText(text: string | undefined, slot: AssetCandidate["slot"]): boolean {
@@ -957,26 +1323,37 @@ function includesAny(text: string, tokens: string[]): boolean {
   return tokens.some((token) => text.includes(token));
 }
 
-function normalizeAssetCandidates(raw: unknown, fallback: AssetCandidates): AssetCandidates {
+function normalizeAssetCandidates(
+  raw: unknown,
+  fallback: AssetCandidates,
+  input?: Pick<GenerateAssetCandidatesInput, "templateFamily" | "requestedSlots">
+): AssetCandidates {
   const value = asRecord(raw);
   const rawCandidates = Array.isArray(value.candidates) ? value.candidates : [];
   const candidates = rawCandidates
     .map((item, index) => normalizeAssetCandidate(item, fallback.candidates[index]))
     .filter((item): item is AssetCandidate => Boolean(item));
-  return normalizeCoreImageCandidates(candidates.length > 0 ? candidates : fallback.candidates, fallback);
+  return normalizeCoreImageCandidates(candidates.length > 0 ? candidates : fallback.candidates, fallback, input);
 }
 
-function normalizeCoreImageCandidates(input: AssetCandidate[] | AssetCandidates, fallback: AssetCandidates): AssetCandidates {
-  const candidates = Array.isArray(input) ? input : input.candidates;
-  const requiredSlots: Array<AssetCandidate["slot"]> = ["background", "player", "hazard", "collectible"];
+function normalizeCoreImageCandidates(
+  assetInput: AssetCandidate[] | AssetCandidates,
+  fallback: AssetCandidates,
+  input?: Pick<GenerateAssetCandidatesInput, "templateFamily" | "requestedSlots">
+): AssetCandidates {
+  const candidates = Array.isArray(assetInput) ? assetInput : assetInput.candidates;
+  const requiredSlots = requestedImageSlots(input?.requestedSlots);
   const bySlot = new Map<AssetCandidate["slot"], AssetCandidate>();
   for (const candidate of candidates) {
-    if (!requiredSlots.includes(candidate.slot)) continue;
+    if (!isRuntimeImageSlot(candidate.slot) || !requiredSlots.includes(candidate.slot)) continue;
     const fallbackCandidate = fallback.candidates.find((item) => item.slot === candidate.slot);
+    const assetKey = input?.templateFamily
+      ? getAssetKeyForTemplateSlot(input.templateFamily, candidate.slot)
+      : fallbackCandidate?.assetKey ?? assetKeyForSlot(candidate.slot);
     bySlot.set(candidate.slot, {
       ...candidate,
       type: "image",
-      assetKey: assetKeyForSlot(candidate.slot),
+      assetKey,
       label: shouldReplaceGenericAssetText(candidate.label, candidate.slot)
         ? fallbackCandidate?.label ?? candidate.label
         : candidate.label,
@@ -988,17 +1365,23 @@ function normalizeCoreImageCandidates(input: AssetCandidate[] | AssetCandidates,
     });
   }
   for (const candidate of fallback.candidates) {
-    if (!requiredSlots.includes(candidate.slot) || bySlot.has(candidate.slot)) continue;
+    if (!isRuntimeImageSlot(candidate.slot) || !requiredSlots.includes(candidate.slot) || bySlot.has(candidate.slot)) continue;
     bySlot.set(candidate.slot, {
       ...candidate,
       type: "image",
-      assetKey: assetKeyForSlot(candidate.slot),
+      assetKey: input?.templateFamily
+        ? getAssetKeyForTemplateSlot(input.templateFamily, candidate.slot)
+        : candidate.assetKey,
       acceptedFileTypes: ["image/*"]
     });
   }
   return {
     candidates: requiredSlots.map((slot) => bySlot.get(slot)).filter((item): item is AssetCandidate => Boolean(item))
   };
+}
+
+function isRuntimeImageSlot(slot: AssetCandidate["slot"]): slot is RuntimeImageSlot {
+  return slot === "background" || slot === "player" || slot === "hazard" || slot === "collectible";
 }
 
 function normalizeAssetCandidate(raw: unknown, fallback?: AssetCandidate): AssetCandidate | null {
@@ -1047,7 +1430,9 @@ async function generateCandidateMedia(
   assetCandidates: AssetCandidates,
   templateFamily: TemplateFamily,
   mediaGateway: ReturnType<typeof createMediaGateway>,
-  input: Pick<GenerateAssetCandidatesInput, "idea" | "designBrief" | "answers"> | Pick<RegenerateAssetCandidateInput, "idea">
+  input:
+    | Pick<GenerateAssetCandidatesInput, "idea" | "designBrief" | "answers" | "visualPromptPack">
+    | Pick<RegenerateAssetCandidateInput, "idea" | "visualPromptPack" | "slotRevisionId">
 ): Promise<AssetCandidates> {
   const withPreviews = withCandidatePreviews(finalizeAssetCandidatePrompts(assetCandidates, input));
   const candidates = await Promise.all(
@@ -1094,14 +1479,7 @@ function createCandidateAssetRequirement(
     style: candidate.style,
     generationMode: "model",
     copyrightStatus: "generated",
-    spec: [
-      `${candidate.label} image asset`,
-      idea ? `user idea: ${idea}` : "",
-      transparent
-        ? "solid chroma green background, isolated centered sprite, readable silhouette, no shadow, no glow, no ground, no border, no checkerboard; use chroma magenta background if the subject is green"
-        : "wide 16:9 gameplay background, no foreground player, no UI text",
-      `slot: ${candidate.slot}`
-    ].join("; "),
+    spec: candidate.prompt,
     status: "missing",
     prompt: candidate.prompt,
     acceptedFileTypes: candidate.acceptedFileTypes,
@@ -1247,10 +1625,56 @@ function createCreativeArtifacts(input: GeneratePlayableInput) {
   return artifacts;
 }
 
+function createProductionArtifacts(input: {
+  gameProductionBrief: GameProductionBrief;
+  visualPromptPack: VisualPromptPack;
+  uiAssetKit: UiAssetKit;
+  audioPromptPack: AudioPromptPack;
+  sceneMapPlan: SceneMapPlan;
+}): PipelineArtifact[] {
+  return [
+    {
+      stage: "game-production-brief" as const,
+      fileName: "game-production-brief.json",
+      title: "Game Production Brief",
+      content: input.gameProductionBrief,
+      format: "json" as const
+    },
+    {
+      stage: "visual-prompt-pack" as const,
+      fileName: "visual-prompt-pack.json",
+      title: "Visual Prompt Pack",
+      content: input.visualPromptPack,
+      format: "json" as const
+    },
+    {
+      stage: "ui-asset-kit" as const,
+      fileName: "ui-asset-kit.json",
+      title: "UI Asset Kit",
+      content: input.uiAssetKit,
+      format: "json" as const
+    },
+    {
+      stage: "audio-prompt-pack" as const,
+      fileName: "audio-prompt-pack.json",
+      title: "Audio Prompt Pack",
+      content: input.audioPromptPack,
+      format: "json" as const
+    },
+    {
+      stage: "scene-map-plan" as const,
+      fileName: "scene-map-plan.json",
+      title: "Scene Map Plan",
+      content: input.sceneMapPlan,
+      format: "json" as const
+    }
+  ];
+}
+
 function createDeliveryArtifacts(
   playableDirector: PlayableDirector,
   runtimeAssetReport: RuntimeAssetReport,
-  visualAssetReport: ReturnType<typeof createVisualAssetReport>,
+  visualAssetReport: Awaited<ReturnType<typeof createVisualAssetReport>>,
   verificationReport: BrowserVerificationReport
 ) {
   return [
@@ -1819,7 +2243,12 @@ function normalizeGameHooks(raw: unknown, fallback: GameHooks): GameHooks {
     attackRules: normalizeAttackRules(value.attackRules, fallback.attackRules),
     stageGoals: normalizeStageGoals(value.stageGoals, fallback.stageGoals ?? []),
     impactRules: normalizeImpactRules(value.impactRules, fallback.impactRules),
-    encounterTimeline: normalizeEncounterTimeline(value.encounterTimeline, fallback.encounterTimeline ?? [])
+    encounterTimeline: normalizeEncounterTimeline(value.encounterTimeline, fallback.encounterTimeline ?? []),
+    scoreTiers: normalizeScoreTiers(
+      value.scoreTiers,
+      fallback.scoreTiers,
+      normalizeNumber(asRecord(value.winCondition).target, fallback.winCondition.target)
+    )
   };
   return normalized;
 }
@@ -1965,6 +2394,11 @@ function normalizeCommercialHooks(hooks: GameHooks, config: GameConfig, designTe
     hooks.enemyArchetypes && hooks.enemyArchetypes.length >= 2
       ? hooks.enemyArchetypes
       : defaultEnemyArchetypes(config, { wantsExplosions, wantsShooting, wantsChase });
+  const enrichedEnemyArchetypes = ensureEnemyPressureVariety(
+    enemyArchetypes,
+    config,
+    { wantsExplosions, wantsShooting, wantsChase }
+  );
   const attackRules = hooks.attackRules ?? {
     contactDamage: 1,
     dashDamage: config.templateFamily === "top_down" ? 0 : 1,
@@ -1984,12 +2418,69 @@ function normalizeCommercialHooks(hooks: GameHooks, config: GameConfig, designTe
   };
   return {
     ...hooks,
-    enemyArchetypes,
+    enemyArchetypes: enrichedEnemyArchetypes,
     attackRules,
-    stageGoals: hooks.stageGoals?.length ? hooks.stageGoals : defaultStageGoals(config, enemyArchetypes),
+    stageGoals: ensureThreeStageGoals(hooks.stageGoals, config, enrichedEnemyArchetypes),
     impactRules,
-    encounterTimeline: hooks.encounterTimeline?.length ? hooks.encounterTimeline : defaultEncounterTimeline(config)
+    encounterTimeline: ensureEncounterTimeline(hooks.encounterTimeline, config),
+    feedbackRules: {
+      ...(hooks.feedbackRules ?? {
+        particleCount: 22,
+        screenShakeIntensity: 0.018,
+        collectBurstCount: 16
+      }),
+      particleCount: Math.max(hooks.feedbackRules?.particleCount ?? 22, 22),
+      screenShakeIntensity: Math.max(hooks.feedbackRules?.screenShakeIntensity ?? 0.018, 0.018),
+      collectBurstCount: Math.max(hooks.feedbackRules?.collectBurstCount ?? 16, 16),
+      floatingScore: hooks.feedbackRules?.floatingScore ?? true,
+      comboText: hooks.feedbackRules?.comboText ?? true,
+      audioCueKeys: ensureAudioCueKeys(hooks.feedbackRules?.audioCueKeys)
+    }
   };
+}
+
+function ensureEnemyPressureVariety(
+  enemies: NonNullable<GameHooks["enemyArchetypes"]>,
+  config: GameConfig,
+  flags: { wantsExplosions: boolean; wantsShooting: boolean; wantsChase: boolean }
+): NonNullable<GameHooks["enemyArchetypes"]> {
+  const merged = [...enemies];
+  const defaults = defaultEnemyArchetypes(config, flags);
+  for (const enemy of defaults) {
+    if (new Set(merged.map((item) => item.type)).size >= 2 && merged.length >= 3) break;
+    if (!merged.some((item) => item.type === enemy.type)) merged.push(enemy);
+  }
+  return merged.slice(0, 4);
+}
+
+function ensureThreeStageGoals(
+  stages: GameHooks["stageGoals"],
+  config: GameConfig,
+  enemies: NonNullable<GameHooks["enemyArchetypes"]>
+): NonNullable<GameHooks["stageGoals"]> {
+  const defaults = defaultStageGoals(config, enemies);
+  const byObjective = new Map((stages ?? []).map((stage) => [stage.objective, stage]));
+  return defaults.map((stage) => byObjective.get(stage.objective) ?? stage);
+}
+
+function ensureEncounterTimeline(
+  timeline: GameHooks["encounterTimeline"],
+  config: GameConfig
+): NonNullable<GameHooks["encounterTimeline"]> {
+  const required = defaultEncounterTimeline(config);
+  const current = [...(timeline ?? [])];
+  for (const event of required) {
+    if (!current.some((item) => item.event === event.event)) current.push(event);
+  }
+  return current
+    .sort((a, b) => a.atMs - b.atMs)
+    .slice(0, 6);
+}
+
+function ensureAudioCueKeys(keys: string[] | undefined): string[] {
+  const required = ["sfx.collect", "sfx.hit", "sfx.win", "sfx.lose", "sfx.warning"];
+  const set = new Set([...(keys ?? []), ...required]);
+  return Array.from(set);
 }
 
 function defaultEnemyArchetypes(
@@ -2132,6 +2623,8 @@ function normalizeStageGoals(value: unknown, fallback: NonNullable<GameHooks["st
     .filter((item) => typeof item === "object" && item !== null)
     .map((item, index) => {
       const record = asRecord(item);
+      const bgmRaw = normalizeNumber(record.bgmIntensity, index);
+      const bgmIntensity = clampNumber(Math.round(bgmRaw), 0, 3) as 0 | 1 | 2 | 3;
       return {
         id: normalizeSlug(record.id, `stage_${index + 1}`),
         label: normalizeString(record.label, index === 0 ? "Learn controls" : "Survive the pressure"),
@@ -2140,10 +2633,69 @@ function normalizeStageGoals(value: unknown, fallback: NonNullable<GameHooks["st
         objective: normalizeEnum(record.objective, "collect" as const, ["learn_controls", "collect", "survive", "finale"]),
         target: clampNumber(normalizeNumber(record.target, 1), 0, 99),
         enemyMix: normalizeStringArray(record.enemyMix, []),
-        rewardPacing: normalizeEnum(record.rewardPacing, "normal" as const, ["slow", "normal", "burst"])
+        rewardPacing: normalizeEnum(record.rewardPacing, "normal" as const, ["slow", "normal", "burst"]),
+        enemySpawnDelta: clampNumber(normalizeNumber(record.enemySpawnDelta, index), 0, 12),
+        speedMultiplier: clampNumber(normalizeNumber(record.speedMultiplier, 1 + index * 0.15), 0.5, 2.5),
+        bgmIntensity
       };
     });
   return items.length > 0 ? items : fallback;
+}
+
+function normalizeScoreTiers(
+  value: unknown,
+  fallback: GameHooks["scoreTiers"],
+  winTarget: number
+): GameHooks["scoreTiers"] {
+  const record = asRecord(value);
+  const hasInput = Object.keys(record).length > 0;
+  if (!hasInput && !fallback) return undefined;
+  const goldRecord = asRecord(record.gold ?? fallback?.gold);
+  const silverRecord = asRecord(record.silver ?? fallback?.silver);
+  const bronzeRecord = asRecord(record.bronze ?? fallback?.bronze);
+  const targetDuration = clampNumber(
+    normalizeNumber(record.targetDurationMs, fallback?.targetDurationMs ?? 75000),
+    20000,
+    180000
+  );
+  const goldDurationCap = clampNumber(
+    normalizeNumber(goldRecord.maxDurationMs, fallback?.gold.maxDurationMs ?? targetDuration),
+    15000,
+    targetDuration
+  );
+  const winScore = Math.max(1, Math.round(winTarget));
+  const goldMin = clampNumber(
+    normalizeNumber(goldRecord.minScore, fallback?.gold.minScore ?? winScore),
+    1,
+    winScore * 4
+  );
+  const silverMin = clampNumber(
+    normalizeNumber(silverRecord.minScore, fallback?.silver.minScore ?? Math.max(1, Math.round(winScore * 0.6))),
+    1,
+    goldMin
+  );
+  const bronzeMin = clampNumber(
+    normalizeNumber(bronzeRecord.minScore, fallback?.bronze.minScore ?? Math.max(1, Math.round(winScore * 0.3))),
+    1,
+    silverMin
+  );
+  const goldDeath = clampNumber(
+    normalizeNumber(goldRecord.maxDeathCount, fallback?.gold.maxDeathCount ?? 0),
+    0,
+    6
+  );
+  const silverDeath = clampNumber(
+    normalizeNumber(silverRecord.maxDeathCount, fallback?.silver.maxDeathCount ?? Math.max(1, goldDeath + 1)),
+    goldDeath,
+    8
+  );
+  return {
+    targetDurationMs: targetDuration,
+    gold: { minScore: goldMin, maxDeathCount: goldDeath, maxDurationMs: goldDurationCap },
+    silver: { minScore: silverMin, maxDeathCount: silverDeath },
+    bronze: { minScore: bronzeMin },
+    rationale: normalizeString(record.rationale, fallback?.rationale ?? "Gold rewards a perfect run, silver fits a skilled retry, bronze recognises completion.")
+  };
 }
 
 function normalizeImpactRules(value: unknown, fallback?: GameHooks["impactRules"]): NonNullable<GameHooks["impactRules"]> | undefined {
@@ -2413,8 +2965,13 @@ function sanitizeGameConfig(config: GameConfig, assetPack: AssetPack): GameConfi
 export function createPlayableDirector(
   gameConfig: GameConfig,
   gameHooks: GameHooks,
-  runtimeAssetReport: RuntimeAssetReport
+  runtimeAssetReport: RuntimeAssetReport,
+  profileId = selectGameDevPromptProfile({
+    idea: `${gameConfig.title} ${gameConfig.pitch} ${gameConfig.playerGoal}`,
+    templateFamily: gameConfig.templateFamily
+  })
 ): PlayableDirector {
+  const profileGameplayPlan = buildProfileGameplayPlan(profileId);
   const coreAssets = Object.fromEntries(
     runtimeAssetReport.slots.map((slot) => [slot.slot, slot.assetKey])
   ) as PlayableDirector["coreAssets"];
@@ -2467,6 +3024,11 @@ export function createPlayableDirector(
       ];
   return {
     templateFamily: gameConfig.templateFamily,
+    profileId,
+    genreMechanics: profileGameplayPlan.genreMechanics,
+    specialActions: profileGameplayPlan.specialActions,
+    spawnTimeline: profileGameplayPlan.spawnTimeline,
+    progressionRules: profileGameplayPlan.progressionRules,
     playerGoal: gameConfig.playerGoal,
     coreAssets,
     enemyArchetypes,
@@ -2749,7 +3311,7 @@ function createMediaGatewayOptions(
   env: Record<string, string | undefined>,
   fetcher?: DeepSeekExecutorOptions["fetcher"]
 ): MediaGatewayOptions {
-  if (env.IMAGE_PROVIDER !== "agnes") return {};
+  if ((env.IMAGE_PROVIDER ?? "").trim().toLowerCase() !== "agnes") return {};
   return {
     imageProvider: createAgnesImageProvider({
       apiKey: env.IMAGE_API_KEY,

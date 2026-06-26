@@ -172,4 +172,26 @@ describe("mature game experience generation", () => {
 
     expect(result.project.gameHooks.attackRules?.explosionRadius).toBeLessThanOrEqual(96);
   });
+
+  it("provides a 3-stage platformer fallback with score tiers and hidden route", () => {
+    const project = runMockPipeline("做一个横版平台跳跃收集金币到终点的森林游戏");
+
+    expect(project.gameHooks.stageGoals?.length).toBe(3);
+    expect(project.gameHooks.stageGoals?.[0]).toMatchObject({ objective: "learn_controls", bgmIntensity: 0 });
+    expect(project.gameHooks.stageGoals?.[2]).toMatchObject({ objective: "finale" });
+    expect(project.gameHooks.stageGoals?.[2].speedMultiplier).toBeGreaterThan(1);
+
+    expect(project.gameHooks.scoreTiers).toBeDefined();
+    expect(project.gameHooks.scoreTiers?.gold.maxDeathCount).toBe(0);
+    expect(project.gameHooks.scoreTiers?.gold.minScore).toBeGreaterThanOrEqual(
+      project.gameHooks.scoreTiers!.silver.minScore
+    );
+    expect(project.gameHooks.scoreTiers?.silver.minScore).toBeGreaterThanOrEqual(
+      project.gameHooks.scoreTiers!.bronze.minScore
+    );
+
+    expect(project.gameHooks.levelLayout.platforms.length).toBeGreaterThanOrEqual(4);
+    const brief = project.artifacts.find((artifact) => artifact.fileName === "mature-game-brief.json");
+    expect(JSON.stringify(brief?.content)).toContain("隐藏路线");
+  });
 });

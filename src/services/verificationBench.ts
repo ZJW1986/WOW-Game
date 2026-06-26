@@ -2,6 +2,7 @@ import type { MockProject, QaReport } from "../core/types";
 import { validateAssetReferences } from "../core/pipeline";
 import { getTemplateSkill } from "./templateSkills";
 import { createRuntimeAssetReport } from "../ui/previewAssets";
+import { evaluateVerificationGate } from "./verificationGate";
 
 export interface DynamicVerificationEvidence {
   canvasNonEmpty: boolean;
@@ -32,7 +33,7 @@ export function runDynamicVerification(project: MockProject): QaReport & { evide
     project.assetPack.assets.some((asset) => asset.type === "image" || asset.type === "ui");
   const hasGameFeel = Boolean(project.gameHooks.feedbackRules?.floatingScore) &&
     Boolean(project.gameHooks.feedbackRules?.audioCueKeys?.length);
-  return {
+  const report: QaReport & { evidence: DynamicVerificationEvidence } = {
     scores: {
       buildHealth: blocking ? 55 : 94,
       visualUsability: evidence.canvasNonEmpty && evidence.screenshotCaptured ? 92 : 45,
@@ -60,4 +61,6 @@ export function runDynamicVerification(project: MockProject): QaReport & { evide
       : ["dynamic-verification: no blocking runtime issues found"],
     evidence
   };
+  report.gate = evaluateVerificationGate(report);
+  return report;
 }

@@ -55,6 +55,142 @@ export const matureGameBriefSchema = z.object({
   gameFeelMoments: z.array(z.string())
 });
 
+export const gameProductionBriefSchema = z.object({
+  engineType: z.enum(["phaser2d", "threejs3d"]),
+  templateFamily: templateFamilySchema.optional(),
+  threeGenre: z.enum([
+    "runner",
+    "dodge_collect",
+    "flight_shooter",
+    "third_person_collect",
+    "exploration",
+    "futuristic_tower_defense"
+  ]).optional(),
+  playerFantasy: z.string(),
+  coreLoop: z.array(z.string()).min(3),
+  innovationHooks: z.array(z.string()).min(1),
+  firstMinuteExperience: z.array(z.string()).min(3),
+  difficultyCurve: z.array(z.string()).min(3),
+  pressureTypes: z.array(z.string()).min(2),
+  rewardPath: z.array(z.string()).min(1),
+  failureFeedback: z.array(z.string()).min(1),
+  restartMotivation: z.string(),
+  audioMood: z.string(),
+  assetStyle: z.string(),
+  stabilityConstraints: z.array(z.string()).min(1),
+  deferredRequests: z.array(z.string())
+});
+
+const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Color must be #RRGGBB hex");
+
+export const styleSheetSchema = z.object({
+  palette: z.tuple([hexColorSchema, hexColorSchema, hexColorSchema, hexColorSchema, hexColorSchema]),
+  brushwork: z.enum(["pixel_clean", "cel_shaded", "painterly", "low_poly", "vector_flat"]),
+  lighting: z.enum(["flat", "rim", "soft", "neon", "dramatic"]),
+  era: z.enum(["fantasy", "modern", "retro", "sci_fi", "nature"]),
+  subjectScale: z.enum(["tiny", "small", "medium", "large", "heroic"]),
+  negativePrompt: z.string().min(1).max(200)
+});
+
+export const visualPromptPackSchema = z.object({
+  packId: z.string(),
+  engineType: z.enum(["phaser2d", "threejs3d"]),
+  styleSheet: styleSheetSchema.optional(),
+  prompts: z.array(z.object({
+    assetKey: z.string(),
+    slot: z.string(),
+    promptType: z.enum(["background", "sprite", "cover_poster"]),
+    finalImagePrompt: z.string(),
+    negativePrompt: z.string(),
+    format: z.enum(["png", "webp"]),
+    runtimeUse: z.enum(["candidate_only", "runtime_after_confirmation"])
+  })).min(1),
+  isolationRules: z.array(z.string())
+});
+
+export const uiAssetKitSchema = z.object({
+  packId: z.string(),
+  prompts: z.array(z.object({
+    assetKey: z.string(),
+    componentType: z.enum(["skill_icons", "buttons", "hud_panel", "inventory_slots", "dialog_frame", "shop_card"]),
+    finalImagePrompt: z.string(),
+    slicingRequired: z.boolean(),
+    runtimeEligible: z.boolean()
+  })).min(1),
+  sourceSkill: z.literal("game-ui-asset-kit")
+});
+
+export const audioPromptPackSchema = z.object({
+  packId: z.string(),
+  prompts: z.array(z.object({
+    assetKey: z.enum([
+      "bgm.loop",
+      "sfx.collect",
+      "sfx.hit",
+      "sfx.win",
+      "sfx.lose",
+      "sfx.click",
+      "sfx.explosion",
+      "sfx.warning"
+    ]),
+    cue: z.string(),
+    finalAudioPrompt: z.string(),
+    durationSeconds: z.number(),
+    loop: z.boolean()
+  })).min(1),
+  runtimeStrategy: z.enum(["procedural_fallback", "candidate_after_confirmation"])
+});
+
+export const modelPromptPackSchema = z.object({
+  packId: z.string(),
+  engineType: z.literal("threejs3d"),
+  prompts: z.array(z.object({
+    assetKey: z.enum(["three.model.player", "three.model.hazard", "three.model.collectible", "three.scene.environment"]),
+    roleInGameplay: z.string(),
+    finalModelPrompt: z.string(),
+    qualityTier: z.enum(["builtin_low_poly", "uploaded", "tripo_enhanced", "cellcog_enhanced"]),
+    polyBudget: z.number(),
+    maxFileSizeMb: z.number(),
+    runtimeScale: z.number(),
+    colliderShape: z.enum(["sphere", "capsule", "box"])
+  })).min(1),
+  isolationRules: z.array(z.string())
+});
+
+export const sceneMapPlanSchema = z.object({
+  engineType: z.enum(["phaser2d", "threejs3d"]),
+  layoutMode: z.string(),
+  backgroundMode: z.enum(["scene_cover", "tileable_map", "procedural_3d_scene"]),
+  mapScale: z.string(),
+  traversalBeats: z.array(z.string()),
+  spawnZones: z.array(z.string())
+});
+
+export const assetReplacementReportSchema = z.object({
+  projectId: z.string().optional(),
+  assetKey: z.string(),
+  previousFileUrl: z.string().optional(),
+  candidateFileUrl: z.string(),
+  status: z.enum(["candidate_created", "confirmed", "rejected"]),
+  reason: z.string(),
+  runtimeUpdated: z.boolean()
+});
+
+export const cellCogGenerationReportSchema = z.object({
+  provider: z.literal("cellcog"),
+  status: z.enum(["missing_key", "queued", "completed", "failed", "timeout"]),
+  promptPackId: z.string(),
+  slot: z.string(),
+  requestedOutput: z.enum(["png", "webp", "glb", "mp3", "html", "pdf"]),
+  outputFiles: z.array(z.object({
+    fileUrl: z.string(),
+    mimeType: z.string(),
+    assetKey: z.string().optional()
+  })),
+  errors: z.array(z.string()),
+  creditInfo: z.string().optional()
+});
+
 export const gddSchema = z.object({
   concept: z.string(),
   loop: z.array(z.string()),
@@ -243,7 +379,8 @@ export const gameHooksSchema = z.object({
   levelLayout: z.object({
     platforms: z.array(z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })),
     lanes: z.array(z.object({ y: z.number(), speed: z.number(), count: z.number() })),
-    grid: z.object({ columns: z.number(), rows: z.number() })
+    grid: z.object({ columns: z.number(), rows: z.number() }),
+    gridState: z.array(z.array(z.number())).optional()
   }),
   levelFlow: z.object({
     spawnPoint: z.object({ x: z.number(), y: z.number() }),
@@ -306,8 +443,27 @@ export const gameHooksSchema = z.object({
     objective: z.enum(["learn_controls", "collect", "survive", "finale"]),
     target: z.number(),
     enemyMix: z.array(z.string()),
-    rewardPacing: z.enum(["slow", "normal", "burst"])
+    rewardPacing: z.enum(["slow", "normal", "burst"]),
+    enemySpawnDelta: z.number().optional(),
+    speedMultiplier: z.number().optional(),
+    bgmIntensity: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional()
   })).optional(),
+  scoreTiers: z.object({
+    targetDurationMs: z.number(),
+    gold: z.object({
+      minScore: z.number(),
+      maxDeathCount: z.number(),
+      maxDurationMs: z.number()
+    }),
+    silver: z.object({
+      minScore: z.number(),
+      maxDeathCount: z.number()
+    }),
+    bronze: z.object({
+      minScore: z.number()
+    }),
+    rationale: z.string()
+  }).optional(),
   impactRules: z.object({
     hitStopMs: z.number(),
     screenShakeIntensity: z.number(),
@@ -339,9 +495,116 @@ export const gameplayDslRuleSchema = z.object({
   message: z.string().optional()
 });
 
-export const gameplayDslSchema = z.object({
+export const gameplayDslV1Schema = z.object({
   version: z.literal("1"),
   rules: z.array(gameplayDslRuleSchema).max(24)
+});
+
+const dslComparisonOpSchema = z.enum(["<", "<=", "=", ">=", ">"]);
+
+export const gameplayDslV2WhenSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("time"), op: dslComparisonOpSchema, value: z.number() }),
+  z.object({ type: z.literal("score"), op: dslComparisonOpSchema, value: z.number() }),
+  z.object({ type: z.literal("collected"), assetKey: z.string(), count: z.number() }),
+  z.object({ type: z.literal("enemiesAlive"), op: z.enum(["<=", "<", "="]), value: z.number() }),
+  z.object({ type: z.literal("stage"), id: z.string() }),
+  z.object({ type: z.literal("hpBelow"), percent: z.number().min(0).max(100) }),
+  z.object({ type: z.literal("zoneEntered"), zoneId: z.string() }),
+  z.object({ type: z.literal("combo"), op: z.enum([">=", ">", "="]), value: z.number() })
+]);
+
+export const gameplayDslV2ActionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("spawn_zone"),
+    zoneId: z.string(),
+    enemyType: z.enum(["chaser", "patroller", "charger", "shooter", "orbiter", "mine"]).optional(),
+    count: z.number().optional()
+  }),
+  z.object({ type: z.literal("open_door"), assetKey: z.string() }),
+  z.object({ type: z.literal("grant_item"), assetKey: z.string() }),
+  z.object({ type: z.literal("set_counter"), name: z.string(), value: z.number() }),
+  z.object({ type: z.literal("change_player_speed"), multiplier: z.number().optional(), mul: z.number().optional() }),
+  z.object({ type: z.literal("fail"), message: z.string().optional() }),
+  z.object({ type: z.literal("win"), message: z.string().optional() })
+]);
+
+export const gameplayDslV2RuleSchema = z.object({
+  id: z.string(),
+  when: gameplayDslV2WhenSchema,
+  do: z.array(gameplayDslV2ActionSchema).min(1)
+});
+
+export const gameplayDslV2Schema = z.object({
+  version: z.literal("2"),
+  rules: z.array(gameplayDslV2RuleSchema).max(80),
+  zones: z.array(z.object({ id: z.string(), x: z.number(), y: z.number(), width: z.number(), height: z.number() })).max(16).optional(),
+  counters: z.array(z.object({ name: z.string(), initialValue: z.number() })).max(16).optional(),
+  items: z.array(z.object({ assetKey: z.string(), grantsCounter: z.string().optional(), value: z.number().optional() })).max(16).optional()
+});
+
+export const gameplayDslSchema = z.discriminatedUnion("version", [
+  gameplayDslV1Schema,
+  gameplayDslV2Schema
+]);
+
+export const phaserPluginDirectorActionSchema = z.discriminatedUnion("type", [
+  z.object({
+    id: z.string(),
+    type: z.enum(["spawn_enemy", "spawn_projectile", "spawn_item"]),
+    atMs: z.number(),
+    count: z.number().optional(),
+    enemyType: z.enum(["chaser", "patroller", "charger", "shooter", "orbiter", "mine"]).optional(),
+    assetKey: z.string().optional()
+  }),
+  z.object({
+    id: z.string(),
+    type: z.enum(["moving_platform", "path_lane"]),
+    atMs: z.number(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    speed: z.number().optional(),
+    count: z.number().optional()
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("status_effect"),
+    atMs: z.number(),
+    effect: z.enum(["slow", "shield", "stun", "speed_boost"]),
+    durationMs: z.number()
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("camera_shake"),
+    atMs: z.number(),
+    intensity: z.number().optional()
+  }),
+  z.object({
+    id: z.string(),
+    type: z.enum(["particles", "hit_flash", "ui_update"]),
+    atMs: z.number(),
+    message: z.string().optional()
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("player_ability"),
+    ability: z.enum(["dash", "shoot", "jump", "block", "interact"])
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("custom_code"),
+    code: z.string()
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("scene_lifecycle"),
+    lifecycle: z.string()
+  })
+]);
+
+export const phaserPluginDirectorSchema = z.object({
+  version: z.literal("1"),
+  profileId: z.string(),
+  actions: z.array(phaserPluginDirectorActionSchema).max(32)
 });
 
 export const sandboxPluginSchema = z.object({
@@ -371,6 +634,17 @@ export const qaReportSchema = z.object({
   }),
   checks: z.array(z.string()),
   debugProtocolEntries: z.array(z.string()),
+  gate: z.object({
+    shouldPublish: z.boolean(),
+    reasons: z.array(z.string()),
+    dimensions: z.array(z.object({
+      id: z.string(),
+      score: z.number(),
+      threshold: z.number(),
+      gate: z.boolean(),
+      passed: z.boolean()
+    }))
+  }).optional(),
   evidence: z.object({
     canvasNonEmpty: z.boolean(),
     consoleErrorCount: z.number(),
@@ -404,6 +678,7 @@ export const artifactSchemas = {
   classification: classificationSchema,
   "mature-game-brief": matureGameBriefSchema,
   gdd: gddSchema,
+  "style-sheet": styleSheetSchema,
   "asset-requirements": assetRequirementsSchema,
   "asset-candidates": assetCandidatesSchema,
   "confirmed-assets": confirmedAssetsSchema,
@@ -412,6 +687,7 @@ export const artifactSchemas = {
   "game-config": gameConfigSchema,
   "game-hooks": gameHooksSchema,
   "gameplay-dsl": gameplayDslSchema,
+  "phaser-plugin-director": phaserPluginDirectorSchema,
   "sandbox-plugin": sandboxPluginSchema,
   "qa-report": qaReportSchema,
   "publish-record": publishRecordSchema,
@@ -422,6 +698,72 @@ export type ArtifactType = keyof typeof artifactSchemas;
 
 export function validateArtifact(type: ArtifactType, payload: unknown) {
   return artifactSchemas[type].safeParse(payload);
+}
+
+export function createCoreSchemaSnapshot() {
+  return {
+    assetPack: summarizeZodSchema(assetPackSchema),
+    gameConfig: summarizeZodSchema(gameConfigSchema),
+    gameHooks: summarizeZodSchema(gameHooksSchema),
+    gameplayDsl: summarizeZodSchema(gameplayDslSchema),
+    styleSheet: summarizeZodSchema(styleSheetSchema)
+  };
+}
+
+function summarizeZodSchema(schema: z.ZodTypeAny): unknown {
+  const typeName = schema._def.typeName;
+  if (typeName === z.ZodFirstPartyTypeKind.ZodObject) {
+    const shape = (schema as z.ZodObject<Record<string, z.ZodTypeAny>>).shape;
+    return {
+      type: "object",
+      fields: Object.fromEntries(
+        Object.entries(shape)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, value]) => [key, summarizeZodSchema(value)])
+      )
+    };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodArray) {
+    return {
+      type: "array",
+      item: summarizeZodSchema((schema as z.ZodArray<z.ZodTypeAny>)._def.type),
+      min: (schema as z.ZodArray<z.ZodTypeAny>)._def.minLength?.value,
+      max: (schema as z.ZodArray<z.ZodTypeAny>)._def.maxLength?.value
+    };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodEnum) {
+    return { type: "enum", values: (schema as z.ZodEnum<[string, ...string[]]>)._def.values };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodLiteral) {
+    return { type: "literal", value: (schema as z.ZodLiteral<unknown>)._def.value };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodOptional) {
+    return { type: "optional", inner: summarizeZodSchema((schema as z.ZodOptional<z.ZodTypeAny>)._def.innerType) };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodRecord) {
+    return { type: "record", value: summarizeZodSchema((schema as z.ZodRecord)._def.valueType) };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodUnion) {
+    return { type: "union", options: (schema as z.ZodUnion<[z.ZodTypeAny, z.ZodTypeAny]>)._def.options.map(summarizeZodSchema) };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodDiscriminatedUnion) {
+    const def = (schema as z.ZodDiscriminatedUnion<string, z.ZodDiscriminatedUnionOption<string>[]>)._def;
+    return {
+      type: "discriminatedUnion",
+      discriminator: def.discriminator,
+      options: Array.from(def.options.values()).map(summarizeZodSchema)
+    };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodEffects) {
+    return { type: "effects", inner: summarizeZodSchema((schema as z.ZodEffects<z.ZodTypeAny>)._def.schema) };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodTuple) {
+    return { type: "tuple", items: (schema as z.ZodTuple<[z.ZodTypeAny, ...z.ZodTypeAny[]]>)._def.items.map(summarizeZodSchema) };
+  }
+  if (typeName === z.ZodFirstPartyTypeKind.ZodString) return { type: "string" };
+  if (typeName === z.ZodFirstPartyTypeKind.ZodNumber) return { type: "number" };
+  if (typeName === z.ZodFirstPartyTypeKind.ZodBoolean) return { type: "boolean" };
+  return { type: typeName };
 }
 
 export function findDuplicateAssetKeys(assets: Array<{ assetKey: string }>): string[] {

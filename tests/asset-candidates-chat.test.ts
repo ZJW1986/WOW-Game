@@ -12,18 +12,15 @@ describe("asset candidates chat handoff", () => {
       messages: getMessages("zh-CN"),
       phase: "asset_generating",
       followups: [],
-      assetCandidateStatus: "loading"
+      assetCandidateStatus: "loading",
+      currentAssetGeneratingSlots: ["background"]
     });
 
     const loadingMessage = messages.find((message) => message.id === "asset-candidates-loading");
-    expect(loadingMessage?.assetProgress?.map((step) => step.slot)).toEqual([
-      "background",
-      "player",
-      "hazard",
-      "collectible"
-    ]);
+    expect(loadingMessage?.assetProgress?.map((step) => step.slot)).toEqual(["background"]);
     expect(loadingMessage?.content).toContain("背景生成中");
-    expect(loadingMessage?.content).toContain("收集物生成中");
+    expect(loadingMessage?.content).not.toContain("主角生成中");
+    expect(loadingMessage?.content).not.toContain("收集物生成中");
   });
 
   it("shows asset candidates as a required assistant confirmation turn before generation", () => {
@@ -58,6 +55,41 @@ describe("asset candidates chat handoff", () => {
     expect(assetMessage?.role).toBe("assistant");
     expect(assetMessage?.content).toContain("请确认背景、主角、危险物和收集物");
     expect(assetMessage?.assetCandidates?.candidates[0].label).toBe("主角飞船");
+  });
+
+  it("keeps generated asset cards visible while the next asset is generating", () => {
+    const project = runMockPipeline("generate a staged top-down game");
+    const messages = buildStudioChatMessages({
+      idea: "generate a staged top-down game",
+      project,
+      messages: getMessages("zh-CN"),
+      phase: "asset_generating",
+      followups: [],
+      assetCandidates: {
+        candidates: [
+          {
+            slot: "background",
+            assetKey: "world.background",
+            type: "image",
+            label: "背景",
+            prompt: "empty top-down map",
+            style: "arcade",
+            purpose: "background",
+            acceptedFileTypes: ["image/*"],
+            previewUrl: "data:image/png;base64,bg",
+            fileUrl: "data:image/png;base64,bg",
+            source: "generated"
+          }
+        ]
+      },
+      assetCandidateStatus: "loading",
+      currentAssetGeneratingSlots: ["hazard"]
+    });
+
+    const assetMessage = messages.find((message) => message.id === "asset-candidates");
+    const loadingMessage = messages.find((message) => message.id === "asset-candidates-loading");
+    expect(assetMessage?.assetCandidates?.candidates.map((candidate) => candidate.slot)).toEqual(["background"]);
+    expect(loadingMessage?.assetProgress?.map((step) => step.slot)).toEqual(["hazard"]);
   });
 
   it("keeps generated asset cards limited to core image slots", () => {

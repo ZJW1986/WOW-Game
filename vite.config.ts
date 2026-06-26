@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from "vite";
+import { createLogger, defineConfig, loadEnv, type Logger } from "vite";
 import react from "@vitejs/plugin-react";
 import { createGenerationApiHandler } from "./src/services/generationApi";
 import { createDemoServerConfig } from "./src/services/demoServerConfig";
@@ -23,6 +23,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     server: createDemoServerConfig(),
+    customLogger: createThrottledViteLogger(),
     plugins: [
       react(),
       {
@@ -112,6 +113,25 @@ export default defineConfig(({ mode }) => {
     }
   };
 });
+
+function createThrottledViteLogger(): Logger {
+  const logger = createLogger();
+  let lastNoisyLog = 0;
+  const baseInfo = logger.info.bind(logger);
+  logger.info = (message, options) => {
+    if (isNoisyDevLog(message)) {
+      const now = Date.now();
+      if (now - lastNoisyLog < 1000) return;
+      lastNoisyLog = now;
+    }
+    baseInfo(message, options);
+  };
+  return logger;
+}
+
+function isNoisyDevLog(message: string): boolean {
+  return /\b(server restarted|hmr update|page reload)\b/i.test(message);
+}
 
 async function readJsonBody(req: { on: (event: string, listener: (chunk?: unknown) => void) => void }) {
   const raw = await new Promise<string>((resolve, reject) => {

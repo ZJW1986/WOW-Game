@@ -44,11 +44,13 @@ describe("engine-aware guided questions", () => {
     const twoD = createGuidedQuestions("平台跳跃收集金币", "platformer");
     const threeD = createThreeGuidedQuestions("手机竖屏太空飞船躲避陨石收集能量", "flight_shooter");
 
-    expect(twoD.map((question) => question.prompt).join(" ")).toContain("平台");
-    expect(threeD.map((question) => question.prompt).join(" ")).toContain("镜头");
-    expect(threeD.map((question) => question.prompt).join(" ")).toContain("手机");
-    expect(threeD.map((question) => question.prompt).join(" ")).toContain("前 30 秒");
-    expect(threeD.map((question) => question.prompt).join(" ")).not.toBe(twoD.map((question) => question.prompt).join(" "));
+    const twoDText = twoD.map((question) => question.prompt).join(" ");
+    const threeDText = threeD.map((question) => question.prompt).join(" ");
+    expect(twoDText).toContain("平台");
+    expect(threeDText).toContain("镜头");
+    expect(threeDText).toContain("手机");
+    expect(threeDText).toContain("前 30 秒");
+    expect(threeDText).not.toBe(twoDText);
   });
 
   it("creates 3D conversation sessions without Phaser-only template questions", () => {
@@ -79,6 +81,6 @@ describe("engine-aware guided questions", () => {
     expect(session.answers).toHaveLength(1);
     expect(session.answers[0]).toMatchObject({ questionId: "three_camera", value: "俯视飞行镜头" });
     expect(session.turns.filter((turn) => turn.content.includes("3D视角与镜头"))).toHaveLength(1);
-    expect(session.turns.map((turn) => turn.content).join(" ")).not.toContain("锟");
+    expect(session.turns.map((turn) => turn.content).join(" ")).not.toContain(String.fromCharCode(0x951f));
   });
 });

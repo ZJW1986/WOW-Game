@@ -14,6 +14,21 @@ import {
   type PlayableRuntimeState
 } from "./playableRuntime";
 import { createRuntimeAssetReport, selectPreviewRuntimeAssets } from "./previewAssets";
+import {
+  createGridLogicRuntime,
+  moveGridCursor,
+  stepGridLogicRuntime,
+  type GridDirection,
+  type GridLogicRuntime
+} from "../runtime/phaser/gridLogic";
+import {
+  createTowerDefenseRuntime,
+  placeTower,
+  stepTowerDefenseRuntime,
+  type TowerDefenseRuntime,
+  type TowerDefenseRuntimeInput
+} from "../runtime/phaser/towerDefense";
+import { ScoreTierOverlay, type ScoreTierRunResult } from "./ScoreTierOverlay";
 
 type RuntimeEnemyKind = "chaser" | "patroller" | "charger" | "shooter" | "orbiter" | "mine" | "legacy";
 const START_GRACE_MS = 800;
@@ -38,22 +53,35 @@ interface RuntimeProjectile {
   spawnedAt: number;
 }
 
+type TowerDefenseViewObject = Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle | Phaser.GameObjects.Arc;
+type GridLogicViewObject = Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text;
+type UiHeavyChoiceCard = {
+  card: Phaser.GameObjects.Rectangle;
+  quality: number;
+  label: Phaser.GameObjects.Text;
+};
+
 export function PhaserPreview({
   config,
   assetPack,
   gameHooks,
-  compact = false
+  compact = false,
+  onSubmitFeedback,
+  iterationHint
 }: {
   config: GameConfig;
   assetPack?: AssetPack;
   gameHooks?: GameHooks;
   compact?: boolean;
+  onSubmitFeedback?: (input: { rating: number; comment: string }) => Promise<void> | void;
+  iterationHint?: string;
 }) {
   const id = useId().replace(/:/g, "");
   const containerId = `phaser-${id}`;
   const gameRef = useRef<import("phaser").Game | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [runtimePhase, setRuntimePhase] = useState<PlayablePhase | "loading_assets" | "asset_error">("loading_assets");
+  const [runtimeResult, setRuntimeResult] = useState<ScoreTierRunResult | null>(null);
   const [assetErrors, setAssetErrors] = useState<string[]>([]);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const actionLabel = isPlayablePhase(runtimePhase) ? readPreviewActionLabel(runtimePhase) : "";
@@ -66,6 +94,10 @@ export function PhaserPreview({
       if (disposed) return;
       setRuntimePhase(phase);
       frameRef.current?.setAttribute("data-runtime-phase", phase);
+    };
+    const emitRuntimeResult = (result: ScoreTierRunResult | null) => {
+      if (disposed) return;
+      setRuntimeResult(result);
     };
     const runtimeAssets = selectPreviewRuntimeAssets(assetPack);
     const initialAssetReport = createRuntimeAssetReport(assetPack);
@@ -110,11 +142,25 @@ export function PhaserPreview({
         private finishGate?: Phaser.GameObjects.Rectangle;
         private overlay?: Phaser.GameObjects.Container;
         private worldObjects: Phaser.GameObjects.GameObject[] = [];
+        private towerDefenseRuntime?: TowerDefenseRuntime;
+        private towerDefenseVisuals = new Map<string, TowerDefenseViewObject>();
+        private towerDefenseBuildSites: Phaser.GameObjects.Rectangle[] = [];
+        private towerDefenseLastPhase: TowerDefenseRuntime["phase"] = "playing";
+        private gridLogicRuntime?: GridLogicRuntime;
+        private gridLogicVisuals = new Map<string, GridLogicViewObject>();
+        private gridLogicLastPhase: GridLogicRuntime["phase"] = "playing";
+        private uiHeavyChoiceCards: UiHeavyChoiceCard[] = [];
+        private uiHeavyMood = 3;
+        private uiHeavyIncome = 0;
+        private uiHeavyDeadline = 0;
         private lastHitAt = 0;
         private lastDashAt = 0;
         private dashUntil = 0;
         private startedAt = 0;
+        private deathCount = 0;
         private activeStageId = "";
+        private stageSpeedMultiplier = 1;
+        private stageEnemySpawnDelta = 0;
         private triggeredTimeline = new Set<string>();
 
         constructor() {
@@ -148,14 +194,24 @@ export function PhaserPreview({
           this.flash = this.add.rectangle(0, 0, 960, 540, 0xffffff, 0).setOrigin(0).setDepth(20);
           this.cursors = this.input.keyboard?.createCursorKeys();
           this.input.keyboard?.on("keydown-ENTER", () => this.handlePrimaryAction(Phaser));
+          this.input.keyboard?.on("keydown-UP", () => this.handleGridLogicMove("up", Phaser));
+          this.input.keyboard?.on("keydown-DOWN", () => this.handleGridLogicMove("down", Phaser));
+          this.input.keyboard?.on("keydown-LEFT", () => this.handleGridLogicMove("left", Phaser));
+          this.input.keyboard?.on("keydown-RIGHT", () => this.handleGridLogicMove("right", Phaser));
           this.input.keyboard?.on("keydown-SPACE", () => {
-            if (this.runtimeState.phase === "playing" && config.templateFamily !== "platformer") {
+            if (config.templateFamily === "grid_logic") {
+              this.handleGridLogicMove("right", Phaser);
+            } else if (this.runtimeState.phase === "playing" && config.templateFamily !== "platformer") {
               this.tryDash(Phaser);
             } else if (this.runtimeState.phase !== "playing") {
               this.handlePrimaryAction(Phaser);
             }
           });
-          this.input.on("pointerdown", () => this.handlePrimaryAction(Phaser));
+          this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+            if (this.handleTowerDefensePointer(pointer, Phaser)) return;
+            if (this.handleUiHeavyPointer(pointer, Phaser)) return;
+            this.handlePrimaryAction(Phaser);
+          });
           const handleDomPrimaryAction = () => this.handlePrimaryAction(Phaser);
           window.addEventListener(PREVIEW_PRIMARY_ACTION_EVENT, handleDomPrimaryAction);
           this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -180,6 +236,18 @@ export function PhaserPreview({
         }
 
         update() {
+          if (config.templateFamily === "tower_defense") {
+            this.updateTowerDefenseWorld(Phaser);
+            return;
+          }
+          if (config.templateFamily === "grid_logic") {
+            this.updateGridLogicWorld(Phaser);
+            return;
+          }
+          if (config.templateFamily === "ui_heavy") {
+            this.updateUiHeavyWorld(Phaser);
+            return;
+          }
           if (this.runtimeState.phase !== "playing" || !this.player?.body) return;
           const body = this.player.body as Phaser.Physics.Arcade.Body;
           const baseSpeed = gameHooks?.numberTuning.playerSpeed ?? (config.templateFamily === "platformer" ? 210 : 250);
@@ -242,11 +310,15 @@ export function PhaserPreview({
         private startGame(Phaser: typeof import("phaser")) {
           this.runtimeState = startPlayableRuntime(this.runtimeState, rules);
           emitRuntimePhase("playing");
+          emitRuntimeResult(null);
           this.overlay?.destroy(true);
           this.overlay = undefined;
           this.clearWorld();
           this.startedAt = this.time.now;
+          this.deathCount = 0;
           this.activeStageId = "";
+          this.stageSpeedMultiplier = 1;
+          this.stageEnemySpawnDelta = 0;
           this.triggeredTimeline.clear();
           audio.startBgm();
           this.createWorld(Phaser);
@@ -289,6 +361,19 @@ export function PhaserPreview({
             fontSize: "12px"
           }));
 
+          if (config.templateFamily === "tower_defense") {
+            this.createTowerDefenseWorld(Phaser);
+            return;
+          }
+          if (config.templateFamily === "grid_logic") {
+            this.createGridLogicWorld(Phaser);
+            return;
+          }
+          if (config.templateFamily === "ui_heavy") {
+            this.createUiHeavyWorld(Phaser);
+            return;
+          }
+
           const spawn = this.getSpawnPoint();
           this.player = this.createRuntimeImage(spawn.x, spawn.y, "generated-player", 64, 64, 0x5eead4, 8);
           this.addWorldObject(this.player);
@@ -328,6 +413,369 @@ export function PhaserPreview({
           return gameHooks?.levelFlow?.spawnPoint ?? { x: 120, y: config.templateFamily === "platformer" ? 430 : 300 };
         }
 
+        private createGridLogicWorld(Phaser: typeof import("phaser")) {
+          this.gridLogicRuntime = createGridLogicRuntime({
+            columns: gameHooks?.levelLayout.grid.columns || 5,
+            rows: gameHooks?.levelLayout.grid.rows || 3,
+            gridState: gameHooks?.levelLayout.gridState,
+            maxMoves: gameHooks?.failCondition.lives || 12
+          });
+          this.gridLogicLastPhase = "playing";
+          this.gridLogicVisuals.clear();
+          this.status.setText("格子解谜：方向键推动方块，把方块推到发光目标格。");
+          this.drawGridBoard();
+          this.syncGridLogicVisuals(Phaser);
+          this.updateGridLogicHud();
+        }
+
+        private handleGridLogicMove(direction: GridDirection, Phaser: typeof import("phaser")) {
+          if (config.templateFamily !== "grid_logic" || this.runtimeState.phase !== "playing" || !this.gridLogicRuntime) return;
+          const beforeMoves = this.gridLogicRuntime.movesUsed;
+          this.gridLogicRuntime = moveGridCursor(this.gridLogicRuntime, direction);
+          if (this.gridLogicRuntime.movesUsed !== beforeMoves) {
+            audio.playCollect();
+            this.syncGridLogicVisuals(Phaser);
+            this.updateGridLogicWorld(Phaser);
+          }
+        }
+
+        private updateGridLogicWorld(Phaser: typeof import("phaser")) {
+          if (this.runtimeState.phase !== "playing" || !this.gridLogicRuntime) return;
+          this.gridLogicRuntime = stepGridLogicRuntime(this.gridLogicRuntime, this.game.loop.delta);
+          this.syncGridLogicVisuals(Phaser);
+          this.updateGridLogicHud();
+          if (this.gridLogicRuntime.phase === this.gridLogicLastPhase) return;
+          this.gridLogicLastPhase = this.gridLogicRuntime.phase;
+          if (this.gridLogicRuntime.phase === "won") {
+            this.runtimeState.phase = "won";
+            this.finalizeRun("won");
+            emitRuntimePhase("won");
+            audio.playWin();
+            this.status.setText("胜利！目标格已全部完成。");
+            this.showEndScreen("won");
+          } else if (this.gridLogicRuntime.phase === "lost") {
+            this.runtimeState.phase = "lost";
+            this.finalizeRun("lost");
+            emitRuntimePhase("lost");
+            audio.playLose();
+            this.status.setText("失败：步数用尽，重新规划路线。");
+            this.showEndScreen("lost");
+          }
+        }
+
+        private drawGridBoard() {
+          if (!this.gridLogicRuntime) return;
+          const metrics = gridMetrics(this.gridLogicRuntime);
+          for (let row = 0; row < this.gridLogicRuntime.rows; row += 1) {
+            for (let column = 0; column < this.gridLogicRuntime.columns; column += 1) {
+              const point = gridCellCenter(this.gridLogicRuntime, column, row);
+              const tile = this.add.rectangle(point.x, point.y, metrics.cellSize - 6, metrics.cellSize - 6, 0x172554, 0.72)
+                .setStrokeStyle(1, 0x38bdf8, 0.32)
+                .setDepth(2);
+              this.addWorldObject(tile);
+            }
+          }
+          for (const target of this.gridLogicRuntime.targets) {
+            const point = gridCellCenter(this.gridLogicRuntime, target.column, target.row);
+            this.addWorldObject(this.add.circle(point.x, point.y, metrics.cellSize * 0.24, 0xfacc15, 0.18).setStrokeStyle(3, 0xfacc15).setDepth(3));
+          }
+          for (const wall of this.gridLogicRuntime.walls) {
+            const point = gridCellCenter(this.gridLogicRuntime, wall.column, wall.row);
+            this.addWorldObject(this.add.rectangle(point.x, point.y, metrics.cellSize - 12, metrics.cellSize - 12, 0x334155, 0.95).setDepth(4));
+          }
+        }
+
+        private syncGridLogicVisuals(Phaser: typeof import("phaser")) {
+          if (!this.gridLogicRuntime) return;
+          const liveIds = new Set<string>();
+          this.syncGridObject("grid-player", this.gridLogicRuntime.player, "generated-player", 48, 48, 0x5eead4, liveIds);
+          this.gridLogicRuntime.blocks.forEach((block, index) => {
+            this.syncGridObject(`grid-block-${index}`, block, "generated-hazard", 52, 52, 0xfb7185, liveIds);
+          });
+          for (const [id, object] of Array.from(this.gridLogicVisuals.entries())) {
+            if (liveIds.has(id)) continue;
+            object.destroy();
+            this.gridLogicVisuals.delete(id);
+          }
+          if (this.gridLogicRuntime.phase === "won") {
+            const center = gridCellCenter(this.gridLogicRuntime, this.gridLogicRuntime.player.column, this.gridLogicRuntime.player.row);
+            this.burst(center.x, center.y, 0xfacc15, Phaser, 14);
+          }
+        }
+
+        private syncGridObject(
+          id: string,
+          cell: { column: number; row: number },
+          textureKey: string,
+          width: number,
+          height: number,
+          color: number,
+          liveIds: Set<string>
+        ) {
+          liveIds.add(id);
+          const point = gridCellCenter(this.gridLogicRuntime!, cell.column, cell.row);
+          let object = this.gridLogicVisuals.get(id);
+          if (!object) {
+            object = this.createRuntimeImage(point.x, point.y, textureKey, width, height, color, 6);
+            this.gridLogicVisuals.set(id, object);
+            this.addWorldObject(object);
+          }
+          object.setPosition(point.x, point.y);
+        }
+
+        private updateGridLogicHud() {
+          if (!this.gridLogicRuntime) return;
+          this.scoreText?.setText(
+            `步数 ${this.gridLogicRuntime.movesUsed}/${this.gridLogicRuntime.maxMoves} | 方块 ${this.gridLogicRuntime.blocks.length} | 目标 ${this.gridLogicRuntime.targets.length} | ${assetPackSummary(assetPack)}`
+          );
+        }
+
+        private createUiHeavyWorld(Phaser: typeof import("phaser")) {
+          this.uiHeavyChoiceCards = [];
+          this.uiHeavyMood = 3;
+          this.uiHeavyIncome = 0;
+          this.uiHeavyDeadline = this.time.now + Math.max(18000, (gameHooks?.failCondition.lives ?? 60) * 1000);
+          this.status.setText("Management: click the best order cards, keep mood above zero, and hit the income target.");
+          this.addWorldObject(this.add.rectangle(480, 292, 760, 300, 0x0f172a, 0.82).setStrokeStyle(2, 0x38bdf8, 0.6).setDepth(2));
+          const avatar = this.createRuntimeImage(170, 292, "generated-player", 92, 92, 0x5eead4, 4);
+          this.addWorldObject(avatar);
+          this.addWorldObject(this.add.text(170, 365, "Operator", {
+            color: "#b9e8ee",
+            fontFamily: "Arial",
+            fontSize: "13px"
+          }).setOrigin(0.5).setDepth(5));
+          const cardSpecs = [
+            { x: 370, quality: 1, title: "Fast Order", color: 0x334155 },
+            { x: 530, quality: 2, title: "Combo Order", color: 0x0f766e },
+            { x: 690, quality: -1, title: "Risk Order", color: 0x7f1d1d }
+          ];
+          for (const spec of cardSpecs) {
+            const card = this.add.rectangle(spec.x, 292, 126, 168, spec.color, 0.92).setStrokeStyle(2, 0xfacc15, 0.55).setDepth(5);
+            const icon = this.createRuntimeImage(spec.x, 252, spec.quality < 0 ? "generated-hazard" : "generated-collectible", 44, 44, spec.quality < 0 ? 0xfb7185 : 0xfacc15, 6);
+            const label = this.add.text(spec.x, 326, `${spec.title}\n${spec.quality > 0 ? `+${spec.quality} income` : "-1 mood"}`, {
+              align: "center",
+              color: "#f8fafc",
+              fixedWidth: 110,
+              fontFamily: "Arial",
+              fontSize: "13px"
+            }).setOrigin(0.5).setDepth(7);
+            this.uiHeavyChoiceCards.push({ card, quality: spec.quality, label });
+            this.addWorldObject(card);
+            this.addWorldObject(icon);
+            this.addWorldObject(label);
+          }
+          this.updateUiHeavyHud();
+        }
+
+        private handleUiHeavyPointer(pointer: Phaser.Input.Pointer, Phaser: typeof import("phaser")): boolean {
+          if (config.templateFamily !== "ui_heavy" || this.runtimeState.phase !== "playing") return false;
+          const selected = this.uiHeavyChoiceCards.find(({ card }) => Phaser.Geom.Rectangle.Contains(card.getBounds(), pointer.x, pointer.y));
+          if (!selected) return true;
+          if (selected.quality > 0) {
+            this.uiHeavyIncome += selected.quality;
+            this.runtimeState = collectPlayableItem(this.runtimeState, rules.winScore, selected.quality);
+            this.floatText(selected.card.x, selected.card.y - 92, `+$${selected.quality}`, "#facc15");
+            this.burst(selected.card.x, selected.card.y, 0xfacc15, Phaser, feedbackRules.collectBurstCount);
+            audio.playCollect();
+          } else {
+            this.uiHeavyMood -= 1;
+            this.floatText(selected.card.x, selected.card.y - 92, "Mood -1", "#fb7185");
+            this.burst(selected.card.x, selected.card.y, 0xfb7185, Phaser, 8);
+            audio.playHit();
+          }
+          this.updateUiHeavyHud();
+          if (this.uiHeavyIncome >= rules.winScore || this.runtimeState.score >= rules.winScore) {
+            this.runtimeState.phase = "won";
+            this.finalizeRun("won");
+            emitRuntimePhase("won");
+            audio.playWin();
+            this.status.setText("Victory: income target reached and the rush is under control.");
+            this.showEndScreen("won");
+          } else if (this.uiHeavyMood <= 0) {
+            this.runtimeState.phase = "lost";
+            this.finalizeRun("lost");
+            emitRuntimePhase("lost");
+            audio.playLose();
+            this.status.setText("Failed: customer mood collapsed.");
+            this.showEndScreen("lost");
+          }
+          return true;
+        }
+
+        private updateUiHeavyWorld(Phaser: typeof import("phaser")) {
+          if (this.runtimeState.phase !== "playing") return;
+          this.updateStageDirector(Phaser);
+          const remainingMs = this.uiHeavyDeadline - this.time.now;
+          if (remainingMs <= 0) {
+            const outcome = this.uiHeavyIncome >= rules.winScore ? "won" : "lost";
+            this.runtimeState.phase = outcome;
+            this.finalizeRun(outcome);
+            emitRuntimePhase(outcome);
+            if (outcome === "won") {
+              audio.playWin();
+              this.status.setText("Victory: daily summary passed.");
+            } else {
+              audio.playLose();
+              this.status.setText("Failed: rush timer ended before the target.");
+            }
+            this.showEndScreen(outcome);
+            return;
+          }
+          this.updateUiHeavyHud();
+        }
+
+        private updateUiHeavyHud() {
+          const remainingSeconds = Math.max(0, Math.ceil((this.uiHeavyDeadline - this.time.now) / 1000));
+          this.scoreText?.setText(
+            `Income ${this.uiHeavyIncome}/${rules.winScore} | Mood ${this.uiHeavyMood} | Time ${remainingSeconds}s | ${assetPackSummary(assetPack)}`
+          );
+        }
+
+        private createTowerDefenseWorld(Phaser: typeof import("phaser")) {
+          const input = createTowerDefenseInput(config, gameHooks);
+          this.towerDefenseRuntime = createTowerDefenseRuntime(input);
+          this.towerDefenseLastPhase = "playing";
+          this.towerDefenseVisuals.clear();
+          this.towerDefenseBuildSites = [];
+
+          const graphics = this.add.graphics().setDepth(1);
+          graphics.lineStyle(34, 0x334155, 0.72);
+          graphics.beginPath();
+          input.path.forEach((point, index) => {
+            if (index === 0) graphics.moveTo(point.x, point.y);
+            else graphics.lineTo(point.x, point.y);
+          });
+          graphics.strokePath();
+          graphics.lineStyle(4, 0x67e8f9, 0.8);
+          graphics.strokePath();
+          this.addWorldObject(graphics);
+
+          const basePoint = input.path[input.path.length - 1];
+          this.addWorldObject(this.add.rectangle(basePoint.x, basePoint.y, 72, 86, 0x0f766e, 0.92).setStrokeStyle(3, 0x5eead4).setDepth(4));
+          this.addWorldObject(this.add.text(basePoint.x, basePoint.y - 58, "BASE", {
+            color: "#b9fff2",
+            fontFamily: "Arial",
+            fontSize: "12px",
+            fontStyle: "bold"
+          }).setOrigin(0.5).setDepth(5));
+
+          const buildSites = [
+            { x: 270, y: 190 },
+            { x: 420, y: 390 },
+            { x: 575, y: 180 },
+            { x: 710, y: 380 }
+          ];
+          for (const site of buildSites) {
+            const marker = this.add.rectangle(site.x, site.y, 58, 58, 0x0f172a, 0.58).setStrokeStyle(2, 0xfacc15, 0.82).setDepth(3);
+            this.towerDefenseBuildSites.push(marker);
+            this.addWorldObject(marker);
+            this.addWorldObject(this.add.text(site.x, site.y + 42, "建塔", {
+              color: "#facc15",
+              fontFamily: "Arial",
+              fontSize: "11px"
+            }).setOrigin(0.5).setDepth(5));
+          }
+          this.status.setText("塔防：点击黄色建造点放置炮塔，阻止敌人进入基地。");
+          this.updateTowerDefenseHud();
+          this.placeStartingTower(Phaser);
+        }
+
+        private placeStartingTower(Phaser: typeof import("phaser")) {
+          if (!this.towerDefenseRuntime || this.towerDefenseBuildSites.length === 0) return;
+          const site = this.towerDefenseBuildSites[0];
+          const before = this.towerDefenseRuntime.towers.length;
+          this.towerDefenseRuntime = placeTower(this.towerDefenseRuntime, "basic", site.x, site.y);
+          if (this.towerDefenseRuntime.towers.length > before) {
+            this.burst(site.x, site.y, 0xfacc15, Phaser, 8);
+            audio.playCollect();
+          }
+          this.updateTowerDefenseHud();
+        }
+
+        private handleTowerDefensePointer(pointer: Phaser.Input.Pointer, Phaser: typeof import("phaser")): boolean {
+          if (config.templateFamily !== "tower_defense" || this.runtimeState.phase !== "playing" || !this.towerDefenseRuntime) return false;
+          const site = this.towerDefenseBuildSites.find((candidate) => Math.hypot(candidate.x - pointer.x, candidate.y - pointer.y) <= 40);
+          if (!site) return true;
+          const before = this.towerDefenseRuntime.towers.length;
+          this.towerDefenseRuntime = placeTower(this.towerDefenseRuntime, "basic", site.x, site.y);
+          if (this.towerDefenseRuntime.towers.length > before) {
+            this.burst(site.x, site.y, 0xfacc15, Phaser, 8);
+            audio.playCollect();
+          } else {
+            this.floatText(site.x, site.y - 40, "金币不足", "#fb7185");
+          }
+          this.updateTowerDefenseHud();
+          return true;
+        }
+
+        private updateTowerDefenseWorld(Phaser: typeof import("phaser")) {
+          if (this.runtimeState.phase !== "playing" || !this.towerDefenseRuntime) return;
+          this.towerDefenseRuntime = stepTowerDefenseRuntime(this.towerDefenseRuntime, this.game.loop.delta);
+          this.syncTowerDefenseVisuals(Phaser);
+          this.updateTowerDefenseHud();
+
+          if (this.towerDefenseRuntime.phase === this.towerDefenseLastPhase) return;
+          this.towerDefenseLastPhase = this.towerDefenseRuntime.phase;
+          if (this.towerDefenseRuntime.phase === "won") {
+            this.runtimeState.phase = "won";
+            this.finalizeRun("won");
+            emitRuntimePhase("won");
+            audio.playWin();
+            this.status.setText("胜利！全部波次已清除，基地守住了。");
+            this.showEndScreen("won");
+          } else if (this.towerDefenseRuntime.phase === "lost") {
+            this.runtimeState.phase = "lost";
+            this.finalizeRun("lost");
+            emitRuntimePhase("lost");
+            audio.playLose();
+            this.status.setText("失败：敌人突破路线，基地被摧毁。");
+            this.showEndScreen("lost");
+          }
+        }
+
+        private syncTowerDefenseVisuals(Phaser: typeof import("phaser")) {
+          if (!this.towerDefenseRuntime) return;
+          const liveIds = new Set<string>();
+
+          for (const tower of this.towerDefenseRuntime.towers) {
+            liveIds.add(tower.id);
+            if (!this.towerDefenseVisuals.has(tower.id)) {
+              const turret = this.createRuntimeImage(tower.x, tower.y, "generated-player", 56, 56, 0x5eead4, 7);
+              this.towerDefenseVisuals.set(tower.id, turret);
+              this.addWorldObject(turret);
+            }
+          }
+
+          for (const enemy of this.towerDefenseRuntime.enemies) {
+            liveIds.add(enemy.id);
+            const point = pointOnPolyline(this.towerDefenseRuntime.path, enemy.progress);
+            let enemyView = this.towerDefenseVisuals.get(enemy.id);
+            if (!enemyView) {
+              enemyView = this.createRuntimeImage(point.x, point.y, "generated-hazard", 46, 46, 0xfb7185, 6);
+              this.towerDefenseVisuals.set(enemy.id, enemyView);
+              this.addWorldObject(enemyView);
+            }
+            enemyView.setPosition(point.x, point.y);
+          }
+
+          for (const [id, object] of Array.from(this.towerDefenseVisuals.entries())) {
+            if (liveIds.has(id)) continue;
+            this.burst((object as { x: number }).x, (object as { y: number }).y, 0xff8a3d, Phaser, 10);
+            audio.playHit();
+            object.destroy();
+            this.towerDefenseVisuals.delete(id);
+          }
+        }
+
+        private updateTowerDefenseHud() {
+          if (!this.towerDefenseRuntime) return;
+          const remainingEnemies = this.towerDefenseRuntime.enemies.length;
+          const totalSpawned = this.towerDefenseRuntime.spawnedByWave.reduce((sum, count) => sum + count, 0);
+          this.scoreText?.setText(
+            `金币 ${this.towerDefenseRuntime.gold} | 基地 ${this.towerDefenseRuntime.baseHp} | 击杀 ${this.towerDefenseRuntime.kills} | 场上 ${remainingEnemies} | 已出怪 ${totalSpawned}`
+          );
+        }
+
         private collectItem(item: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle, Phaser: typeof import("phaser")) {
           item.destroy();
           this.worldObjects = this.worldObjects.filter((object) => object !== item);
@@ -337,6 +785,7 @@ export function PhaserPreview({
           this.burst(item.x, item.y, 0xfacc15, Phaser, feedbackRules.collectBurstCount);
           this.updateHud();
           if (this.runtimeState.phase === "won") {
+            this.finalizeRun("won");
             emitRuntimePhase("won");
             audio.playWin();
             this.stopPlayer();
@@ -350,6 +799,7 @@ export function PhaserPreview({
         private reachFinish(Phaser: typeof import("phaser")) {
           if (this.runtimeState.phase !== "playing") return;
           this.runtimeState = collectPlayableItem(this.runtimeState, rules.winScore, rules.winScore);
+          this.finalizeRun("won");
           emitRuntimePhase("won");
           audio.playWin();
           this.stopPlayer();
@@ -404,11 +854,22 @@ export function PhaserPreview({
           });
         }
 
+        private finalizeRun(outcome: "won" | "lost") {
+          const durationMs = Math.max(0, this.time.now - this.startedAt);
+          emitRuntimeResult({
+            outcome,
+            score: this.runtimeState.score,
+            deaths: this.deathCount,
+            durationMs
+          });
+        }
+
         private hitHazard(Phaser: typeof import("phaser")) {
           if (this.runtimeState.phase !== "playing") return;
           const now = this.time.now;
           if (now - this.lastHitAt < feedbackRules.invulnerabilityMs) return;
           this.lastHitAt = now;
+          this.deathCount += 1;
           this.runtimeState = hitPlayableHazard(this.runtimeState);
           audio.playHit();
           if (gameHooks?.impactRules?.hitStopMs) {
@@ -424,6 +885,7 @@ export function PhaserPreview({
             this.updateHud();
             return;
           }
+          this.finalizeRun("lost");
           emitRuntimePhase("lost");
           audio.playLose();
           this.stopPlayer();
@@ -636,7 +1098,7 @@ export function PhaserPreview({
           const dx = this.player.x - hazard.x;
           const dy = this.player.y - hazard.y;
           const distance = Math.max(1, Math.hypot(dx, dy));
-          const speed = (enemy.speed ?? gameHooks?.numberTuning.hazardSpeed ?? 130) / 120;
+          const speed = ((enemy.speed ?? gameHooks?.numberTuning.hazardSpeed ?? 130) / 120) * this.stageSpeedMultiplier;
           hazard.x += (dx / distance) * speed;
           hazard.y += (dy / distance) * speed;
         }
@@ -661,7 +1123,7 @@ export function PhaserPreview({
           const dx = this.player.x - enemy.sprite.x;
           const dy = this.player.y - enemy.sprite.y;
           const distance = Math.max(1, Math.hypot(dx, dy));
-          const speed = this.time.now < enemy.chargeUntil ? enemy.speed / 34 : enemy.speed / 150;
+          const speed = (this.time.now < enemy.chargeUntil ? enemy.speed / 34 : enemy.speed / 150) * this.stageSpeedMultiplier;
           enemy.sprite.x += (dx / distance) * speed;
           enemy.sprite.y += (dy / distance) * speed;
         }
@@ -758,8 +1220,14 @@ export function PhaserPreview({
           const stage = currentStage(gameHooks, elapsed);
           if (stage && stage.id !== this.activeStageId) {
             this.activeStageId = stage.id;
-            this.status.setText(stage.label);
-            this.floatText(this.player.x, this.player.y - 52, stage.objective.toUpperCase(), "#93c5fd");
+            this.stageSpeedMultiplier = Math.max(0.5, Math.min(2.5, stage.speedMultiplier ?? 1));
+            const incomingDelta = Math.max(0, Math.min(12, Math.round(stage.enemySpawnDelta ?? 0)));
+            const reinforcement = Math.max(0, incomingDelta - this.stageEnemySpawnDelta);
+            this.stageEnemySpawnDelta = incomingDelta;
+            this.status.setText(`${stage.label} · ${stage.objective.toUpperCase()}`);
+            this.floatText(this.player.x, this.player.y - 52, stage.label, "#93c5fd");
+            if (reinforcement > 0) this.spawnStageReinforcement(Phaser, stage, reinforcement);
+            audio.playCollect();
           }
           for (const event of gameHooks?.encounterTimeline ?? []) {
             const key = `${event.trigger}:${event.atMs}:${event.event}`;
@@ -773,6 +1241,38 @@ export function PhaserPreview({
             if (event.event === "projectile_burst") this.fireProjectileBurst(Phaser, event.intensity);
             if (event.event === "spawn_mine") this.spawnTimelineMines(Phaser, event.intensity);
             if (event.event === "reward_burst") this.spawnRewardBurst(Phaser, event.intensity);
+          }
+        }
+
+        private spawnStageReinforcement(
+          Phaser: typeof import("phaser"),
+          stage: NonNullable<GameHooks["stageGoals"]>[number],
+          count: number
+        ) {
+          const archetypes = gameHooks?.enemyArchetypes ?? [];
+          const preferred = archetypes.find((entry) => stage.enemyMix.includes(entry.id))
+            ?? archetypes[Math.min(archetypes.length - 1, stage.startsAtMs > 30000 ? 1 : 0)]
+            ?? archetypes[0];
+          for (let index = 0; index < count; index += 1) {
+            const x = clampPosition(280 + index * 130, 90, 880);
+            const y = config.templateFamily === "platformer"
+              ? clampPosition(440 - (index % 2) * 90, 200, 480)
+              : clampPosition(160 + (index % 3) * 110, 130, 460);
+            const point = avoidSpawnPoint(x, y, this.getSpawnPoint(), config.templateFamily);
+            const sprite = this.createRuntimeImage(point.x, point.y, "generated-hazard", 48, 48, 0xfb7185, 6);
+            this.hazards.push(sprite);
+            this.enemies.push({
+              sprite,
+              kind: (preferred?.type as RuntimeEnemyKind) ?? "patroller",
+              originX: point.x,
+              originY: point.y,
+              speed: preferred?.speed ?? gameHooks?.numberTuning.hazardSpeed ?? 120,
+              spawnedAt: this.time.now,
+              nextAttackAt: this.time.now + 700,
+              chargeUntil: 0,
+              warned: false
+            });
+            this.addWorldObject(sprite);
           }
         }
 
@@ -1036,6 +1536,17 @@ export function PhaserPreview({
           </ul>
         </div>
       )}
+      {runtimeResult && (runtimePhase === "won" || runtimePhase === "lost") && (
+        <ScoreTierOverlay
+          result={runtimeResult}
+          tiers={gameHooks?.scoreTiers}
+          iterationHint={iterationHint}
+          onSubmitFeedback={onSubmitFeedback}
+          onRestart={() => {
+            window.dispatchEvent(new CustomEvent(PREVIEW_PRIMARY_ACTION_EVENT));
+          }}
+        />
+      )}
       {runtimePhase !== "asset_error" && (
         <button
           className="runtime-diagnostics-toggle"
@@ -1116,11 +1627,109 @@ function assetPackSummary(assetPack?: AssetPack): string {
 }
 
 function controlsLabel(config: GameConfig): string {
+  if (config.templateFamily === "tower_defense") {
+    return `控制：点击黄色建造点放置炮塔。目标：${config.playerGoal}`;
+  }
+  if (config.templateFamily === "grid_logic") {
+    return `控制：方向键推动方块，空格快速向右。目标：${config.playerGoal}`;
+  }
   const base =
     config.templateFamily === "platformer"
       ? "控制：方向键左右移动，空格跳跃。"
       : "控制：方向键八方向移动。";
   return `${base} 目标：${config.playerGoal}`;
+}
+
+function createTowerDefenseInput(config: GameConfig, gameHooks?: GameHooks): TowerDefenseRuntimeInput {
+  const lanes = gameHooks?.levelLayout.lanes ?? [];
+  const laneY = lanes[0]?.y ?? gameHooks?.levelFlow?.spawnPoint.y ?? 300;
+  const path =
+    lanes.length >= 2
+      ? lanes.slice(0, 4).map((lane, index) => ({ x: 90 + index * 230, y: lane.y }))
+      : [
+          { x: 70, y: laneY },
+          { x: 270, y: laneY - 95 },
+          { x: 500, y: laneY + 85 },
+          { x: 725, y: laneY - 35 },
+          { x: 880, y: laneY + 15 }
+        ];
+  const waveTarget = Math.max(6, gameHooks?.winCondition.target ?? config.level.hazards + 4);
+  return {
+    path,
+    waves: [
+      {
+        startsAtMs: 0,
+        count: Math.ceil(waveTarget / 2),
+        intervalMs: gameHooks?.enemyRules.waveIntervalMs || 850,
+        enemyHp: 4,
+        enemySpeed: gameHooks?.enemyRules.speed || 55,
+        reward: gameHooks?.collectibleRules.value || 3
+      },
+      {
+        startsAtMs: 5500,
+        count: Math.ceil(waveTarget / 2),
+        intervalMs: Math.max(420, (gameHooks?.enemyRules.waveIntervalMs || 850) - 180),
+        enemyHp: 6,
+        enemySpeed: (gameHooks?.enemyRules.speed || 55) + 18,
+        reward: (gameHooks?.collectibleRules.value || 3) + 1
+      }
+    ],
+    baseHp: gameHooks?.failCondition.lives || 6,
+    startingGold: 45,
+    towers: [
+      {
+        id: "basic",
+        cost: 12,
+        range: gameHooks?.attackRules?.explosionRadius ? Math.max(110, gameHooks.attackRules.explosionRadius * 1.8) : 135,
+        damage: Math.max(2, gameHooks?.attackRules?.contactDamage || 2),
+        fireRateMs: gameHooks?.attackRules?.projectileCooldownMs || 460
+      }
+    ]
+  };
+}
+
+function pointOnPolyline(path: Array<{ x: number; y: number }>, progress: number): { x: number; y: number } {
+  const total = Math.max(1, pathLength(path));
+  let remaining = total * Math.max(0, Math.min(1, progress));
+  for (let index = 1; index < path.length; index += 1) {
+    const start = path[index - 1];
+    const end = path[index];
+    const segment = Math.hypot(end.x - start.x, end.y - start.y);
+    if (remaining <= segment) {
+      const ratio = segment === 0 ? 0 : remaining / segment;
+      return {
+        x: start.x + (end.x - start.x) * ratio,
+        y: start.y + (end.y - start.y) * ratio
+      };
+    }
+    remaining -= segment;
+  }
+  return path[path.length - 1] ?? { x: 480, y: 270 };
+}
+
+function pathLength(path: Array<{ x: number; y: number }>): number {
+  let total = 0;
+  for (let index = 1; index < path.length; index += 1) {
+    total += Math.hypot(path[index].x - path[index - 1].x, path[index].y - path[index - 1].y);
+  }
+  return total;
+}
+
+function gridMetrics(runtime: GridLogicRuntime) {
+  const cellSize = Math.min(86, Math.floor(Math.min(680 / runtime.columns, 360 / runtime.rows)));
+  return {
+    cellSize,
+    originX: 480 - (runtime.columns * cellSize) / 2 + cellSize / 2,
+    originY: 292 - (runtime.rows * cellSize) / 2 + cellSize / 2
+  };
+}
+
+function gridCellCenter(runtime: GridLogicRuntime, column: number, row: number) {
+  const metrics = gridMetrics(runtime);
+  return {
+    x: metrics.originX + column * metrics.cellSize,
+    y: metrics.originY + row * metrics.cellSize
+  };
 }
 
 function loadImage(scene: import("phaser").Scene, key: string, url?: string) {

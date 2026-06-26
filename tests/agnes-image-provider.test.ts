@@ -31,7 +31,9 @@ describe("Agnes image provider", () => {
     const body = JSON.parse(requestBody);
     expect(body.model).toBe("agnes-image-test");
     expect(body.prompt).toContain("player.ship");
-    expect(body.size).toBe("512x512");
+    expect(body.size).toBe("1024x1024");
+    expect(body.seed).toBeUndefined();
+    expect(body.style_strength).toBeUndefined();
     expect(body.transparent_background).toBeUndefined();
     expect(result.source).toBe("generated");
     expect(result.provider).toBe("agnes");
@@ -58,6 +60,47 @@ describe("Agnes image provider", () => {
     });
 
     expect(JSON.parse(requestBody).model).toBe("agnes-image-2.1-flash");
+  });
+
+  it("sends only the final visual prompt and image constraints to Agnes", async () => {
+    let sentPrompt = "";
+    const provider = createAgnesImageProvider({
+      apiKey: "agnes-key",
+      fetcher: async ({ init }) => {
+        sentPrompt = JSON.parse(init.body).prompt;
+        return JSON.stringify({ data: [{ b64_json: "iVBORw0KGgo=" }] });
+      }
+    });
+
+    await provider({
+      projectId: "project-agnes",
+      versionId: "v1",
+      requirement: {
+        assetKey: "player.ship",
+        type: "image",
+        purpose: "player sprite",
+        style: "developerPrompt polluted style",
+        generationMode: "model",
+        copyrightStatus: "generated",
+        spec: "user idea: move, score, win condition, Phaser hooks",
+        status: "missing",
+        prompt: "专业游戏主角精灵提示词; assetKey: player.ship; subject: 太空猫飞船主角.",
+        acceptedFileTypes: ["image/*"],
+        previewUrl: "",
+        source: "generated",
+        fileUrl: "",
+        provider: "pending",
+        model: "pending",
+        generationParams: {},
+        transparentBackgroundRequired: true
+      }
+    });
+
+    expect(sentPrompt).toContain("专业游戏主角精灵提示词");
+    expect(sentPrompt).toContain("solid chroma");
+    expect(sentPrompt).not.toContain("developerPrompt");
+    expect(sentPrompt).not.toContain("win condition");
+    expect(sentPrompt).not.toContain("Phaser");
   });
 
   it("can use Agnes official chat completions request format", async () => {
@@ -114,6 +157,90 @@ describe("Agnes image provider", () => {
 
     expect(result.fileUrl).toBe("https://cdn.agnes.example/background.png");
     expect(result.generationParams?.transparentBackground).toBe(false);
+  });
+
+  it("passes the background as a reference image without unsupported Agnes fields", async () => {
+    const background = createAssetRequirements("top_down").find((asset) => asset.assetKey === "world.background");
+    const player = createAssetRequirements("top_down").find((asset) => asset.assetKey === "player.ship");
+    if (!background || !player) throw new Error("missing Agnes fixtures");
+
+    const requests: Array<Record<string, unknown>> = [];
+    const provider = createAgnesImageProvider({
+      apiKey: "agnes-key",
+      baseUrl: "https://agnes.example",
+      fetcher: async ({ init }) => {
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        requests.push(body);
+        return JSON.stringify({
+          data: [{ url: requests.length === 1 ? "https://cdn.agnes.example/background.png" : "https://cdn.agnes.example/player.png" }]
+        });
+      }
+    });
+
+    await provider({
+      projectId: "project-agnes",
+      versionId: "v1-shared-style",
+      requirement: background
+    });
+    const playerResult = await provider({
+      projectId: "project-agnes",
+      versionId: "v1-shared-style",
+      requirement: player
+    });
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0].seed).toBeUndefined();
+    expect(requests[1].seed).toBeUndefined();
+    expect(requests[0].style_strength).toBeUndefined();
+    expect(requests[1].style_strength).toBeUndefined();
+    expect(requests[1].reference_image).toBe("https://cdn.agnes.example/background.png");
+    expect(playerResult.generationParams?.referenceImage).toBe("https://cdn.agnes.example/background.png");
+  });
+
+  it("omits the reference image when the background has not succeeded", async () => {
+    const player = createAssetRequirements("top_down").find((asset) => asset.assetKey === "player.ship");
+    if (!player) throw new Error("missing player.ship fixture");
+
+    let requestBody = "";
+    const provider = createAgnesImageProvider({
+      apiKey: "agnes-key",
+      baseUrl: "https://agnes.example",
+      fetcher: async ({ init }) => {
+        requestBody = init.body;
+        return JSON.stringify({ data: [{ url: "https://cdn.agnes.example/player.png" }] });
+      }
+    });
+
+    await provider({
+      projectId: "project-agnes",
+      versionId: "v1-no-reference",
+      requirement: player
+    });
+
+    expect(JSON.parse(requestBody).reference_image).toBeUndefined();
+  });
+
+  it("normalizes unsupported target sizes to Agnes-compatible sizes", async () => {
+    const requirement = createAssetRequirements("top_down").find((asset) => asset.assetKey === "world.background");
+    if (!requirement) throw new Error("missing world.background fixture");
+    const sizes: unknown[] = [];
+    const provider = createAgnesImageProvider({
+      apiKey: "agnes-key",
+      baseUrl: "https://agnes.example",
+      fetcher: async ({ init }) => {
+        sizes.push(JSON.parse(init.body).size);
+        return JSON.stringify({ data: [{ url: "https://cdn.agnes.example/background.png" }] });
+      }
+    });
+
+    await provider({ projectId: "project-agnes", versionId: "v1", requirement });
+    await provider({
+      projectId: "project-agnes",
+      versionId: "v1",
+      requirement: { ...requirement, targetSize: "1536x864" }
+    });
+
+    expect(sizes).toEqual(["1536x1024", "1536x1024"]);
   });
 
   it("fails clearly when IMAGE_API_KEY is missing so MediaGateway can fall back", async () => {

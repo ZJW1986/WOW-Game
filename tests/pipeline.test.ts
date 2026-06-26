@@ -33,6 +33,8 @@ describe("standard artifact pipeline", () => {
       "mature-game-brief.md",
       "gdd.json",
       "gdd.md",
+      "style-sheet.json",
+      "style-sheet.md",
       "asset-style-guide.json",
       "asset-style-guide.md",
       "asset-requirements.json",
@@ -93,14 +95,24 @@ describe("standard artifact pipeline", () => {
     const topDown = runMockPipeline("make a top down spaceship dodge and collect game");
     const platformer = runMockPipeline("make a platform jump game with coins and spikes");
     const towerDefense = runMockPipeline("make a tower defense game with waves and buildable turrets");
+    const gridLogic = runMockPipeline("make a grid puzzle game pushing blocks to targets");
+    const uiHeavy = runMockPipeline("make a restaurant management game with orders and income");
 
     expect(topDown.gameConfig.gameplay.primaryAction).toBe("dodge_collect");
     expect(platformer.gameConfig.gameplay.primaryAction).toBe("jump_reach_goal");
     expect(towerDefense.gameConfig.gameplay.primaryAction).toBe("defend_route");
+    expect(gridLogic.gameConfig.gameplay.primaryAction).toBe("solve_grid");
+    expect(uiHeavy.gameConfig.gameplay.primaryAction).toBe("manage_choices");
     expect(new Set([
       topDown.gameConfig.gameplay.enemyBehavior,
       platformer.gameConfig.gameplay.enemyBehavior,
-      towerDefense.gameConfig.gameplay.enemyBehavior
-    ]).size).toBe(3);
+      towerDefense.gameConfig.gameplay.enemyBehavior,
+      gridLogic.gameConfig.gameplay.enemyBehavior,
+      uiHeavy.gameConfig.gameplay.enemyBehavior
+    ]).size).toBeGreaterThanOrEqual(4);
+    expect(towerDefense.gameHooks.levelLayout.lanes.length).toBeGreaterThan(0);
+    expect(gridLogic.gameHooks.levelLayout.gridState).toBeDefined();
+    expect(uiHeavy.gameHooks.failCondition.mode).toBe("time_out");
+    expect(uiHeavy.gameHooks.spawnRules?.maxActiveHazards).toBe(0);
   });
 });

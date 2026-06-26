@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { gameplayDslSchema, sandboxPluginSchema, validateArtifact } from "../src/core/schemas";
-import type { AssetPack, GameHooks, SandboxPlugin } from "../src/core/types";
+import { gameplayDslSchema, phaserPluginDirectorSchema, sandboxPluginSchema, validateArtifact } from "../src/core/schemas";
+import type { AssetPack, GameHooks, PhaserPluginDirector, SandboxPlugin } from "../src/core/types";
 import { compileGameplayDsl, validateGameplayDsl } from "../src/services/gameplayDsl";
+import { compilePhaserPluginDirectorToHooks, validatePhaserPluginDirector } from "../src/services/phaserPluginDirector";
 import { validateSandboxPlugin } from "../src/services/sandboxPlugin";
 
 const assetPack: AssetPack = {
@@ -154,6 +155,55 @@ describe("three-layer generation unlock contracts", () => {
       "Disallowed sandbox API: readFile",
       "Unknown sandbox assetKey: missing.asset"
     ]));
+    expect(result.errors.some((error) => error.includes("fetch"))).toBe(true);
+    expect(result.errors.some((error) => error.includes("document"))).toBe(true);
+  });
+
+  it("accepts and compiles a whitelisted Phaser plugin director DSL", () => {
+    const plugin: PhaserPluginDirector = {
+      version: "1",
+      profileId: "vertical_flight_shooter",
+      actions: [
+        { id: "enemy-wave", type: "spawn_enemy", atMs: 6000, enemyType: "shooter", count: 3 },
+        { id: "boss-burst", type: "spawn_projectile", atMs: 18000, count: 4 },
+        { id: "power-reward", type: "spawn_item", atMs: 10000, assetKey: "player.hero", count: 1 },
+        { id: "hit-flash", type: "hit_flash", atMs: 0 },
+        { id: "shake", type: "camera_shake", atMs: 18000, intensity: 0.024 },
+        { id: "shoot", type: "player_ability", ability: "shoot" }
+      ]
+    };
+
+    expect(phaserPluginDirectorSchema.safeParse(plugin).success).toBe(true);
+    expect(validatePhaserPluginDirector(plugin, assetPack).accepted).toBe(true);
+
+    const compiled = compilePhaserPluginDirectorToHooks(plugin, assetPack);
+    expect(compiled.success).toBe(true);
+    if (!compiled.success) return;
+    expect(compiled.hooks.enemyArchetypes?.map((enemy) => enemy.type)).toContain("shooter");
+    expect(compiled.hooks.encounterTimeline?.map((event) => event.event)).toEqual(
+      expect.arrayContaining(["spawn_wave", "projectile_burst", "reward_burst"])
+    );
+    expect(compiled.hooks.impactRules?.screenShakeIntensity).toBeGreaterThan(0.02);
+  });
+
+  it("rejects Phaser plugin directors containing lifecycle or arbitrary JavaScript", () => {
+    const result = validatePhaserPluginDirector({
+      version: "1",
+      profileId: "platform_jumper",
+      actions: [
+        { id: "bad-code", type: "custom_code", code: "new Phaser.Game({}); fetch('/x'); document.body.innerHTML='';" },
+        { id: "bad-scene", type: "scene_lifecycle", lifecycle: "create" },
+        { id: "bad-asset", type: "spawn_item", atMs: 1000, assetKey: "missing.asset", count: 1 }
+      ]
+    }, assetPack);
+
+    expect(result.accepted).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      "Forbidden Phaser lifecycle action: scene_lifecycle",
+      "Forbidden custom code action: custom_code",
+      "Unknown plugin assetKey: missing.asset"
+    ]));
+    expect(result.errors.some((error) => error.includes("new Phaser.Game"))).toBe(true);
     expect(result.errors.some((error) => error.includes("fetch"))).toBe(true);
     expect(result.errors.some((error) => error.includes("document"))).toBe(true);
   });

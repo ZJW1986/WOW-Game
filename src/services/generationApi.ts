@@ -2,6 +2,7 @@ import type {
   AssetPack,
   AssetCandidate,
   AssetCandidates,
+  AssetRequirement,
   ConfirmedAssets,
   ConfirmedThreeAssets,
   DesignBrief,
@@ -9,6 +10,7 @@ import type {
   RevisionAnalysis,
   TemplateFamily,
   ThreeGameBrief,
+  ThreeAssetCandidates,
   UploadedPackageArtifacts,
   UserAnswer,
   UserMaterial
@@ -21,6 +23,7 @@ import {
   createPlayableDirector,
   type GenerationServiceOptions
 } from "./generationService";
+import { selectGameDevPromptProfile } from "./gameDevPromptLibrary";
 import { validateCoreAssetCandidate } from "./visualAssetValidation";
 import { createPlayableStore, type PlayableStoreOptions } from "./playableStore";
 import {
@@ -29,8 +32,10 @@ import {
 } from "./uploadedPackageService";
 import { createRuntimeAssetReport } from "../ui/previewAssets";
 import { processGeneratedImageForSlot } from "./imageCutoutService";
+import { createRetryBudget } from "./retryBudget";
 import {
   createThreeAssetCandidates,
+  builtinThreeModelUrl,
   generateThreeGameMvp,
   hasConfirmedThreeCoreAssets,
   normalizeThreeSceneDirector
@@ -42,6 +47,22 @@ import {
   getTripoTask,
   pollTripoTask
 } from "./tripo3dProvider";
+import { createCellCogGenerationReport } from "./cellCogService";
+import {
+  createAudioPromptPack,
+  createGameProductionBrief,
+  createModelPromptPack,
+  createSceneMapPlan,
+  createUiAssetKit,
+  createVisualPromptPack
+} from "./productionPromptPacks";
+import { createAgnesImageProvider } from "./agnesImageProvider";
+import {
+  buildGameDevPromptBundle,
+  gameDevPromptProfiles,
+  type GameDevPromptProfileId
+} from "./gameDevPromptLibrary";
+import { createVisualAssetReport } from "./visualAssetValidation";
 
 export interface GenerationApiRequest {
   method: string;
@@ -63,6 +84,34 @@ export interface GenerationApiOptions {
 
 let assetBatchSequence = 0;
 
+function withBuiltinThreeFallbackParams(
+  params: AssetRequirement["generationParams"],
+  genre: NonNullable<ThreeGameBrief["genre"]>,
+  assetKey: string,
+  tripoStatus: "missing_api_key" | "task_failed"
+): AssetRequirement["generationParams"] {
+  return {
+    ...params,
+    tripoStatus,
+    fallbackProvider: "builtin-three",
+    fallbackFileUrl: builtinThreeModelUrl(genre, assetKey),
+    canUseBuiltinFallback: true
+  };
+}
+
+type CutoutRetryGenerator = (input: {
+  candidate: AssetCandidate;
+  reason: string;
+  versionId: string;
+}) => Promise<{
+  fileUrl: string;
+  previewUrl?: string;
+  provider: string;
+  model: string;
+  prompt: string;
+  generationParams?: Record<string, string | number | boolean>;
+}>;
+
 function createAssetBatchId(slot?: string): string {
   assetBatchSequence += 1;
   const suffix = slot ? `-${safeAssetFileName(slot)}` : "";
@@ -78,6 +127,25 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       dataDir: env.DATA_DIR ?? "data",
       ...options.storeIO
     });
+    if (request.method === "GET" && request.path === "/api/provider-health") {
+      return {
+        status: 200,
+        body: {
+          providers: {
+            deepseek: { configured: Boolean(env.DEEPSEEK_API_KEY) },
+            agnes: {
+              configured: Boolean(env.IMAGE_API_KEY),
+              provider: env.IMAGE_PROVIDER ?? "",
+              enabled: (env.IMAGE_PROVIDER ?? "").trim().toLowerCase() === "agnes" && Boolean(env.IMAGE_API_KEY),
+              baseUrlConfigured: Boolean(env.IMAGE_BASE_URL),
+              endpointConfigured: Boolean(env.IMAGE_ENDPOINT)
+            },
+            tripo: { configured: Boolean(env.TRIPO_API_KEY) },
+            cellcog: { configured: Boolean(env.CELLCOG_API_KEY) }
+          }
+        }
+      };
+    }
     const uploadFileMatch = request.path.match(/^\/api\/uploads\/([^/]+)\/([^/]+)\/files\/(.+)$/);
     if (request.method === "GET" && uploadFileMatch) {
       const bytes = await store.readUploadedPackageFile(
@@ -342,11 +410,11 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
               threeDesignBrief: result.threeGameBrief,
               modelTask: {
                 taskType: "llm.three_design_brief",
-                provider: "mock",
-                model: "three-skill-director-fallback",
-                status: "fallback"
+                provider: "three-game-service",
+                model: "three-scene-director",
+                status: "ok"
               },
-              fallbackUsed: true
+              fallbackUsed: false
             }
           };
         }
@@ -397,11 +465,18 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
           model: parseModel(request.body.model),
           designBrief: parseOptionalDesignBrief(request.body.designBrief),
           answers: parseAnswers(request.body.answers),
+          requestedSlots: parseRequestedAssetSlots(request.body.requestedSlots),
           referencePackageSummary,
           userMaterials: parseUserMaterials(request.body.userMaterials)
         });
         const assetBatchId = createAssetBatchId();
-        await localizeAssetCandidates(store, result.assetCandidates, idea, assetBatchId);
+        await localizeAssetCandidates(
+          store,
+          result.assetCandidates,
+          idea,
+          assetBatchId,
+          createCutoutRetryGenerator(env, options.fetcher)
+        );
         result.assetCandidates = {
           candidates: result.assetCandidates.candidates.map((candidate) =>
             candidate.validationStatus === "failed" || candidate.error
@@ -426,6 +501,134 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       }
     }
 
+    if (request.method === "POST" && request.path === "/api/generate-production-brief") {
+      try {
+        const engineType = request.body.engineType === "threejs3d" ? "threejs3d" : "phaser2d";
+        const gameProductionBrief = createGameProductionBrief({
+          idea: requireString(request.body.idea, "idea"),
+          engineType,
+          templateFamily: engineType === "phaser2d" ? parseTemplateFamily(request.body.templateFamily) : undefined,
+          threeGenre: engineType === "threejs3d" ? parseThreeGameGenre(request.body.gameType3d) : undefined
+        });
+        return { status: 200, body: { gameProductionBrief } };
+      } catch (error) {
+        return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/generate-game-dev-prompt-bundle") {
+      try {
+        const gameDevPromptBundle = buildGameDevPromptBundle({
+          idea: requireString(request.body.idea, "idea"),
+          profileId: parseGameDevPromptProfileId(request.body.profileId),
+          engineType: request.body.engineType === "threejs3d" ? "threejs3d" : "phaser2d"
+        });
+        return { status: 200, body: { gameDevPromptBundle } };
+      } catch (error) {
+        return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/generate-ui-asset-kit") {
+      try {
+        const idea = requireString(request.body.idea, "idea");
+        const productionBrief = createGameProductionBrief({
+          idea,
+          engineType: request.body.engineType === "threejs3d" ? "threejs3d" : "phaser2d",
+          templateFamily: request.body.engineType === "threejs3d" ? undefined : parseTemplateFamily(request.body.templateFamily),
+          threeGenre: request.body.engineType === "threejs3d" ? parseThreeGameGenre(request.body.gameType3d) : undefined
+        });
+        const uiAssetKit = createUiAssetKit({ idea, productionBrief });
+        return { status: 200, body: { uiAssetKit } };
+      } catch (error) {
+        return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/generate-audio-prompt-pack") {
+      try {
+        const idea = requireString(request.body.idea, "idea");
+        const productionBrief = createGameProductionBrief({
+          idea,
+          engineType: request.body.engineType === "threejs3d" ? "threejs3d" : "phaser2d",
+          templateFamily: request.body.engineType === "threejs3d" ? undefined : parseTemplateFamily(request.body.templateFamily),
+          threeGenre: request.body.engineType === "threejs3d" ? parseThreeGameGenre(request.body.gameType3d) : undefined
+        });
+        const audioPromptPack = createAudioPromptPack({ idea, productionBrief });
+        return { status: 200, body: { audioPromptPack } };
+      } catch (error) {
+        return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/generate-model-prompt-pack") {
+      try {
+        const idea = requireString(request.body.idea, "idea");
+        const threeResult = generateThreeGameMvp({
+          idea,
+          projectId: optionalString(request.body.projectId) ?? `model-pack-${Date.now()}`,
+          baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
+          viewportMode:
+            request.body.viewportMode === "web_16_9" || request.body.viewportMode === "app_9_16"
+              ? request.body.viewportMode
+              : "app_9_16",
+          gameType3d: parseThreeGameGenre(request.body.gameType3d),
+          answers: parseAnswers(request.body.answers),
+          threeDesignBrief: parseOptionalThreeGameBrief(request.body.threeDesignBrief),
+          userMaterials: parseUserMaterials(request.body.userMaterials)
+        });
+        const modelPromptPack = createModelPromptPack({
+          idea,
+          threeGameBrief: threeResult.threeGameBrief,
+          threeSceneDirector: threeResult.threeSceneDirector
+        });
+        const sceneMapPlan = createSceneMapPlan({
+          engineType: "threejs3d",
+          threeSceneDirector: threeResult.threeSceneDirector
+        });
+        return { status: 200, body: { modelPromptPack, sceneMapPlan } };
+      } catch (error) {
+        return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/cellcog/generate-asset") {
+      try {
+        const report = createCellCogGenerationReport(
+          {
+            promptPackId: requireString(request.body.promptPackId, "promptPackId"),
+            slot: requireString(request.body.slot, "slot"),
+            prompt: requireString(request.body.prompt, "prompt"),
+            requestedOutput: parseCellCogOutput(request.body.requestedOutput)
+          },
+          { apiKey: env.CELLCOG_API_KEY }
+        );
+        return {
+          status: report.status === "missing_key" ? 400 : 202,
+          body: { cellcogGenerationReport: report }
+        };
+      } catch (error) {
+        return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/replace-asset-candidate") {
+      try {
+        const report = {
+          projectId: optionalString(request.body.projectId),
+          assetKey: requireString(request.body.assetKey, "assetKey"),
+          previousFileUrl: optionalString(request.body.previousFileUrl),
+          candidateFileUrl: requireString(request.body.candidateFileUrl, "candidateFileUrl"),
+          status: "candidate_created" as const,
+          reason: optionalString(request.body.reason) ?? "Replacement asset is staged as a candidate and will not update runtime until confirmed.",
+          runtimeUpdated: false
+        };
+        return { status: 200, body: { assetReplacementReport: report } };
+      } catch (error) {
+        return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+      }
+    }
+
     if (request.method === "POST" && request.path === "/api/regenerate-asset-candidate") {
       try {
         const service = createGenerationService({
@@ -436,10 +639,11 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
         });
         const idea = requireString(request.body.idea, "idea");
         const candidate = parseAssetCandidateInput(request.body.candidate);
-        const result = await service.regenerateAssetCandidate({
+        const result: { assetCandidate: AssetCandidate } = await service.regenerateAssetCandidate({
           idea,
           templateFamily: parseTemplateFamily(request.body.templateFamily),
-          candidate
+          candidate,
+          slotRevisionId: optionalString(request.body.slotRevisionId)
         });
         const assetBatchId = createAssetBatchId(candidate.slot);
         await localizeAssetCandidate(store, result.assetCandidate, idea, assetBatchId);
@@ -548,7 +752,12 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
                 ...asset,
                 status: "missing" as const,
                 error: "TRIPO_API_KEY is not configured.",
-                generationParams: { ...asset.generationParams, tripoStatus: "missing_api_key" }
+                generationParams: withBuiltinThreeFallbackParams(
+                  asset.generationParams,
+                  briefResult.threeGameBrief.genre,
+                  asset.assetKey,
+                  "missing_api_key"
+                )
               };
             }
             try {
@@ -572,7 +781,12 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
                 ...asset,
                 status: "failed" as const,
                 error: error instanceof Error ? error.message : String(error),
-                generationParams: { ...asset.generationParams, tripoStatus: "task_failed" }
+                generationParams: withBuiltinThreeFallbackParams(
+                  asset.generationParams,
+                  briefResult.threeGameBrief.genre,
+                  asset.assetKey,
+                  "task_failed"
+                )
               };
             }
           })
@@ -582,6 +796,118 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
           body: {
             threeAssetCandidates: {
               ...threeAssetCandidates,
+              assets
+            },
+            threeDesignBrief: briefResult.threeGameBrief,
+            threeSceneDirector: briefResult.threeSceneDirector
+          }
+        };
+      } catch (error) {
+        return {
+          status: 400,
+          body: { error: error instanceof Error ? error.message : String(error) }
+        };
+      }
+    }
+
+    if (request.method === "POST" && request.path === "/api/regenerate-three-asset-candidate") {
+      try {
+        const idea = requireString(request.body.idea, "idea");
+        const assetKey = requireString(request.body.assetKey, "assetKey");
+        const briefResult = generateThreeGameMvp({
+          idea,
+          projectId: optionalString(request.body.projectId) ?? `three-assets-${Date.now()}`,
+          baseUrl: optionalString(request.body.baseUrl) ?? env.PUBLIC_BASE_URL ?? "http://localhost:5173",
+          viewportMode:
+            request.body.viewportMode === "web_16_9" || request.body.viewportMode === "app_9_16"
+              ? request.body.viewportMode
+              : "app_9_16",
+          gameType3d: parseThreeGameGenre(request.body.gameType3d),
+          answers: parseAnswers(request.body.answers),
+          threeDesignBrief: parseOptionalThreeGameBrief(request.body.threeDesignBrief),
+          userMaterials: parseUserMaterials(request.body.userMaterials)
+        });
+        const existingCandidates = parseThreeAssetCandidates(request.body.threeAssetCandidates);
+        const assetBatchId = createAssetBatchId(assetKey);
+        const normalizedDirector = normalizeThreeSceneDirector(
+          briefResult.threeSceneDirector,
+          briefResult.threeGameBrief,
+          parseAnswers(request.body.answers)
+        );
+        const regenerated = createThreeAssetCandidates({
+          idea,
+          brief: briefResult.threeGameBrief,
+          director: normalizedDirector,
+          assetBatchId
+        });
+        const nextAssets = regenerated.assets.map((asset): (typeof regenerated.assets)[number] => {
+          if (asset.assetKey !== assetKey) {
+            return existingCandidates?.assets.find((item) => item.assetKey === asset.assetKey) ?? asset;
+          }
+          const previous = existingCandidates?.assets.find((item) => item.assetKey === assetKey);
+          return {
+            ...asset,
+            generationParams: {
+              ...asset.generationParams,
+              previousFileUrl: previous?.fileUrl ?? "",
+              previousPrompt: previous?.prompt ?? "",
+              slotRevisionId: optionalString(request.body.slotRevisionId) ?? `${assetBatchId}-rev`
+            }
+          };
+        });
+        const tripoOptions = createTripoOptions(env);
+        const assets = await Promise.all(
+          nextAssets.map(async (asset) => {
+            if (asset.assetKey !== assetKey) return asset;
+            if (!tripoOptions.apiKey) {
+              return {
+                ...asset,
+                status: "missing" as const,
+                error: "TRIPO_API_KEY is not configured.",
+                generationParams: withBuiltinThreeFallbackParams(
+                  asset.generationParams,
+                  briefResult.threeGameBrief.genre,
+                  asset.assetKey,
+                  "missing_api_key"
+                )
+              };
+            }
+            try {
+              const taskId = await createTripoTextToModelTask(tripoOptions, asset.prompt, createTripoFetcher(options.fetcher));
+              const task = await pollTripoTask(tripoOptions, taskId, createTripoFetcher(options.fetcher));
+              const modelUrl = typeof task.output?.model_url === "string" ? task.output.model_url : "";
+              const previewUrl =
+                typeof task.output?.rendered_image_url === "string" ? task.output.rendered_image_url : asset.previewUrl;
+              if (!modelUrl) {
+                throw new Error(`Tripo task completed without model_url: ${taskId}`);
+              }
+              return {
+                ...asset,
+                status: "generated" as const,
+                fileUrl: modelUrl,
+                previewUrl,
+                generationParams: { ...asset.generationParams, taskId, tripoStatus: "success", remoteModelUrl: modelUrl }
+              };
+            } catch (error) {
+              return {
+                ...asset,
+                status: "failed" as const,
+                error: error instanceof Error ? error.message : String(error),
+                generationParams: withBuiltinThreeFallbackParams(
+                  asset.generationParams,
+                  briefResult.threeGameBrief.genre,
+                  asset.assetKey,
+                  "task_failed"
+                )
+              };
+            }
+          })
+        );
+        return {
+          status: 200,
+          body: {
+            threeAssetCandidates: {
+              ...regenerated,
               assets
             },
             threeDesignBrief: briefResult.threeGameBrief,
@@ -657,11 +983,11 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
               ),
               modelTask: {
                 taskType: "llm.three_guided_questions",
-                provider: "mock",
-                model: "three-skill-director-fallback",
-                status: "fallback"
+                provider: "three-genre-profile",
+                model: "three-genre-profile",
+                status: "ok"
               },
-              fallbackUsed: true
+              fallbackUsed: false
             }
           };
         }
@@ -749,10 +1075,22 @@ export function createGenerationApiHandler(options: GenerationApiOptions = {}) {
       result.playableDirector = createPlayableDirector(
         result.project.gameConfig,
         result.project.gameHooks,
-        result.runtimeAssetReport
+        result.runtimeAssetReport,
+        selectGameDevPromptProfile({
+          idea: requireString(request.body.idea, "idea"),
+          templateFamily: parseTemplateFamily(request.body.templateFamily)
+        })
       );
       result.verificationReport = createBrowserVerificationReport(result.runtimeAssetReport, result.playableDirector);
-      result.deliveryReady = result.verificationReport.passed;
+      const visualAssetReport = await createVisualAssetReport(result.project.assetPack);
+      result.deliveryReady = result.verificationReport.passed && visualAssetReport.ready;
+      result.project.artifacts.push({
+        stage: "visual-asset-report",
+        fileName: "visual-asset-report.json",
+        title: "Visual Asset Report",
+        content: visualAssetReport,
+        format: "json"
+      });
       syncDeliveryArtifacts(result.project, result.playableDirector, result.runtimeAssetReport, result.verificationReport);
       syncAssetPackArtifact(result.project);
       const finalAssetError = validateFinalCoreAssets(result.project.assetPack, confirmedAssets);
@@ -861,10 +1199,13 @@ async function localizeAssetCandidates(
   store: ReturnType<typeof createPlayableStore>,
   assetCandidates: AssetCandidates,
   idea: string,
-  assetBatchId: string
+  assetBatchId: string,
+  cutoutRetryGenerator?: CutoutRetryGenerator
 ): Promise<void> {
   await Promise.all(
-    assetCandidates.candidates.map((candidate) => localizeAssetCandidate(store, candidate, idea, assetBatchId))
+    assetCandidates.candidates.map((candidate) =>
+      localizeAssetCandidate(store, candidate, idea, assetBatchId, cutoutRetryGenerator)
+    )
   );
 }
 
@@ -872,14 +1213,16 @@ async function localizeAssetCandidate(
   store: ReturnType<typeof createPlayableStore>,
   candidate: AssetCandidate,
   idea: string,
-  assetBatchId: string
+  assetBatchId: string,
+  cutoutRetryGenerator?: CutoutRetryGenerator
 ): Promise<void> {
   if (
     (candidate.type !== "image" && candidate.type !== "ui") ||
     (!/^https?:\/\//.test(candidate.fileUrl) && !candidate.fileUrl.startsWith("data:image"))
   ) return;
   try {
-    const localized = await localizeImageUrl(store, {
+    const retryBudget = createRetryBudget({ asset: 2 });
+    let localized = await localizeImageUrl(store, {
       projectId: "asset-candidates",
       versionId: assetBatchId,
       assetKey: candidate.assetKey,
@@ -889,14 +1232,55 @@ async function localizeAssetCandidate(
       style: candidate.style,
       idea
     });
+    let retryParams: Record<string, string | number | boolean> = {};
+    let validationProbe = validateLocalizedCandidate(candidate, localized);
+    let fatalValidationErrors = validationProbe.validationErrors.filter(isFatalAssetValidationError);
+    if (fatalValidationErrors.length > 0 && cutoutRetryGenerator && isSpriteCandidate(candidate)) {
+      const retryReason = fatalValidationErrors.join(" ");
+      try {
+        retryBudget.consume("asset");
+        const retry = await cutoutRetryGenerator({
+          candidate,
+          reason: retryReason,
+          versionId: assetBatchId
+        });
+        candidate.prompt = retry.prompt;
+        candidate.provider = retry.provider;
+        candidate.model = retry.model;
+        localized = await localizeImageUrl(store, {
+          projectId: "asset-candidates",
+          versionId: assetBatchId,
+          assetKey: candidate.assetKey,
+          slot: candidate.slot,
+          remoteUrl: retry.fileUrl,
+          prompt: retry.prompt,
+          style: candidate.style,
+          idea
+        });
+        retryParams = {
+          ...(retry.generationParams ?? {}),
+          cutoutRetryApplied: true,
+          cutoutRetryReason: retryReason,
+          cutoutRetryPrompt: retry.prompt
+        };
+        validationProbe = validateLocalizedCandidate(candidate, localized);
+        fatalValidationErrors = validationProbe.validationErrors.filter(isFatalAssetValidationError);
+      } catch (error) {
+        retryParams = {
+          cutoutRetryApplied: false,
+          cutoutRetryError: error instanceof Error ? error.message : String(error)
+        };
+      }
+    }
     candidate.fileUrl = localized.localUrl;
     candidate.previewUrl = localized.localUrl;
     candidate.generationParams = {
       ...(candidate.generationParams ?? {}),
       assetBatchId,
-      slotRevisionId: `${assetBatchId}-${candidate.slot}`,
+      localizedSlotRevisionId: `${assetBatchId}-${candidate.slot}`,
       originalRemoteUrl: localized.originalRemoteUrl,
       localized: true,
+      retryBudget: JSON.stringify(retryBudget.snapshot()),
       libraryFileUrl: localized.libraryUrl,
       originalLibraryUrl: localized.originalLibraryUrl,
       processedLibraryUrl: localized.libraryUrl,
@@ -907,18 +1291,10 @@ async function localizeAssetCandidate(
       chromaTolerance: localized.chromaTolerance ?? 0,
       edgeResidueScore: localized.edgeResidueScore ?? 0,
       spillScore: localized.spillScore ?? 0,
-      subjectCoverage: localized.subjectCoverage ?? 0
+      subjectCoverage: localized.subjectCoverage ?? 0,
+      ...retryParams
     };
-    const validated = validateCoreAssetCandidate({
-      ...candidate,
-      fileUrl: localized.validationUrl,
-      previewUrl: localized.validationUrl
-    });
-    const validationErrors = [
-      ...(validated.validationErrors ?? []),
-      ...(localized.validationErrors ?? [])
-    ];
-    const fatalValidationErrors = validationErrors.filter(isFatalAssetValidationError);
+    const { validated, validationErrors } = validationProbe;
     candidate.slotRole = validated.slotRole;
     candidate.requiresTransparency = validated.requiresTransparency;
     candidate.subjectBounds = localized.subjectBounds ?? validated.subjectBounds;
@@ -940,8 +1316,28 @@ async function localizeAssetCandidate(
   }
 }
 
+function validateLocalizedCandidate(
+  candidate: AssetCandidate,
+  localized: Awaited<ReturnType<typeof localizeImageUrl>>
+) {
+  const validated = validateCoreAssetCandidate({
+    ...candidate,
+    fileUrl: localized.validationUrl,
+    previewUrl: localized.validationUrl
+  });
+  const validationErrors = [
+    ...(validated.validationErrors ?? []),
+    ...(localized.validationErrors ?? [])
+  ];
+  return { validated, validationErrors };
+}
+
+function isSpriteCandidate(candidate: AssetCandidate): boolean {
+  return candidate.slot === "player" || candidate.slot === "hazard" || candidate.slot === "collectible";
+}
+
 function isFatalAssetValidationError(error: string): boolean {
-  return !/edge residue|touches the image edge/i.test(error);
+  return error.trim().length > 0;
 }
 
 async function localizeImageUrl(
@@ -1370,6 +1766,93 @@ function createTripoFetcher(fetcher: GenerationServiceOptions["fetcher"] | undef
   };
 }
 
+function createCutoutRetryGenerator(
+  env: Record<string, string | undefined>,
+  fetcher: GenerationServiceOptions["fetcher"] | undefined
+): CutoutRetryGenerator | undefined {
+  if (env.IMAGE_PROVIDER !== "agnes" || !env.IMAGE_API_KEY) return undefined;
+  const provider = createAgnesImageProvider({
+    apiKey: env.IMAGE_API_KEY,
+    baseUrl: env.IMAGE_BASE_URL,
+    endpoint: env.IMAGE_ENDPOINT,
+    model: env.IMAGE_MODEL,
+    authHeader: env.IMAGE_AUTH_HEADER,
+    responseImagePath: env.IMAGE_RESPONSE_PATH,
+    timeoutMs: parsePositiveNumber(env.IMAGE_TIMEOUT_MS),
+    fetcher
+  });
+  return async ({ candidate, reason, versionId }) => {
+    const prompt = buildStrongerCutoutPrompt(candidate.prompt, reason);
+    const result = await provider({
+      projectId: "asset-candidates",
+      versionId,
+      requirement: createCutoutRetryRequirement(candidate, prompt)
+    });
+    return {
+      fileUrl: result.fileUrl,
+      previewUrl: result.previewUrl,
+      provider: result.provider,
+      model: result.model,
+      prompt,
+      generationParams: result.generationParams
+    };
+  };
+}
+
+function createCutoutRetryRequirement(candidate: AssetCandidate, prompt: string): AssetRequirement {
+  return {
+    assetKey: candidate.assetKey,
+    type: candidate.type,
+    purpose: candidate.purpose,
+    style: candidate.style,
+    generationMode: "model",
+    copyrightStatus: "generated",
+    spec: [
+      "stricter cutout retry",
+      "solid chroma green background only",
+      "isolated centered single sprite",
+      "no shadow, no glow, no ground, no border, no checkerboard, no background residue"
+    ].join("; "),
+    status: "missing",
+    prompt,
+    acceptedFileTypes: candidate.acceptedFileTypes,
+    previewUrl: candidate.previewUrl,
+    source: "generated",
+    fileUrl: "",
+    provider: "pending",
+    model: "pending",
+    generationParams: {
+      slot: candidate.slot,
+      cutoutRetry: true
+    },
+    transparentBackgroundRequired: true,
+    targetSize: "512x512",
+    approvalStatus: "pending"
+  };
+}
+
+function buildStrongerCutoutPrompt(prompt: string, reason: string): string {
+  return [
+    prompt,
+    "stricter cutout retry: regenerate this as one centered sprite on a perfectly flat chroma green (#00ff00) background.",
+    "Hard negative constraints: no checkerboard, no white or gray background, no border, no drop shadow, no glow touching edges, no cropped subject, no oversized subject, no background residue.",
+    `Previous validation category: ${summarizeCutoutFailure(reason)}`
+  ].join("\n");
+}
+
+function summarizeCutoutFailure(reason: string): string {
+  if (/transparent|background/i.test(reason)) return "cutout transparency failure";
+  if (/edge|touches|cropped/i.test(reason)) return "edge cleanup failure";
+  if (/small|oversized|coverage/i.test(reason)) return "sprite coverage failure";
+  return "strict sprite cutout failure";
+}
+
+function parsePositiveNumber(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function decodeBase64(value: string): Uint8Array {
   const normalized = value.includes(",") ? value.split(",").pop() ?? "" : value;
   const bufferCtor = (globalThis as { Buffer?: { from: (value: string, encoding: string) => Uint8Array } }).Buffer;
@@ -1456,6 +1939,20 @@ function parseModel(value: unknown): StartModelId {
     return value;
   }
   return "deepseek-v4-flash";
+}
+
+function parseCellCogOutput(value: unknown): "png" | "webp" | "glb" | "mp3" | "html" | "pdf" {
+  if (value === "png" || value === "webp" || value === "glb" || value === "mp3" || value === "html" || value === "pdf") {
+    return value;
+  }
+  return "png";
+}
+
+function parseGameDevPromptProfileId(value: unknown): GameDevPromptProfileId {
+  if (typeof value === "string" && gameDevPromptProfiles.some((profile) => profile.id === value)) {
+    return value as GameDevPromptProfileId;
+  }
+  return "light_rpg";
 }
 
 function parseAnswers(value: unknown): UserAnswer[] {
@@ -1657,6 +2154,68 @@ function parseOptionalConfirmedThreeAssets(value: unknown): ConfirmedThreeAssets
   };
 }
 
+function parseThreeAssetCandidates(value: unknown): ThreeAssetCandidates | undefined {
+  if (!isRecord(value) || !Array.isArray(value.assets)) return undefined;
+  return {
+    versionId: optionalString(value.versionId) ?? `three-assets-${Date.now()}`,
+    engineType: "threejs3d",
+    assets: value.assets
+      .filter(isRecord)
+      .map((asset) => ({
+        assetKey: optionalString(asset.assetKey) ?? "",
+        type: parseAssetType(asset.type),
+        purpose: optionalString(asset.purpose) ?? "",
+        style: optionalString(asset.style) ?? "",
+        generationMode:
+          asset.generationMode === "mock" ||
+          asset.generationMode === "model" ||
+          asset.generationMode === "uploaded" ||
+          asset.generationMode === "preset"
+            ? asset.generationMode
+            : "model",
+        copyrightStatus:
+          asset.copyrightStatus === "placeholder" ||
+          asset.copyrightStatus === "generated" ||
+          asset.copyrightStatus === "licensed" ||
+          asset.copyrightStatus === "user_provided"
+            ? asset.copyrightStatus
+            : "generated",
+        spec: optionalString(asset.spec) ?? "",
+        status:
+          asset.status === "missing" ||
+          asset.status === "mock" ||
+          asset.status === "uploaded" ||
+          asset.status === "generated" ||
+          asset.status === "failed"
+            ? asset.status
+            : "generated",
+        prompt: optionalString(asset.prompt) ?? "",
+        acceptedFileTypes: parseStringArray(asset.acceptedFileTypes),
+        previewUrl: optionalString(asset.previewUrl) ?? "",
+        source: parseAssetSource(asset.source),
+        fileUrl: optionalString(asset.fileUrl) ?? "",
+        provider: optionalString(asset.provider) ?? "",
+        model: optionalString(asset.model) ?? "",
+        generationParams: isRecord(asset.generationParams)
+          ? Object.fromEntries(
+              Object.entries(asset.generationParams).filter(
+                (entry): entry is [string, string | number | boolean] =>
+                  typeof entry[1] === "string" || typeof entry[1] === "number" || typeof entry[1] === "boolean"
+              )
+            )
+          : {},
+        approvalStatus:
+          asset.approvalStatus === "pending" ||
+          asset.approvalStatus === "approved" ||
+          asset.approvalStatus === "rejected"
+            ? asset.approvalStatus
+            : "approved",
+        error: optionalString(asset.error)
+      }))
+      .filter((asset) => asset.assetKey && asset.type === "model")
+  };
+}
+
 function parseAssetCandidateInput(value: unknown): AssetCandidate {
   const parsed = parseOptionalConfirmedAssets({ assets: [value] })?.assets[0];
   if (!parsed) throw new Error("candidate is required");
@@ -1677,17 +2236,17 @@ function validateConfirmedCoreAssetInputs(
   if (remoteAsset) {
     return `Core assets must be localized before generating a playable game: ${remoteAsset.slot}/${remoteAsset.assetKey}`;
   }
-  if (!hasConfirmedCoreAssets(confirmedAssets)) {
-    return "Core assets must be confirmed before generating a playable game.";
-  }
   const invalidAsset = confirmedAssets?.assets.find(
     (asset) =>
       ["background", "player", "hazard", "collectible"].includes(asset.slot) &&
       asset.approvalStatus !== "rejected" &&
-      (!isRuntimeImageUrl(asset.fileUrl) || !isRuntimeImageUrl(asset.previewUrl) || asset.validationStatus === "failed")
+      (!isRuntimeImageUrl(asset.fileUrl) || !isRuntimeImageUrl(asset.previewUrl) || asset.validationStatus !== "passed")
   );
   if (invalidAsset) {
     return `Core assets must pass visual validation before generating a playable game: ${invalidAsset.slot}/${invalidAsset.assetKey}`;
+  }
+  if (!hasConfirmedCoreAssets(confirmedAssets)) {
+    return "Core assets must be confirmed before generating a playable game.";
   }
   return null;
 }
@@ -1700,7 +2259,7 @@ function hasConfirmedCoreAssets(confirmedAssets: ConfirmedAssets | undefined): b
       asset.approvalStatus !== "rejected" &&
     isRuntimeImageUrl(asset.fileUrl) &&
     isRuntimeImageUrl(asset.previewUrl) &&
-    asset.validationStatus !== "failed" &&
+    asset.validationStatus === "passed" &&
     !asset.error
     ) {
       requiredSlots.delete(asset.slot);
@@ -1737,7 +2296,9 @@ function validateFinalCoreAssets(assetPack: AssetPack, confirmedAssets: Confirme
         asset.previewUrl.trim()
     );
     const finalAsset = assetPack.assets.find(
-      (asset) => coreAssetKeysBySlot[slot].includes(asset.assetKey) && finalAssetUsesConfirmedUrl(asset, confirmed)
+      (asset) =>
+        coreAssetKeysBySlot[slot].includes(asset.assetKey) &&
+        finalAssetMatchesConfirmedAsset(asset, confirmed, slot)
     );
     if (!confirmed || !finalAsset) {
       return "Final asset-pack must use confirmed core assets before saving a playable game.";
@@ -1754,6 +2315,17 @@ function finalAssetUsesConfirmedUrl(asset: AssetPack["assets"][number], confirme
     asset.fileUrl === confirmed.fileUrl ||
     originalRemoteUrl === confirmed.fileUrl
   );
+}
+
+function finalAssetMatchesConfirmedAsset(
+  asset: AssetPack["assets"][number],
+  confirmed: ConfirmedAssets["assets"][number] | undefined,
+  slot: "background" | "player" | "hazard" | "collectible"
+): boolean {
+  if (!confirmed) return false;
+  const confirmedSlot = confirmed.slot === slot;
+  const sameAssetKey = asset.assetKey === confirmed.assetKey;
+  return confirmedSlot && (sameAssetKey || finalAssetUsesConfirmedUrl(asset, confirmed));
 }
 
 function inferSlotFromAssetKey(assetKey: string): string {
@@ -1830,6 +2402,15 @@ function parseRevisionHistory(value: unknown): RevisionAnalysis[] {
 
 function parseStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function parseRequestedAssetSlots(value: unknown): Array<"background" | "player" | "hazard" | "collectible"> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const allowed = new Set(["background", "player", "hazard", "collectible"]);
+  const slots = value.filter((item): item is "background" | "player" | "hazard" | "collectible" =>
+    typeof item === "string" && allowed.has(item)
+  );
+  return slots.length > 0 ? Array.from(new Set(slots)) : undefined;
 }
 
 function readNumber(value: unknown, fallback: number): number {

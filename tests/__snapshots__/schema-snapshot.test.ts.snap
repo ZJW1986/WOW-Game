@@ -1,0 +1,1473 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`core schema snapshots > tracks contract changes for generated game artifacts 1`] = `
+{
+  "assetPack": {
+    "inner": {
+      "fields": {
+        "assets": {
+          "item": {
+            "fields": {
+              "acceptedFileTypes": {
+                "item": {
+                  "type": "string",
+                },
+                "max": undefined,
+                "min": undefined,
+                "type": "array",
+              },
+              "approvalStatus": {
+                "inner": {
+                  "type": "enum",
+                  "values": [
+                    "pending",
+                    "approved",
+                    "rejected",
+                  ],
+                },
+                "type": "optional",
+              },
+              "assetKey": {
+                "type": "string",
+              },
+              "copyrightStatus": {
+                "type": "enum",
+                "values": [
+                  "placeholder",
+                  "generated",
+                  "licensed",
+                  "user_provided",
+                ],
+              },
+              "derivedFromAssetKey": {
+                "inner": {
+                  "type": "string",
+                },
+                "type": "optional",
+              },
+              "error": {
+                "inner": {
+                  "type": "string",
+                },
+                "type": "optional",
+              },
+              "fileUrl": {
+                "type": "string",
+              },
+              "generationMode": {
+                "type": "enum",
+                "values": [
+                  "mock",
+                  "model",
+                  "uploaded",
+                  "preset",
+                ],
+              },
+              "generationParams": {
+                "type": "record",
+                "value": {
+                  "options": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "number",
+                    },
+                    {
+                      "type": "boolean",
+                    },
+                  ],
+                  "type": "union",
+                },
+              },
+              "libraryAssetId": {
+                "inner": {
+                  "type": "string",
+                },
+                "type": "optional",
+              },
+              "libraryTags": {
+                "inner": {
+                  "item": {
+                    "type": "string",
+                  },
+                  "max": undefined,
+                  "min": undefined,
+                  "type": "array",
+                },
+                "type": "optional",
+              },
+              "model": {
+                "type": "string",
+              },
+              "previewUrl": {
+                "type": "string",
+              },
+              "prompt": {
+                "type": "string",
+              },
+              "provider": {
+                "type": "string",
+              },
+              "purpose": {
+                "type": "string",
+              },
+              "source": {
+                "type": "enum",
+                "values": [
+                  "mock",
+                  "preset",
+                  "uploaded",
+                  "generated",
+                  "library",
+                ],
+              },
+              "spec": {
+                "type": "string",
+              },
+              "status": {
+                "type": "enum",
+                "values": [
+                  "missing",
+                  "mock",
+                  "uploaded",
+                  "generated",
+                  "failed",
+                ],
+              },
+              "style": {
+                "type": "string",
+              },
+              "targetSize": {
+                "inner": {
+                  "type": "string",
+                },
+                "type": "optional",
+              },
+              "transparentBackgroundRequired": {
+                "inner": {
+                  "type": "boolean",
+                },
+                "type": "optional",
+              },
+              "type": {
+                "type": "enum",
+                "values": [
+                  "image",
+                  "sfx",
+                  "bgm",
+                  "effect",
+                  "ui",
+                  "build",
+                  "model",
+                  "texture",
+                  "skybox",
+                  "material",
+                  "audio",
+                  "icon",
+                ],
+              },
+            },
+            "type": "object",
+          },
+          "max": undefined,
+          "min": undefined,
+          "type": "array",
+        },
+        "versionId": {
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "type": "effects",
+  },
+  "gameConfig": {
+    "fields": {
+      "controls": {
+        "item": {
+          "type": "string",
+        },
+        "max": undefined,
+        "min": undefined,
+        "type": "array",
+      },
+      "difficulty": {
+        "type": "enum",
+        "values": [
+          "easy",
+          "normal",
+          "hard",
+        ],
+      },
+      "gameplay": {
+        "fields": {
+          "enemyBehavior": {
+            "type": "enum",
+            "values": [
+              "static",
+              "patrol",
+              "chase",
+              "wave",
+              "timer",
+            ],
+          },
+          "objectiveMode": {
+            "type": "enum",
+            "values": [
+              "collect_score",
+              "reach_exit",
+              "survive_timer",
+              "defend_base",
+              "solve_state",
+            ],
+          },
+          "playerAbility": {
+            "type": "enum",
+            "values": [
+              "dash",
+              "jump",
+              "push",
+              "build",
+              "choose",
+            ],
+          },
+          "primaryAction": {
+            "type": "enum",
+            "values": [
+              "dodge_collect",
+              "jump_reach_goal",
+              "solve_grid",
+              "defend_route",
+              "manage_choices",
+            ],
+          },
+          "spawnPattern": {
+            "type": "enum",
+            "values": [
+              "fixed",
+              "staggered",
+              "lanes",
+              "grid",
+              "waves",
+            ],
+          },
+        },
+        "type": "object",
+      },
+      "level": {
+        "fields": {
+          "collectibles": {
+            "type": "number",
+          },
+          "hazards": {
+            "type": "number",
+          },
+          "height": {
+            "type": "number",
+          },
+          "width": {
+            "type": "number",
+          },
+          "winScore": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "pitch": {
+        "type": "string",
+      },
+      "playerGoal": {
+        "type": "string",
+      },
+      "referencedAssetKeys": {
+        "item": {
+          "type": "string",
+        },
+        "max": undefined,
+        "min": undefined,
+        "type": "array",
+      },
+      "templateFamily": {
+        "type": "enum",
+        "values": [
+          "platformer",
+          "top_down",
+          "grid_logic",
+          "tower_defense",
+          "ui_heavy",
+        ],
+      },
+      "title": {
+        "type": "string",
+      },
+    },
+    "type": "object",
+  },
+  "gameHooks": {
+    "fields": {
+      "attackRules": {
+        "inner": {
+          "fields": {
+            "contactDamage": {
+              "type": "number",
+            },
+            "dashDamage": {
+              "type": "number",
+            },
+            "explosionDelayMs": {
+              "type": "number",
+            },
+            "explosionRadius": {
+              "type": "number",
+            },
+            "projectileCooldownMs": {
+              "type": "number",
+            },
+            "projectileSpeed": {
+              "type": "number",
+            },
+            "warningMs": {
+              "type": "number",
+            },
+          },
+          "type": "object",
+        },
+        "type": "optional",
+      },
+      "collectibleRules": {
+        "fields": {
+          "placement": {
+            "type": "enum",
+            "values": [
+              "line",
+              "arc",
+              "grid",
+              "random",
+            ],
+          },
+          "respawn": {
+            "type": "boolean",
+          },
+          "value": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "collisionRules": {
+        "inner": {
+          "fields": {
+            "collisionRadius": {
+              "type": "number",
+            },
+            "invulnerabilityMs": {
+              "type": "number",
+            },
+            "knockbackForce": {
+              "type": "number",
+            },
+          },
+          "type": "object",
+        },
+        "type": "optional",
+      },
+      "difficultyRules": {
+        "inner": {
+          "fields": {
+            "checkpointPolicy": {
+              "type": "string",
+            },
+            "collectibleSpacing": {
+              "type": "string",
+            },
+            "enemyPacing": {
+              "type": "string",
+            },
+            "hazardRamp": {
+              "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "type": "optional",
+      },
+      "encounterTimeline": {
+        "inner": {
+          "item": {
+            "fields": {
+              "atMs": {
+                "type": "number",
+              },
+              "event": {
+                "type": "enum",
+                "values": [
+                  "spawn_wave",
+                  "spawn_mine",
+                  "projectile_burst",
+                  "reward_burst",
+                  "finale",
+                ],
+              },
+              "intensity": {
+                "type": "number",
+              },
+              "message": {
+                "type": "string",
+              },
+              "trigger": {
+                "type": "enum",
+                "values": [
+                  "time",
+                  "score",
+                ],
+              },
+            },
+            "type": "object",
+          },
+          "max": undefined,
+          "min": undefined,
+          "type": "array",
+        },
+        "type": "optional",
+      },
+      "enemyArchetypes": {
+        "inner": {
+          "item": {
+            "fields": {
+              "count": {
+                "type": "number",
+              },
+              "id": {
+                "type": "string",
+              },
+              "laneY": {
+                "inner": {
+                  "type": "number",
+                },
+                "type": "optional",
+              },
+              "spawnAfterMs": {
+                "type": "number",
+              },
+              "speed": {
+                "type": "number",
+              },
+              "type": {
+                "type": "enum",
+                "values": [
+                  "chaser",
+                  "patroller",
+                  "charger",
+                  "shooter",
+                  "orbiter",
+                  "mine",
+                ],
+              },
+              "warningMs": {
+                "inner": {
+                  "type": "number",
+                },
+                "type": "optional",
+              },
+            },
+            "type": "object",
+          },
+          "max": undefined,
+          "min": undefined,
+          "type": "array",
+        },
+        "type": "optional",
+      },
+      "enemyRules": {
+        "fields": {
+          "movement": {
+            "type": "enum",
+            "values": [
+              "static",
+              "patrol",
+              "chase",
+              "wave",
+            ],
+          },
+          "speed": {
+            "type": "number",
+          },
+          "waveIntervalMs": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "failCondition": {
+        "fields": {
+          "lives": {
+            "type": "number",
+          },
+          "mode": {
+            "type": "enum",
+            "values": [
+              "hit_hazard",
+              "time_out",
+              "base_destroyed",
+              "moves_exhausted",
+            ],
+          },
+        },
+        "type": "object",
+      },
+      "feedbackRules": {
+        "inner": {
+          "fields": {
+            "audioCueKeys": {
+              "inner": {
+                "item": {
+                  "type": "string",
+                },
+                "max": undefined,
+                "min": undefined,
+                "type": "array",
+              },
+              "type": "optional",
+            },
+            "collectBurstCount": {
+              "type": "number",
+            },
+            "comboText": {
+              "inner": {
+                "type": "boolean",
+              },
+              "type": "optional",
+            },
+            "floatingScore": {
+              "inner": {
+                "type": "boolean",
+              },
+              "type": "optional",
+            },
+            "particleCount": {
+              "type": "number",
+            },
+            "screenShakeIntensity": {
+              "type": "number",
+            },
+          },
+          "type": "object",
+        },
+        "type": "optional",
+      },
+      "impactRules": {
+        "inner": {
+          "fields": {
+            "comboWindowMs": {
+              "type": "number",
+            },
+            "explosionParticles": {
+              "type": "number",
+            },
+            "hitStopMs": {
+              "type": "number",
+            },
+            "invulnerabilityMs": {
+              "type": "number",
+            },
+            "knockbackForce": {
+              "type": "number",
+            },
+            "screenShakeIntensity": {
+              "type": "number",
+            },
+          },
+          "type": "object",
+        },
+        "type": "optional",
+      },
+      "levelFlow": {
+        "inner": {
+          "fields": {
+            "cameraIntent": {
+              "type": "string",
+            },
+            "finishZone": {
+              "inner": {
+                "fields": {
+                  "height": {
+                    "type": "number",
+                  },
+                  "width": {
+                    "type": "number",
+                  },
+                  "x": {
+                    "type": "number",
+                  },
+                  "y": {
+                    "type": "number",
+                  },
+                },
+                "type": "object",
+              },
+              "type": "optional",
+            },
+            "safeZones": {
+              "item": {
+                "fields": {
+                  "height": {
+                    "type": "number",
+                  },
+                  "width": {
+                    "type": "number",
+                  },
+                  "x": {
+                    "type": "number",
+                  },
+                  "y": {
+                    "type": "number",
+                  },
+                },
+                "type": "object",
+              },
+              "max": undefined,
+              "min": undefined,
+              "type": "array",
+            },
+            "spawnPoint": {
+              "fields": {
+                "x": {
+                  "type": "number",
+                },
+                "y": {
+                  "type": "number",
+                },
+              },
+              "type": "object",
+            },
+            "tutorialBeats": {
+              "item": {
+                "type": "string",
+              },
+              "max": undefined,
+              "min": undefined,
+              "type": "array",
+            },
+          },
+          "type": "object",
+        },
+        "type": "optional",
+      },
+      "levelLayout": {
+        "fields": {
+          "grid": {
+            "fields": {
+              "columns": {
+                "type": "number",
+              },
+              "rows": {
+                "type": "number",
+              },
+            },
+            "type": "object",
+          },
+          "gridState": {
+            "inner": {
+              "item": {
+                "item": {
+                  "type": "number",
+                },
+                "max": undefined,
+                "min": undefined,
+                "type": "array",
+              },
+              "max": undefined,
+              "min": undefined,
+              "type": "array",
+            },
+            "type": "optional",
+          },
+          "lanes": {
+            "item": {
+              "fields": {
+                "count": {
+                  "type": "number",
+                },
+                "speed": {
+                  "type": "number",
+                },
+                "y": {
+                  "type": "number",
+                },
+              },
+              "type": "object",
+            },
+            "max": undefined,
+            "min": undefined,
+            "type": "array",
+          },
+          "platforms": {
+            "item": {
+              "fields": {
+                "height": {
+                  "type": "number",
+                },
+                "width": {
+                  "type": "number",
+                },
+                "x": {
+                  "type": "number",
+                },
+                "y": {
+                  "type": "number",
+                },
+              },
+              "type": "object",
+            },
+            "max": undefined,
+            "min": undefined,
+            "type": "array",
+          },
+        },
+        "type": "object",
+      },
+      "numberTuning": {
+        "fields": {
+          "hazardSpeed": {
+            "type": "number",
+          },
+          "jumpVelocity": {
+            "type": "number",
+          },
+          "playerSpeed": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "scoreTiers": {
+        "inner": {
+          "fields": {
+            "bronze": {
+              "fields": {
+                "minScore": {
+                  "type": "number",
+                },
+              },
+              "type": "object",
+            },
+            "gold": {
+              "fields": {
+                "maxDeathCount": {
+                  "type": "number",
+                },
+                "maxDurationMs": {
+                  "type": "number",
+                },
+                "minScore": {
+                  "type": "number",
+                },
+              },
+              "type": "object",
+            },
+            "rationale": {
+              "type": "string",
+            },
+            "silver": {
+              "fields": {
+                "maxDeathCount": {
+                  "type": "number",
+                },
+                "minScore": {
+                  "type": "number",
+                },
+              },
+              "type": "object",
+            },
+            "targetDurationMs": {
+              "type": "number",
+            },
+          },
+          "type": "object",
+        },
+        "type": "optional",
+      },
+      "spawnRules": {
+        "inner": {
+          "fields": {
+            "hazardIntervalMs": {
+              "type": "number",
+            },
+            "maxActiveHazards": {
+              "type": "number",
+            },
+          },
+          "type": "object",
+        },
+        "type": "optional",
+      },
+      "stageGoals": {
+        "inner": {
+          "item": {
+            "fields": {
+              "bgmIntensity": {
+                "inner": {
+                  "options": [
+                    {
+                      "type": "literal",
+                      "value": 0,
+                    },
+                    {
+                      "type": "literal",
+                      "value": 1,
+                    },
+                    {
+                      "type": "literal",
+                      "value": 2,
+                    },
+                    {
+                      "type": "literal",
+                      "value": 3,
+                    },
+                  ],
+                  "type": "union",
+                },
+                "type": "optional",
+              },
+              "durationMs": {
+                "type": "number",
+              },
+              "enemyMix": {
+                "item": {
+                  "type": "string",
+                },
+                "max": undefined,
+                "min": undefined,
+                "type": "array",
+              },
+              "enemySpawnDelta": {
+                "inner": {
+                  "type": "number",
+                },
+                "type": "optional",
+              },
+              "id": {
+                "type": "string",
+              },
+              "label": {
+                "type": "string",
+              },
+              "objective": {
+                "type": "enum",
+                "values": [
+                  "learn_controls",
+                  "collect",
+                  "survive",
+                  "finale",
+                ],
+              },
+              "rewardPacing": {
+                "type": "enum",
+                "values": [
+                  "slow",
+                  "normal",
+                  "burst",
+                ],
+              },
+              "speedMultiplier": {
+                "inner": {
+                  "type": "number",
+                },
+                "type": "optional",
+              },
+              "startsAtMs": {
+                "type": "number",
+              },
+              "target": {
+                "type": "number",
+              },
+            },
+            "type": "object",
+          },
+          "max": undefined,
+          "min": undefined,
+          "type": "array",
+        },
+        "type": "optional",
+      },
+      "visualLayerRules": {
+        "inner": {
+          "fields": {
+            "backgroundTreatment": {
+              "type": "string",
+            },
+            "foregroundProps": {
+              "item": {
+                "type": "string",
+              },
+              "max": undefined,
+              "min": undefined,
+              "type": "array",
+            },
+            "uiBadgeStyle": {
+              "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "type": "optional",
+      },
+      "winCondition": {
+        "fields": {
+          "mode": {
+            "type": "enum",
+            "values": [
+              "collect_score",
+              "reach_exit",
+              "survive_timer",
+              "defend_base",
+              "solve_state",
+            ],
+          },
+          "target": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+    },
+    "type": "object",
+  },
+  "gameplayDsl": {
+    "discriminator": "version",
+    "options": [
+      {
+        "fields": {
+          "rules": {
+            "item": {
+              "fields": {
+                "assetKey": {
+                  "inner": {
+                    "type": "string",
+                  },
+                  "type": "optional",
+                },
+                "count": {
+                  "inner": {
+                    "type": "number",
+                  },
+                  "type": "optional",
+                },
+                "do": {
+                  "type": "enum",
+                  "values": [
+                    "spawn_wave",
+                    "spawn_mine",
+                    "projectile_burst",
+                    "reward_burst",
+                    "stage_change",
+                    "effect",
+                  ],
+                },
+                "effect": {
+                  "inner": {
+                    "type": "enum",
+                    "values": [
+                      "screen_shake",
+                      "explosion",
+                      "collect_burst",
+                      "hit_flash",
+                    ],
+                  },
+                  "type": "optional",
+                },
+                "enemyType": {
+                  "inner": {
+                    "type": "enum",
+                    "values": [
+                      "chaser",
+                      "patroller",
+                      "charger",
+                      "shooter",
+                      "orbiter",
+                      "mine",
+                    ],
+                  },
+                  "type": "optional",
+                },
+                "id": {
+                  "type": "string",
+                },
+                "message": {
+                  "inner": {
+                    "type": "string",
+                  },
+                  "type": "optional",
+                },
+                "stageId": {
+                  "inner": {
+                    "type": "string",
+                  },
+                  "type": "optional",
+                },
+                "when": {
+                  "inner": {
+                    "type": "string",
+                  },
+                  "type": "effects",
+                },
+              },
+              "type": "object",
+            },
+            "max": 24,
+            "min": undefined,
+            "type": "array",
+          },
+          "version": {
+            "type": "literal",
+            "value": "1",
+          },
+        },
+        "type": "object",
+      },
+      {
+        "fields": {
+          "counters": {
+            "inner": {
+              "item": {
+                "fields": {
+                  "initialValue": {
+                    "type": "number",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "type": "object",
+              },
+              "max": 16,
+              "min": undefined,
+              "type": "array",
+            },
+            "type": "optional",
+          },
+          "items": {
+            "inner": {
+              "item": {
+                "fields": {
+                  "assetKey": {
+                    "type": "string",
+                  },
+                  "grantsCounter": {
+                    "inner": {
+                      "type": "string",
+                    },
+                    "type": "optional",
+                  },
+                  "value": {
+                    "inner": {
+                      "type": "number",
+                    },
+                    "type": "optional",
+                  },
+                },
+                "type": "object",
+              },
+              "max": 16,
+              "min": undefined,
+              "type": "array",
+            },
+            "type": "optional",
+          },
+          "rules": {
+            "item": {
+              "fields": {
+                "do": {
+                  "item": {
+                    "discriminator": "type",
+                    "options": [
+                      {
+                        "fields": {
+                          "count": {
+                            "inner": {
+                              "type": "number",
+                            },
+                            "type": "optional",
+                          },
+                          "enemyType": {
+                            "inner": {
+                              "type": "enum",
+                              "values": [
+                                "chaser",
+                                "patroller",
+                                "charger",
+                                "shooter",
+                                "orbiter",
+                                "mine",
+                              ],
+                            },
+                            "type": "optional",
+                          },
+                          "type": {
+                            "type": "literal",
+                            "value": "spawn_zone",
+                          },
+                          "zoneId": {
+                            "type": "string",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      {
+                        "fields": {
+                          "assetKey": {
+                            "type": "string",
+                          },
+                          "type": {
+                            "type": "literal",
+                            "value": "open_door",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      {
+                        "fields": {
+                          "assetKey": {
+                            "type": "string",
+                          },
+                          "type": {
+                            "type": "literal",
+                            "value": "grant_item",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      {
+                        "fields": {
+                          "name": {
+                            "type": "string",
+                          },
+                          "type": {
+                            "type": "literal",
+                            "value": "set_counter",
+                          },
+                          "value": {
+                            "type": "number",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      {
+                        "fields": {
+                          "mul": {
+                            "inner": {
+                              "type": "number",
+                            },
+                            "type": "optional",
+                          },
+                          "multiplier": {
+                            "inner": {
+                              "type": "number",
+                            },
+                            "type": "optional",
+                          },
+                          "type": {
+                            "type": "literal",
+                            "value": "change_player_speed",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      {
+                        "fields": {
+                          "message": {
+                            "inner": {
+                              "type": "string",
+                            },
+                            "type": "optional",
+                          },
+                          "type": {
+                            "type": "literal",
+                            "value": "fail",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      {
+                        "fields": {
+                          "message": {
+                            "inner": {
+                              "type": "string",
+                            },
+                            "type": "optional",
+                          },
+                          "type": {
+                            "type": "literal",
+                            "value": "win",
+                          },
+                        },
+                        "type": "object",
+                      },
+                    ],
+                    "type": "discriminatedUnion",
+                  },
+                  "max": undefined,
+                  "min": 1,
+                  "type": "array",
+                },
+                "id": {
+                  "type": "string",
+                },
+                "when": {
+                  "discriminator": "type",
+                  "options": [
+                    {
+                      "fields": {
+                        "op": {
+                          "type": "enum",
+                          "values": [
+                            "<",
+                            "<=",
+                            "=",
+                            ">=",
+                            ">",
+                          ],
+                        },
+                        "type": {
+                          "type": "literal",
+                          "value": "time",
+                        },
+                        "value": {
+                          "type": "number",
+                        },
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "fields": {
+                        "op": {
+                          "type": "enum",
+                          "values": [
+                            "<",
+                            "<=",
+                            "=",
+                            ">=",
+                            ">",
+                          ],
+                        },
+                        "type": {
+                          "type": "literal",
+                          "value": "score",
+                        },
+                        "value": {
+                          "type": "number",
+                        },
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "fields": {
+                        "assetKey": {
+                          "type": "string",
+                        },
+                        "count": {
+                          "type": "number",
+                        },
+                        "type": {
+                          "type": "literal",
+                          "value": "collected",
+                        },
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "fields": {
+                        "op": {
+                          "type": "enum",
+                          "values": [
+                            "<=",
+                            "<",
+                            "=",
+                          ],
+                        },
+                        "type": {
+                          "type": "literal",
+                          "value": "enemiesAlive",
+                        },
+                        "value": {
+                          "type": "number",
+                        },
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "fields": {
+                        "id": {
+                          "type": "string",
+                        },
+                        "type": {
+                          "type": "literal",
+                          "value": "stage",
+                        },
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "fields": {
+                        "percent": {
+                          "type": "number",
+                        },
+                        "type": {
+                          "type": "literal",
+                          "value": "hpBelow",
+                        },
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "fields": {
+                        "type": {
+                          "type": "literal",
+                          "value": "zoneEntered",
+                        },
+                        "zoneId": {
+                          "type": "string",
+                        },
+                      },
+                      "type": "object",
+                    },
+                    {
+                      "fields": {
+                        "op": {
+                          "type": "enum",
+                          "values": [
+                            ">=",
+                            ">",
+                            "=",
+                          ],
+                        },
+                        "type": {
+                          "type": "literal",
+                          "value": "combo",
+                        },
+                        "value": {
+                          "type": "number",
+                        },
+                      },
+                      "type": "object",
+                    },
+                  ],
+                  "type": "discriminatedUnion",
+                },
+              },
+              "type": "object",
+            },
+            "max": 80,
+            "min": undefined,
+            "type": "array",
+          },
+          "version": {
+            "type": "literal",
+            "value": "2",
+          },
+          "zones": {
+            "inner": {
+              "item": {
+                "fields": {
+                  "height": {
+                    "type": "number",
+                  },
+                  "id": {
+                    "type": "string",
+                  },
+                  "width": {
+                    "type": "number",
+                  },
+                  "x": {
+                    "type": "number",
+                  },
+                  "y": {
+                    "type": "number",
+                  },
+                },
+                "type": "object",
+              },
+              "max": 16,
+              "min": undefined,
+              "type": "array",
+            },
+            "type": "optional",
+          },
+        },
+        "type": "object",
+      },
+    ],
+    "type": "discriminatedUnion",
+  },
+  "styleSheet": {
+    "fields": {
+      "brushwork": {
+        "type": "enum",
+        "values": [
+          "pixel_clean",
+          "cel_shaded",
+          "painterly",
+          "low_poly",
+          "vector_flat",
+        ],
+      },
+      "era": {
+        "type": "enum",
+        "values": [
+          "fantasy",
+          "modern",
+          "retro",
+          "sci_fi",
+          "nature",
+        ],
+      },
+      "lighting": {
+        "type": "enum",
+        "values": [
+          "flat",
+          "rim",
+          "soft",
+          "neon",
+          "dramatic",
+        ],
+      },
+      "negativePrompt": {
+        "type": "string",
+      },
+      "palette": {
+        "items": [
+          {
+            "type": "string",
+          },
+          {
+            "type": "string",
+          },
+          {
+            "type": "string",
+          },
+          {
+            "type": "string",
+          },
+          {
+            "type": "string",
+          },
+        ],
+        "type": "tuple",
+      },
+      "subjectScale": {
+        "type": "enum",
+        "values": [
+          "tiny",
+          "small",
+          "medium",
+          "large",
+          "heroic",
+        ],
+      },
+    },
+    "type": "object",
+  },
+}
+`;
